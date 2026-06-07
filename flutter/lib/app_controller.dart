@@ -10,8 +10,8 @@ import 'services/secure_credentials_store.dart';
 
 class AppController extends ChangeNotifier {
   AppController({BridgeSocketClient? socket, SecureCredentialsStore? store})
-      : _socket = socket ?? BridgeSocketClient(),
-        _store = store ?? SecureCredentialsStore();
+    : _socket = socket ?? BridgeSocketClient(),
+      _store = store ?? SecureCredentialsStore();
 
   final BridgeSocketClient _socket;
   final SecureCredentialsStore _store;
@@ -60,7 +60,13 @@ class AppController extends ChangeNotifier {
         throw const FormatException('Pairing QR is missing url or token.');
       }
       _pendingUrl = payload.url;
-      _connect(payload.url, {'type': 'pairing.claim', 'pairingToken': payload.pairingToken, 'deviceName': deviceName.trim().isEmpty ? 'Flutter Codex Controller' : deviceName.trim()});
+      _connect(payload.url, {
+        'type': 'pairing.claim',
+        'pairingToken': payload.pairingToken,
+        'deviceName': deviceName.trim().isEmpty
+            ? 'Flutter Codex Controller'
+            : deviceName.trim(),
+      });
     } catch (error) {
       phase = ConnectionPhase.failed;
       statusText = 'Pairing payload error: $error';
@@ -77,7 +83,10 @@ class AppController extends ChangeNotifier {
     }
     credentials = saved;
     _pendingUrl = saved.url;
-    _connect(saved.url, {'type': 'auth.resume', 'deviceToken': saved.deviceToken});
+    _connect(saved.url, {
+      'type': 'auth.resume',
+      'deviceToken': saved.deviceToken,
+    });
   }
 
   Future<void> forgetSaved() async {
@@ -98,7 +107,11 @@ class AppController extends ChangeNotifier {
   }
 
   void createSession() {
-    _send({'type': 'session.create', 'title': 'New session', 'workspaceId': activeSession?.workspaceId ?? 'default'});
+    _send({
+      'type': 'session.create',
+      'title': 'New session',
+      'workspaceId': activeSession?.workspaceId ?? 'default',
+    });
   }
 
   void selectSession(String sessionId) {
@@ -110,7 +123,11 @@ class AppController extends ChangeNotifier {
 
   void renameSession(String sessionId, String title) {
     if (title.trim().isEmpty) return;
-    _send({'type': 'session.rename', 'sessionId': sessionId, 'title': title.trim()});
+    _send({
+      'type': 'session.rename',
+      'sessionId': sessionId,
+      'title': title.trim(),
+    });
   }
 
   void deleteSession(String sessionId) {
@@ -120,18 +137,29 @@ class AppController extends ChangeNotifier {
   void switchWorkspace(String workspaceId) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
-    _send({'type': 'workspace.switch', 'sessionId': sessionId, 'workspaceId': workspaceId});
+    _send({
+      'type': 'workspace.switch',
+      'sessionId': sessionId,
+      'workspaceId': workspaceId,
+    });
   }
 
   void setYolo(bool enabled) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
-    _send({'type': 'session.mode.set', 'sessionId': sessionId, 'mode': enabled ? 'yolo' : 'safe'});
+    _send({
+      'type': 'session.mode.set',
+      'sessionId': sessionId,
+      'mode': enabled ? 'yolo' : 'safe',
+    });
   }
 
   void runCommand(CodexCommandInfo command) {
     final sessionId = activeSession?.sessionId;
-    final message = <String, dynamic>{'type': 'command.run', 'commandId': command.commandId};
+    final message = <String, dynamic>{
+      'type': 'command.run',
+      'commandId': command.commandId,
+    };
     if (sessionId != null) {
       message['sessionId'] = sessionId;
     }
@@ -142,7 +170,13 @@ class AppController extends ChangeNotifier {
     final trimmed = prompt.trim();
     final sessionId = activeSession?.sessionId;
     if (trimmed.isEmpty || sessionId == null) return;
-    final message = ChatMessage(id: _uuid.v4(), role: ChatRole.user, kind: AgentMessageKind.response, text: trimmed, createdAt: DateTime.now());
+    final message = ChatMessage(
+      id: _uuid.v4(),
+      role: ChatRole.user,
+      kind: AgentMessageKind.response,
+      text: trimmed,
+      createdAt: DateTime.now(),
+    );
     messagesBySession.putIfAbsent(sessionId, () => []).add(message);
     notifyListeners();
     _send({'type': 'prompt.send', 'sessionId': sessionId, 'prompt': trimmed});
@@ -213,7 +247,10 @@ class AppController extends ChangeNotifier {
   void _handleMessage(Map<String, dynamic> message) {
     switch (message['type'] as String?) {
       case 'status':
-        statusText = message['detail'] as String? ?? message['status'] as String? ?? statusText;
+        statusText =
+            message['detail'] as String? ??
+            message['status'] as String? ??
+            statusText;
         break;
       case 'pairing.accepted':
         _acceptPairing(message);
@@ -226,7 +263,11 @@ class AppController extends ChangeNotifier {
         _replaceSessions(message);
         break;
       case 'session.updated':
-        _upsertSession(CodexSessionInfo.fromJson(Map<String, dynamic>.from(message['session'] as Map)));
+        _upsertSession(
+          CodexSessionInfo.fromJson(
+            Map<String, dynamic>.from(message['session'] as Map),
+          ),
+        );
         break;
       case 'session.deleted':
         _deleteLocalSession(message['sessionId'] as String? ?? '');
@@ -234,12 +275,24 @@ class AppController extends ChangeNotifier {
       case 'workspace.list':
         workspaces
           ..clear()
-          ..addAll(((message['workspaces'] as List<dynamic>? ?? const [])).map((item) => WorkspaceInfo.fromJson(Map<String, dynamic>.from(item as Map))));
+          ..addAll(
+            ((message['workspaces'] as List<dynamic>? ?? const [])).map(
+              (item) => WorkspaceInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
         break;
       case 'command.list':
         commands
           ..clear()
-          ..addAll(((message['commands'] as List<dynamic>? ?? const [])).map((item) => CodexCommandInfo.fromJson(Map<String, dynamic>.from(item as Map))));
+          ..addAll(
+            ((message['commands'] as List<dynamic>? ?? const [])).map(
+              (item) => CodexCommandInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
         break;
       case 'run.started':
         activeRunId = message['runId'] as String?;
@@ -259,6 +312,9 @@ class AppController extends ChangeNotifier {
       case 'output.delta':
         _handleLegacyOutput(message);
         break;
+      case 'diff.available':
+        _appendFileChangeEvent(message);
+        break;
       case 'error':
         _appendError(message['message'] as String? ?? 'Unknown bridge error');
         statusText = message['message'] as String? ?? statusText;
@@ -274,7 +330,11 @@ class AppController extends ChangeNotifier {
     phase = ConnectionPhase.connected;
     statusText = 'Paired and connected to Codex LAN.';
     if (url != null && token != null && deviceId != null) {
-      credentials = BridgeCredentials(url: url, deviceToken: token, deviceId: deviceId);
+      credentials = BridgeCredentials(
+        url: url,
+        deviceToken: token,
+        deviceId: deviceId,
+      );
       await _store.save(credentials!);
     }
   }
@@ -282,15 +342,25 @@ class AppController extends ChangeNotifier {
   void _replaceSessions(Map<String, dynamic> message) {
     sessions
       ..clear()
-      ..addAll(((message['sessions'] as List<dynamic>? ?? const [])).map((item) => CodexSessionInfo.fromJson(Map<String, dynamic>.from(item as Map))));
-    activeSessionId = message['activeSessionId'] as String? ?? activeSessionId ?? (sessions.isEmpty ? null : sessions.first.sessionId);
+      ..addAll(
+        ((message['sessions'] as List<dynamic>? ?? const [])).map(
+          (item) =>
+              CodexSessionInfo.fromJson(Map<String, dynamic>.from(item as Map)),
+        ),
+      );
+    activeSessionId =
+        message['activeSessionId'] as String? ??
+        activeSessionId ??
+        (sessions.isEmpty ? null : sessions.first.sessionId);
     for (final session in sessions) {
       messagesBySession.putIfAbsent(session.sessionId, () => []);
     }
   }
 
   void _upsertSession(CodexSessionInfo session) {
-    final index = sessions.indexWhere((item) => item.sessionId == session.sessionId);
+    final index = sessions.indexWhere(
+      (item) => item.sessionId == session.sessionId,
+    );
     if (index >= 0) {
       sessions[index] = session;
     } else {
@@ -309,15 +379,20 @@ class AppController extends ChangeNotifier {
   }
 
   void _startAgentMessage(Map<String, dynamic> message) {
-    final sessionId = message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId =
+        message['sessionId'] as String? ?? activeSession?.sessionId;
     if (sessionId == null) return;
     final kind = kindFromWire(message['kind'] as String?);
     final id = message['messageId'] as String? ?? _uuid.v4();
     final text = kind == AgentMessageKind.thinking ? 'Thinking…' : '';
-    messagesBySession.putIfAbsent(sessionId, () => []).add(
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
           ChatMessage(
             id: id,
-            role: kind == AgentMessageKind.response ? ChatRole.assistant : ChatRole.system,
+            role: kind == AgentMessageKind.response
+                ? ChatRole.assistant
+                : ChatRole.system,
             kind: kind,
             text: text,
             title: message['title'] as String?,
@@ -329,7 +404,8 @@ class AppController extends ChangeNotifier {
   }
 
   void _appendAgentDelta(Map<String, dynamic> message) {
-    final sessionId = message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId =
+        message['sessionId'] as String? ?? activeSession?.sessionId;
     if (sessionId == null) return;
     final messageId = message['messageId'] as String?;
     final text = message['text'] as String? ?? '';
@@ -337,15 +413,29 @@ class AppController extends ChangeNotifier {
     final index = list.indexWhere((item) => item.id == messageId);
     if (index >= 0) {
       final current = list[index];
-      final nextText = current.kind == AgentMessageKind.thinking && current.text == 'Thinking…' ? text : current.text + text;
+      final nextText =
+          current.kind == AgentMessageKind.thinking &&
+              current.text == 'Thinking…'
+          ? text
+          : current.text + text;
       list[index] = current.copyWith(text: nextText);
     } else {
-      list.add(ChatMessage(id: messageId ?? _uuid.v4(), role: ChatRole.system, kind: AgentMessageKind.system, text: text, createdAt: DateTime.now(), complete: false));
+      list.add(
+        ChatMessage(
+          id: messageId ?? _uuid.v4(),
+          role: ChatRole.system,
+          kind: AgentMessageKind.system,
+          text: text,
+          createdAt: DateTime.now(),
+          complete: false,
+        ),
+      );
     }
   }
 
   void _completeAgentMessage(Map<String, dynamic> message) {
-    final sessionId = message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId =
+        message['sessionId'] as String? ?? activeSession?.sessionId;
     if (sessionId == null) return;
     final messageId = message['messageId'] as String?;
     final list = messagesBySession[sessionId];
@@ -357,13 +447,55 @@ class AppController extends ChangeNotifier {
   }
 
   void _handleLegacyOutput(Map<String, dynamic> message) {
-    final sessionId = message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId =
+        message['sessionId'] as String? ?? activeSession?.sessionId;
     if (sessionId == null) return;
     final stream = message['stream'] as String? ?? 'system';
     if (stream == 'assistant') return;
     final text = message['text'] as String? ?? '';
     if (text.trim().isEmpty) return;
-    messagesBySession.putIfAbsent(sessionId, () => []).add(ChatMessage(id: _uuid.v4(), role: ChatRole.system, kind: AgentMessageKind.system, title: stream, text: text, createdAt: DateTime.now()));
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: _uuid.v4(),
+            role: ChatRole.system,
+            kind: AgentMessageKind.system,
+            title: stream,
+            text: text,
+            createdAt: DateTime.now(),
+          ),
+        );
+  }
+
+  void _appendFileChangeEvent(Map<String, dynamic> message) {
+    final sessionId =
+        message['sessionId'] as String? ?? activeSession?.sessionId;
+    if (sessionId == null) return;
+    final files = message['files'] as List<dynamic>? ?? const [];
+    final lines = files
+        .whereType<Map>()
+        .map((item) {
+          final status = item['status'] as String? ?? 'modified';
+          final path = item['path'] as String? ?? '';
+          if (path.trim().isEmpty) return null;
+          return '$status $path';
+        })
+        .nonNulls
+        .join('\n');
+    if (lines.isEmpty) return;
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: _uuid.v4(),
+            role: ChatRole.system,
+            kind: AgentMessageKind.files,
+            title: 'Files changed',
+            text: lines,
+            createdAt: DateTime.now(),
+          ),
+        );
   }
 
   String _friendlyBridgeError(Object error, String url) {
@@ -380,6 +512,17 @@ class AppController extends ChangeNotifier {
   void _appendError(String text) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
-    messagesBySession.putIfAbsent(sessionId, () => []).add(ChatMessage(id: _uuid.v4(), role: ChatRole.system, kind: AgentMessageKind.error, title: 'Error', text: text, createdAt: DateTime.now()));
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: _uuid.v4(),
+            role: ChatRole.system,
+            kind: AgentMessageKind.error,
+            title: 'Error',
+            text: text,
+            createdAt: DateTime.now(),
+          ),
+        );
   }
 }

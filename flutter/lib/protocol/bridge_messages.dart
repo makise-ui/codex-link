@@ -2,18 +2,26 @@ enum ConnectionPhase { idle, connecting, paired, connected, failed }
 
 enum ChatRole { user, assistant, system }
 
-enum AgentMessageKind { thinking, executing, response, system, error }
+enum AgentMessageKind { thinking, executing, response, system, files, error }
 
 enum RunMode { safe, yolo }
 
 class BridgeCredentials {
-  const BridgeCredentials({required this.url, required this.deviceToken, required this.deviceId});
+  const BridgeCredentials({
+    required this.url,
+    required this.deviceToken,
+    required this.deviceId,
+  });
 
   final String url;
   final String deviceToken;
   final String deviceId;
 
-  Map<String, String> toJson() => {'url': url, 'deviceToken': deviceToken, 'deviceId': deviceId};
+  Map<String, String> toJson() => {
+    'url': url,
+    'deviceToken': deviceToken,
+    'deviceId': deviceId,
+  };
 
   static BridgeCredentials? fromJson(Map<String, String> json) {
     final url = json['url'];
@@ -25,7 +33,13 @@ class BridgeCredentials {
 }
 
 class PairingPayload {
-  const PairingPayload({required this.version, required this.url, required this.pairingToken, required this.hostId, required this.insecureDevMode});
+  const PairingPayload({
+    required this.version,
+    required this.url,
+    required this.pairingToken,
+    required this.hostId,
+    required this.insecureDevMode,
+  });
 
   final int version;
   final String url;
@@ -59,9 +73,16 @@ class CodexSessionInfo {
   final String? activeRunId;
   final String? codexThreadId;
 
-  bool get isRunning => activeRunId != null || lastStatus == 'running' || lastStatus == 'cancelling';
+  bool get isRunning =>
+      activeRunId != null ||
+      lastStatus == 'running' ||
+      lastStatus == 'cancelling';
 
-  CodexSessionInfo copyWith({String? title, String? lastStatus, String? activeRunId}) {
+  CodexSessionInfo copyWith({
+    String? title,
+    String? lastStatus,
+    String? activeRunId,
+  }) {
     return CodexSessionInfo(
       sessionId: sessionId,
       title: title ?? this.title,
@@ -93,7 +114,12 @@ class CodexSessionInfo {
 }
 
 class WorkspaceInfo {
-  const WorkspaceInfo({required this.workspaceId, required this.label, required this.path, required this.active});
+  const WorkspaceInfo({
+    required this.workspaceId,
+    required this.label,
+    required this.path,
+    required this.active,
+  });
 
   final String workspaceId;
   final String label;
@@ -111,7 +137,12 @@ class WorkspaceInfo {
 }
 
 class CodexCommandInfo {
-  const CodexCommandInfo({required this.commandId, required this.title, required this.description, required this.category});
+  const CodexCommandInfo({
+    required this.commandId,
+    required this.title,
+    required this.description,
+    required this.category,
+  });
 
   final String commandId;
   final String title;
@@ -173,6 +204,8 @@ AgentMessageKind kindFromWire(String? value) {
       return AgentMessageKind.response;
     case 'system':
       return AgentMessageKind.system;
+    case 'files':
+      return AgentMessageKind.files;
     default:
       return AgentMessageKind.system;
   }

@@ -5,15 +5,15 @@ import 'package:flutter/material.dart';
 class CodexColors {
   static const ink = Color(0xFF000000);
   static const ink2 = Color(0xFF0B0B0B);
-  static const panel = Color(0xD91D1D1F);
-  static const panelHigh = Color(0xF0272729);
-  static const bubble = Color(0xFF2F2F2F);
-  static const composer = Color(0xEB222224);
-  static const border = Color(0xFF454547);
-  static const borderSoft = Color(0xFF2D2D2F);
+  static const panel = Color(0xD9161618);
+  static const panelHigh = Color(0xF0202022);
+  static const bubble = Color(0xFF2B2B2D);
+  static const composer = Color(0xF01F1F21);
+  static const border = Color(0xFF3B3B3D);
+  static const borderSoft = Color(0xFF29292B);
   static const text = Color(0xFFFFFFFF);
-  static const muted = Color(0xFFB4B4B4);
-  static const dim = Color(0xFF7D7D7D);
+  static const muted = Color(0xFFA7A7AA);
+  static const dim = Color(0xFF77777B);
   static const green = Color(0xFF10A37F);
   static const greenSoft = Color(0xFF19C37D);
   static const blue = Color(0xFF2D8CFF);
@@ -41,18 +41,43 @@ ThemeData buildCodexTheme() {
     fontFamily: 'Roboto',
     splashFactory: InkSparkle.splashFactory,
     textTheme: const TextTheme(
-      headlineMedium: TextStyle(fontSize: 34, height: 1.04, fontWeight: FontWeight.w800, letterSpacing: -1.15),
-      headlineSmall: TextStyle(fontSize: 28, height: 1.08, fontWeight: FontWeight.w700, letterSpacing: -0.8),
-      titleLarge: TextStyle(fontSize: 23, fontWeight: FontWeight.w700, letterSpacing: -0.45),
-      titleMedium: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: -0.25),
-      bodyLarge: TextStyle(fontSize: 18, height: 1.45, letterSpacing: -0.1),
-      bodyMedium: TextStyle(fontSize: 16, height: 1.45, letterSpacing: -0.05),
-      labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 0.05),
+      headlineMedium: TextStyle(
+        fontSize: 27,
+        height: 1.08,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0,
+      ),
+      headlineSmall: TextStyle(
+        fontSize: 22,
+        height: 1.12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0,
+      ),
+      titleLarge: TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0,
+      ),
+      titleMedium: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0,
+      ),
+      bodyLarge: TextStyle(fontSize: 15, height: 1.45, letterSpacing: 0),
+      bodyMedium: TextStyle(fontSize: 14, height: 1.45, letterSpacing: 0),
+      labelLarge: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0,
+      ),
     ).apply(bodyColor: CodexColors.text, displayColor: CodexColors.text),
     cardTheme: CardThemeData(
       color: CodexColors.panel,
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26), side: const BorderSide(color: CodexColors.borderSoft)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: CodexColors.borderSoft),
+      ),
     ),
     appBarTheme: const AppBarTheme(
       backgroundColor: Colors.transparent,
@@ -60,16 +85,28 @@ ThemeData buildCodexTheme() {
       elevation: 0,
       centerTitle: false,
     ),
-    drawerTheme: const DrawerThemeData(backgroundColor: CodexColors.ink, scrimColor: Colors.black54),
+    drawerTheme: const DrawerThemeData(
+      backgroundColor: CodexColors.ink,
+      scrimColor: Colors.black54,
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: CodexColors.composer,
       labelStyle: const TextStyle(color: CodexColors.muted),
       hintStyle: const TextStyle(color: CodexColors.dim),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 17),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: const BorderSide(color: CodexColors.border)),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: const BorderSide(color: CodexColors.borderSoft)),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: const BorderSide(color: CodexColors.muted, width: 1.2)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: const BorderSide(color: CodexColors.border),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: const BorderSide(color: CodexColors.borderSoft),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: const BorderSide(color: CodexColors.muted, width: 1.2),
+      ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
@@ -77,7 +114,7 @@ ThemeData buildCodexTheme() {
         foregroundColor: CodexColors.ink,
         disabledBackgroundColor: CodexColors.bubble,
         disabledForegroundColor: CodexColors.dim,
-        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -104,20 +141,15 @@ class AnimatedChatGptBackdrop extends StatelessWidget {
         children: [
           const DecoratedBox(
             decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(0.86, -1.06),
-                radius: 0.9,
-                colors: [Color(0x22252528), Color(0x00000000)],
-              ),
-            ),
-          ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Color(0x12000000), Color(0xFF000000)],
-                stops: [0.0, 0.76],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFF080809),
+                  Color(0xFF000000),
+                  Color(0xFF050606),
+                ],
+                stops: [0.0, 0.62, 1.0],
               ),
             ),
           ),
@@ -134,7 +166,7 @@ class GlassCard extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(18),
     this.margin,
-    this.radius = 26,
+    this.radius = 16,
     this.color,
     this.showBorder = true,
     this.blur = 18,
@@ -161,10 +193,20 @@ class GlassCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: color ?? CodexColors.panel,
               borderRadius: BorderRadius.circular(radius),
-              border: showBorder ? Border.all(color: Colors.white.withValues(alpha: 0.11)) : null,
+              border: showBorder
+                  ? Border.all(color: Colors.white.withValues(alpha: 0.11))
+                  : null,
               boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.30), blurRadius: 22, offset: const Offset(0, 12)),
-                BoxShadow(color: Colors.white.withValues(alpha: 0.025), blurRadius: 0, spreadRadius: 1),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.24),
+                  blurRadius: 18,
+                  offset: const Offset(0, 10),
+                ),
+                BoxShadow(
+                  color: Colors.white.withValues(alpha: 0.025),
+                  blurRadius: 0,
+                  spreadRadius: 1,
+                ),
               ],
             ),
             child: child,
@@ -176,7 +218,12 @@ class GlassCard extends StatelessWidget {
 }
 
 class SoftPill extends StatelessWidget {
-  const SoftPill({super.key, required this.label, this.color = CodexColors.text, this.icon});
+  const SoftPill({
+    super.key,
+    required this.label,
+    this.color = CodexColors.text,
+    this.icon,
+  });
 
   final String label;
   final Color color;
@@ -185,7 +232,7 @@ class SoftPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: CodexColors.panelHigh.withValues(alpha: 0.86),
         borderRadius: BorderRadius.circular(999),
@@ -194,8 +241,16 @@ class SoftPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (icon != null) ...[Icon(icon, size: 15, color: color), const SizedBox(width: 7)],
-          Text(label, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: color)),
+          if (icon != null) ...[
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(color: color),
+          ),
         ],
       ),
     );
@@ -203,7 +258,14 @@ class SoftPill extends StatelessWidget {
 }
 
 class ChatGptCircleButton extends StatelessWidget {
-  const ChatGptCircleButton({super.key, required this.icon, required this.onPressed, this.size = 58, this.foreground = CodexColors.text, this.background = CodexColors.panelHigh});
+  const ChatGptCircleButton({
+    super.key,
+    required this.icon,
+    required this.onPressed,
+    this.size = 44,
+    this.foreground = CodexColors.text,
+    this.background = CodexColors.panelHigh,
+  });
 
   final IconData icon;
   final VoidCallback? onPressed;
@@ -220,9 +282,14 @@ class ChatGptCircleButton extends StatelessWidget {
           filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
           child: Material(
             color: background.withValues(alpha: 0.92),
-            shape: CircleBorder(side: BorderSide(color: Colors.white.withValues(alpha: 0.12))),
+            shape: CircleBorder(
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+            ),
             clipBehavior: Clip.antiAlias,
-            child: IconButton(onPressed: onPressed, icon: Icon(icon, color: foreground, size: size * 0.44)),
+            child: IconButton(
+              onPressed: onPressed,
+              icon: Icon(icon, color: foreground, size: size * 0.44),
+            ),
           ),
         ),
       ),
@@ -242,13 +309,19 @@ class ChatGptActionPill extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: Container(
-          height: 58,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 5),
           decoration: BoxDecoration(
             color: CodexColors.panelHigh.withValues(alpha: 0.90),
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.28), blurRadius: 22, offset: const Offset(0, 10))],
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.24),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: children),
         ),

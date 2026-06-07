@@ -19,15 +19,21 @@ class MarkdownCodeRenderer extends StatelessWidget {
         for (final segment in segments)
           if (segment.isCode)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.symmetric(vertical: 6),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(12),
                 child: HighlightView(
                   segment.content,
-                  language: segment.language?.isEmpty == true ? null : segment.language,
+                  language: segment.language?.isEmpty == true
+                      ? null
+                      : segment.language,
                   theme: atomOneDarkTheme,
-                  padding: const EdgeInsets.all(14),
-                  textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.45),
+                  padding: const EdgeInsets.all(12),
+                  textStyle: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    height: 1.42,
+                  ),
                 ),
               ),
             )
@@ -35,13 +41,31 @@ class MarkdownCodeRenderer extends StatelessWidget {
             MarkdownBody(
               data: segment.content,
               selectable: true,
-              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                p: Theme.of(context).textTheme.bodyMedium?.copyWith(color: CodexColors.text, height: 1.45),
-                code: const TextStyle(fontFamily: 'monospace', color: CodexColors.greenSoft),
-                codeblockDecoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(16)),
-                blockquoteDecoration: BoxDecoration(border: Border(left: BorderSide(color: CodexColors.green.withValues(alpha: 0.6), width: 3))),
-                a: const TextStyle(color: CodexColors.greenSoft),
-              ),
+              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context))
+                  .copyWith(
+                    p: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: CodexColors.text,
+                      height: 1.45,
+                    ),
+                    code: const TextStyle(
+                      fontFamily: 'monospace',
+                      color: CodexColors.greenSoft,
+                      fontSize: 12,
+                    ),
+                    codeblockDecoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    blockquoteDecoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: CodexColors.green.withValues(alpha: 0.6),
+                          width: 3,
+                        ),
+                      ),
+                    ),
+                    a: const TextStyle(color: CodexColors.greenSoft),
+                  ),
             ),
       ],
     );
@@ -56,7 +80,9 @@ List<_Segment> _splitFencedCode(String input) {
     if (match.start > cursor) {
       segments.add(_Segment.text(input.substring(cursor, match.start)));
     }
-    segments.add(_Segment.code(match.group(2) ?? '', (match.group(1) ?? '').trim()));
+    segments.add(
+      _Segment.code(match.group(2) ?? '', (match.group(1) ?? '').trim()),
+    );
     cursor = match.end;
   }
   if (cursor < input.length) {
@@ -71,8 +97,10 @@ List<_Segment> _splitFencedCode(String input) {
 class _Segment {
   const _Segment({required this.content, required this.isCode, this.language});
 
-  factory _Segment.text(String content) => _Segment(content: content, isCode: false);
-  factory _Segment.code(String content, String language) => _Segment(content: content, isCode: true, language: language);
+  factory _Segment.text(String content) =>
+      _Segment(content: content, isCode: false);
+  factory _Segment.code(String content, String language) =>
+      _Segment(content: content, isCode: true, language: language);
 
   final String content;
   final bool isCode;
