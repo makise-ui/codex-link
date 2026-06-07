@@ -1,4 +1,4 @@
-enum ConnectionPhase { idle, connecting, paired, connected, failed }
+enum ConnectionPhase { idle, connecting, paired, connected, offline, failed }
 
 enum ChatRole { user, assistant, system }
 

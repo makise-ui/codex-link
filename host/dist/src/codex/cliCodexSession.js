@@ -37,7 +37,7 @@ export class CliCodexSession {
             env: process.env,
             stdio: [stdinMode, "pipe", "pipe"],
         });
-        this.active = { runId, child, finished: false, jsonBuffer: new JsonLineBuffer(), messageCounter: 0 };
+        this.active = { runId, child, finished: false, jsonBuffer: new JsonLineBuffer(), messageCounter: 0, itemMessageIds: new Map() };
         this.emit({ type: "run.started", sessionId: this.sessionId, runId });
         this.emit({ type: "status", status: "running", sessionId: this.sessionId, runId });
         child.stdout.on("data", (chunk) => {
@@ -113,12 +113,20 @@ export class CliCodexSession {
                     void this.options.onThreadStarted?.(mapped.threadId);
                     return;
                 case "turn_started":
-                    this.emitCompleteMessage(runId, "thinking", "Thinking", "Thinking…\n");
+                    this.emitStartedMessage(runId, "thinking", "Thinking", "Thinking…\n");
+                    return;
+                case "message_started":
+                    this.emitStartedMessage(runId, mapped.messageKind, mapped.title, mapped.text?.endsWith("\n") ? mapped.text : mapped.text ? `${mapped.text}\n` : undefined, mapped.itemId);
                     return;
                 case "message":
-                    this.emitCompleteMessage(runId, mapped.messageKind, mapped.title, mapped.text.endsWith("\n") ? mapped.text : `${mapped.text}\n`);
+                    this.emitCompleteMessage(runId, mapped.messageKind, mapped.title, mapped.text.endsWith("\n") ? mapped.text : `${mapped.text}\n`, mapped.itemId);
+                    return;
+                case "message_completed":
+                    this.emitCompletedItem(runId, mapped.itemId);
                     return;
                 case "turn_completed":
+                    this.completeOpenMessages(runId);
+                    return;
                 case "ignored":
                     return;
             }
@@ -129,15 +137,64 @@ export class CliCodexSession {
             this.emitSystemMessage(runId, `Unparsed Codex output: ${error instanceof Error ? error.message : String(error)}\n`, "Raw Codex output");
         }
     }
-    emitCompleteMessage(runId, kind, title, text) {
+    emitStartedMessage(runId, kind, title, text, itemId) {
         const active = this.active;
         const messageNumber = active ? ++active.messageCounter : randomUUID();
         const messageId = `${runId}:${messageNumber}`;
+        if (active && itemId) {
+            active.itemMessageIds.set(itemId, messageId);
+        }
+        if (active && kind === "thinking") {
+            active.thinkingMessageId = messageId;
+        }
         this.emit({ type: "message.started", sessionId: this.sessionId, runId, messageId, kind, role: kind === "response" ? "assistant" : "system", title });
+        if (text) {
+            this.emit({ type: "message.delta", sessionId: this.sessionId, runId, messageId, text });
+        }
+        return messageId;
+    }
+    emitCompleteMessage(runId, kind, title, text, itemId) {
+        const active = this.active;
+        if (kind === "response") {
+            this.completeThinking(runId);
+        }
+        const existingMessageId = itemId ? active?.itemMessageIds.get(itemId) : undefined;
+        const messageId = existingMessageId ?? this.emitStartedMessage(runId, kind, title, undefined, itemId);
         this.emit({ type: "message.delta", sessionId: this.sessionId, runId, messageId, text });
         this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId });
-        const stream = kind === "response" ? "assistant" : "system";
-        this.emit({ type: "output.delta", sessionId: this.sessionId, runId, stream, text });
+        if (kind === "response") {
+            this.emit({ type: "output.delta", sessionId: this.sessionId, runId, stream: "assistant", text });
+        }
+        if (active && itemId) {
+            active.itemMessageIds.delete(itemId);
+        }
+    }
+    emitCompletedItem(runId, itemId) {
+        const active = this.active;
+        if (!active || !itemId)
+            return;
+        const messageId = active.itemMessageIds.get(itemId);
+        if (!messageId)
+            return;
+        this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId });
+        active.itemMessageIds.delete(itemId);
+    }
+    completeOpenMessages(runId) {
+        const active = this.active;
+        if (!active)
+            return;
+        this.completeThinking(runId);
+        for (const messageId of active.itemMessageIds.values()) {
+            this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId });
+        }
+        active.itemMessageIds.clear();
+    }
+    completeThinking(runId) {
+        const active = this.active;
+        if (!active?.thinkingMessageId)
+            return;
+        this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId: active.thinkingMessageId });
+        active.thinkingMessageId = undefined;
     }
     emitSystemMessage(runId, text, title) {
         this.emitCompleteMessage(runId, "system", title, text);

@@ -113,9 +113,16 @@ class _FloatingTopBar extends StatelessWidget {
               ],
             ),
           ),
-          if (controller.isRunning) ...[
+          if (controller.isOffline) ...[
+            const SoftPill(
+              label: 'Offline',
+              color: CodexColors.amber,
+              icon: Icons.cloud_off_rounded,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+          ] else if (controller.isRunning) ...[
             const _RunningIndicator(),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppSpacing.sm),
           ],
           ChatGptActionPill(
             children: [
@@ -209,7 +216,7 @@ class _MessageList extends StatelessWidget {
     });
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 900),
+        constraints: const BoxConstraints(maxWidth: 860),
         child: ListView.separated(
           controller: scrollController,
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
@@ -315,13 +322,23 @@ class _PromptComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.md,
+      ),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 900),
+          constraints: const BoxConstraints(maxWidth: 860),
           child: GlassCard(
-            padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
-            radius: 22,
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.sm,
+              AppSpacing.xs,
+              AppSpacing.xs,
+              AppSpacing.xs,
+            ),
+            radius: AppRadius.xl,
             color: CodexColors.composer,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -345,23 +362,26 @@ class _PromptComposer extends StatelessWidget {
                     enabled: controller.isConnected && !controller.isRunning,
                     cursorColor: CodexColors.text,
                     style: const TextStyle(
-                      fontSize: 14,
                       color: CodexColors.text,
                       height: 1.35,
                     ),
-                    decoration: const InputDecoration(
-                      hintText: 'Message Codex',
+                    decoration: InputDecoration(
+                      hintText: controller.isOffline
+                          ? 'Offline - cached chat'
+                          : 'Message Codex',
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
                       disabledBorder: InputBorder.none,
                       filled: false,
-                      contentPadding: EdgeInsets.symmetric(vertical: 11),
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.md,
+                      ),
                     ),
                     textInputAction: TextInputAction.newline,
                   ),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: AppSpacing.xs),
                 SizedBox.square(
                   dimension: 38,
                   child: Material(

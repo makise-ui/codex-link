@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'app_controller.dart';
 import 'chat/chat_screen.dart';
 import 'pairing/pairing_screen.dart';
-import 'protocol/bridge_messages.dart';
 import 'theme/app_theme.dart';
 
 class CodexLanApp extends StatefulWidget {
@@ -40,7 +39,7 @@ class _CodexLanAppState extends State<CodexLanApp> {
         theme: buildCodexTheme(),
         home: Consumer<AppController>(
           builder: (context, controller, _) {
-            if (controller.phase == ConnectionPhase.connected) {
+            if (controller.canShowChat) {
               return const ChatScreen();
             }
             return const PairingScreen();

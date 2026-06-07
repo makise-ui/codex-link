@@ -14,12 +14,12 @@ class MessageBubble extends StatelessWidget {
     final isUser = message.role == ChatRole.user;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 220),
+      duration: AppMotion.messageEnter,
       curve: Curves.easeOutCubic,
       builder: (context, value, child) => Opacity(
         opacity: value,
         child: Transform.translate(
-          offset: Offset(0, (1 - value) * 8),
+          offset: Offset(0, (1 - value) * AppSpacing.sm),
           child: Transform.scale(
             scale: 0.99 + (value * 0.01),
             alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -47,11 +47,16 @@ class _UserMessage extends StatelessWidget {
         constraints: BoxConstraints(
           maxWidth: MediaQuery.sizeOf(context).width * 0.68,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
         decoration: BoxDecoration(
           color: CodexColors.bubble,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+          borderRadius: BorderRadius.circular(AppRadius.xl),
+          border: Border.all(
+            color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+          ),
         ),
         child: Text(
           message.text,
@@ -72,20 +77,22 @@ class _AssistantMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (message.kind == AgentMessageKind.thinking && !message.complete) {
+    if (message.kind == AgentMessageKind.thinking) {
       return _ActivityCard(
-        text: message.text.trim().isEmpty ? 'Thinking' : message.text.trim(),
+        text: message.complete ? 'Ready' : 'Thinking through the request',
         title: message.title ?? 'Thinking',
         icon: Icons.auto_awesome_rounded,
-        active: true,
+        active: !message.complete,
+        complete: message.complete,
       );
     }
     if (message.kind == AgentMessageKind.executing) {
       return _ActivityCard(
         text: message.text.trim(),
         title: message.title ?? 'Running tool',
-        icon: Icons.terminal_rounded,
+        icon: _activityIconFor(message),
         active: !message.complete,
+        complete: message.complete,
       );
     }
     if (message.kind == AgentMessageKind.error) {
@@ -100,6 +107,7 @@ class _AssistantMessage extends StatelessWidget {
         title: message.title ?? 'System',
         icon: Icons.info_outline_rounded,
         active: false,
+        complete: false,
       );
     }
 
@@ -119,18 +127,39 @@ class _AssistantMessage extends StatelessWidget {
   }
 }
 
+IconData _activityIconFor(ChatMessage message) {
+  final haystack = '${message.title ?? ''} ${message.text}'.toLowerCase();
+  if (haystack.contains('read') || haystack.contains('open')) {
+    return Icons.folder_open_rounded;
+  }
+  if (haystack.contains('edit') ||
+      haystack.contains('write') ||
+      haystack.contains('patch') ||
+      haystack.contains('create')) {
+    return Icons.description_outlined;
+  }
+  if (haystack.contains('command') ||
+      haystack.contains('exec') ||
+      haystack.contains('shell')) {
+    return Icons.terminal_rounded;
+  }
+  return Icons.settings_suggest_rounded;
+}
+
 class _ActivityCard extends StatefulWidget {
   const _ActivityCard({
     required this.text,
     required this.title,
     required this.icon,
     required this.active,
+    required this.complete,
   });
 
   final String text;
   final String title;
   final IconData icon;
   final bool active;
+  final bool complete;
 
   @override
   State<_ActivityCard> createState() => _ActivityCardState();
@@ -143,10 +172,7 @@ class _ActivityCardState extends State<_ActivityCard>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    );
+    _controller = AnimationController(vsync: this, duration: AppMotion.pulse);
   }
 
   @override
@@ -185,11 +211,29 @@ class _ActivityCardState extends State<_ActivityCard>
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.md,
+          ),
           decoration: BoxDecoration(
-            color: CodexColors.panelHigh.withValues(alpha: 0.68),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            color: CodexColors.panelHigh.withValues(alpha: AppOpacity.panel),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(
+              color: widget.active
+                  ? CodexColors.greenSoft.withValues(alpha: AppOpacity.glow)
+                  : CodexColors.text.withValues(alpha: AppOpacity.hairline),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: CodexColors.greenSoft.withValues(
+                  alpha: widget.active ? 0.06 : 0,
+                ),
+                blurRadius: AppSpacing.xl,
+                offset: const Offset(0, AppSpacing.sm),
+              ),
+            ],
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -198,8 +242,9 @@ class _ActivityCardState extends State<_ActivityCard>
                 icon: widget.icon,
                 animation: _controller,
                 active: widget.active,
+                complete: widget.complete,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -220,20 +265,19 @@ class _ActivityCardState extends State<_ActivityCard>
                           ),
                         ),
                         if (widget.active) ...[
-                          const SizedBox(width: 5),
+                          const SizedBox(width: AppSpacing.sm),
                           _ThinkingDots(animation: _controller),
                         ],
                       ],
                     ),
                     if (widget.text.trim().isNotEmpty) ...[
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Text(
                         widget.text.trim(),
                         maxLines: 4,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: CodexColors.muted,
-                          fontSize: 13,
                           height: 1.35,
                         ),
                       ),
@@ -254,19 +298,21 @@ class _ActivityGlyph extends StatelessWidget {
     required this.icon,
     required this.animation,
     required this.active,
+    required this.complete,
   });
 
   final IconData icon;
   final Animation<double> animation;
   final bool active;
+  final bool complete;
 
   @override
   Widget build(BuildContext context) {
-    final iconWidget = Icon(
-      icon,
-      color: active ? CodexColors.greenSoft : CodexColors.muted,
-      size: 16,
-    );
+    final effectiveIcon = complete ? Icons.check_rounded : icon;
+    final effectiveColor = active || complete
+        ? CodexColors.greenSoft
+        : CodexColors.muted;
+    final iconWidget = Icon(effectiveIcon, color: effectiveColor, size: 16);
     return AnimatedBuilder(
       animation: animation,
       builder: (context, child) {
@@ -286,8 +332,10 @@ class _ActivityGlyph extends StatelessWidget {
         height: 28,
         decoration: BoxDecoration(
           color: CodexColors.composer,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          border: Border.all(
+            color: effectiveColor.withValues(alpha: AppOpacity.border),
+          ),
         ),
         child: Center(child: iconWidget),
       ),
@@ -313,7 +361,7 @@ class _ThinkingDots extends StatelessWidget {
               Container(
                 width: 4,
                 height: 4,
-                margin: const EdgeInsets.only(right: 3),
+                margin: const EdgeInsets.only(right: AppSpacing.xs),
                 decoration: BoxDecoration(
                   color: index == activeDot
                       ? CodexColors.greenSoft

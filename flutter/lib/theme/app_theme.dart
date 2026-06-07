@@ -21,6 +21,36 @@ class CodexColors {
   static const danger = Color(0xFFFF4A4A);
 }
 
+class AppSpacing {
+  static const xxs = 2.0;
+  static const xs = 4.0;
+  static const sm = 8.0;
+  static const md = 12.0;
+  static const lg = 16.0;
+  static const xl = 22.0;
+}
+
+class AppRadius {
+  static const sm = 10.0;
+  static const md = 14.0;
+  static const lg = 18.0;
+  static const xl = 22.0;
+  static const pill = 999.0;
+}
+
+class AppMotion {
+  static const quick = Duration(milliseconds: 180);
+  static const messageEnter = Duration(milliseconds: 240);
+  static const pulse = Duration(milliseconds: 1000);
+}
+
+class AppOpacity {
+  static const hairline = 0.08;
+  static const border = 0.12;
+  static const panel = 0.74;
+  static const glow = 0.22;
+}
+
 ThemeData buildCodexTheme() {
   final scheme = ColorScheme.fromSeed(
     seedColor: CodexColors.green,

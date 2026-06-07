@@ -13,6 +13,17 @@ process.stdin.on('end', () => {
 });
 process.stdin.resume();
 `;
+const fakeToolLifecycleScript = `
+process.stdout.write(JSON.stringify({ type: 'turn.started' }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: 'read-1', type: 'read_file', path: 'notes.txt' } }) + '\\n');
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { id: 'read-1', type: 'read_file', output: 'notes content' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: 'cmd-1', type: 'exec_command', command: 'pnpm test' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { id: 'cmd-1', type: 'exec_command', output: '2 tests passed' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done.' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'turn.completed' }) + '\\n');
+}, 20);
+`;
 describe("buildCodexArgs", () => {
     it("adds json, skip-git-repo-check, and workspace-write by default", () => {
         expect(buildCodexArgs("hello")).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write", "--", "hello"]);
@@ -81,6 +92,32 @@ describe("CliCodexSession", () => {
         const parsed = JSON.parse(assistant.trim());
         expect(parsed.argv).toEqual(["--", "--say exactly PHONE_PROMPT_OK"]);
         expect(parsed.stdin).toBe("");
+    });
+    it("streams tool lifecycle events as visible started, delta, and completed messages", async () => {
+        const session = new CliCodexSession({
+            command: process.execPath,
+            argsPrefix: ["-e", fakeToolLifecycleScript, "exec"],
+            workdir: process.cwd(),
+        });
+        const events = [];
+        session.onEvent((event) => events.push(event));
+        await session.sendPrompt("read notes and test");
+        await waitForCompletion(events);
+        const readStarted = events.find((event) => event.type === "message.started" && event.title === "Reading file");
+        const readCompleted = readStarted
+            ? events.find((event) => event.type === "message.completed" && event.messageId === readStarted.messageId)
+            : undefined;
+        const commandStarted = events.find((event) => event.type === "message.started" && event.title === "Running command");
+        const thinkingStarted = events.find((event) => event.type === "message.started" && event.kind === "thinking");
+        const duplicatedSystemThinking = events.some((event) => event.type === "output.delta" && event.stream === "system" && event.text.includes("Thinking"));
+        expect(readStarted).toBeDefined();
+        expect(readCompleted).toBeDefined();
+        expect(commandStarted).toBeDefined();
+        expect(thinkingStarted).toBeDefined();
+        expect(thinkingStarted && events.some((event) => event.type === "message.completed" && event.messageId === thinkingStarted.messageId)).toBe(true);
+        expect(events.some((event) => event.type === "message.delta" && event.text.includes("notes.txt"))).toBe(true);
+        expect(events.some((event) => event.type === "message.delta" && event.text.includes("2 tests passed"))).toBe(true);
+        expect(duplicatedSystemThinking).toBe(false);
     });
 });
 function outputText(events, stream) {

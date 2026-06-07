@@ -23,6 +23,20 @@ describe("Codex JSONL mapping", () => {
       mapCodexJsonEvent(
         parseCodexJsonLine('{"type":"item.completed","item":{"type":"exec_command","output":"pnpm test"}}'),
       ),
-    ).toEqual({ kind: "message", messageKind: "executing", title: "Exec Command", text: "pnpm test" });
+    ).toEqual({ kind: "message", messageKind: "executing", title: "Running command", text: "pnpm test", itemId: undefined });
+  });
+
+  it("maps started file and command actions to live executing events", () => {
+    expect(
+      mapCodexJsonEvent(
+        parseCodexJsonLine('{"type":"item.started","item":{"id":"read-1","type":"read_file","path":"notes.txt"}}'),
+      ),
+    ).toEqual({ kind: "message_started", messageKind: "executing", title: "Reading file", text: "notes.txt", itemId: "read-1" });
+
+    expect(
+      mapCodexJsonEvent(
+        parseCodexJsonLine('{"type":"item.started","item":{"id":"cmd-1","type":"exec_command","command":"pnpm test"}}'),
+      ),
+    ).toEqual({ kind: "message_started", messageKind: "executing", title: "Running command", text: "pnpm test", itemId: "cmd-1" });
   });
 });

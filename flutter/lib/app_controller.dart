@@ -43,6 +43,9 @@ class AppController extends ChangeNotifier {
   }
 
   bool get isConnected => phase == ConnectionPhase.connected;
+  bool get isOffline => phase == ConnectionPhase.offline;
+  bool get canShowChat =>
+      phase == ConnectionPhase.connected || phase == ConnectionPhase.offline;
   bool get isRunning => activeSession?.isRunning == true || activeRunId != null;
 
   Future<void> loadSavedCredentials() async {
@@ -206,6 +209,13 @@ class AppController extends ChangeNotifier {
           onMessage: _handleMessage,
           onError: (error) {
             if (generation != _connectGeneration) return;
+            if (phase == ConnectionPhase.connected) {
+              phase = ConnectionPhase.offline;
+              statusText = 'Offline. Showing cached chat.';
+              activeRunId = null;
+              notifyListeners();
+              return;
+            }
             phase = ConnectionPhase.failed;
             statusText = _friendlyBridgeError(error, url);
             _appendError(statusText);
@@ -214,8 +224,9 @@ class AppController extends ChangeNotifier {
           onDone: () {
             if (generation != _connectGeneration) return;
             if (phase == ConnectionPhase.connected) {
-              phase = ConnectionPhase.idle;
-              statusText = 'Bridge disconnected.';
+              phase = ConnectionPhase.offline;
+              activeRunId = null;
+              statusText = 'Offline. Showing cached chat.';
               notifyListeners();
             }
           },
