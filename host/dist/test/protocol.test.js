@@ -31,6 +31,13 @@ describe("protocol schemas", () => {
             commandId: "codex.test",
         });
     });
+    it("accepts password auth without exposing it through other auth messages", () => {
+        expect(parseClientMessage({ type: "auth.password", password: "local-pass", deviceName: "Pixel" })).toEqual({
+            type: "auth.password",
+            password: "local-pass",
+            deviceName: "Pixel",
+        });
+    });
     it("rejects empty prompts", () => {
         expect(() => parseClientMessage({ type: "prompt.send", sessionId: "default", prompt: "" })).toThrow();
     });

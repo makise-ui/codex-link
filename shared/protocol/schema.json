@@ -8,6 +8,7 @@
   "oneOf": [
     { "$ref": "#/$defs/PairingClaim" },
     { "$ref": "#/$defs/AuthResume" },
+    { "$ref": "#/$defs/AuthPassword" },
     { "$ref": "#/$defs/SessionStart" },
     { "$ref": "#/$defs/SessionList" },
     { "$ref": "#/$defs/SessionCreate" },
@@ -38,6 +39,15 @@
       "properties": {
         "type": { "const": "auth.resume" },
         "deviceToken": { "type": "string", "minLength": 16 }
+      }
+    },
+    "AuthPassword": {
+      "type": "object",
+      "required": ["type", "password", "deviceName"],
+      "properties": {
+        "type": { "const": "auth.password" },
+        "password": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "deviceName": { "type": "string", "minLength": 1, "maxLength": 80 }
       }
     },
     "SessionStart": {

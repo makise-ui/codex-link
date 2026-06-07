@@ -5,11 +5,13 @@ export class PairingStore {
     pairingTtlMs;
     activePairing = null;
     devicesByToken = new Map();
+    password;
     hostId;
     constructor(options = {}) {
         this.hostId = options.hostId ?? randomUUID();
         this.now = options.now ?? Date.now;
         this.pairingTtlMs = options.pairingTtlMs ?? 5 * 60 * 1000;
+        this.password = options.password;
     }
     createPairingPayload(url, insecureDevMode) {
         const token = randomToken(32);
@@ -51,6 +53,20 @@ export class PairingStore {
             return null;
         }
         device.lastSeenAt = this.now();
+        return device;
+    }
+    claimPassword(password, deviceName) {
+        if (!this.password || !safeEqual(this.password, password)) {
+            return null;
+        }
+        const device = {
+            id: randomUUID(),
+            name: deviceName.trim(),
+            token: randomToken(32),
+            pairedAt: this.now(),
+            lastSeenAt: this.now(),
+        };
+        this.devicesByToken.set(device.token, device);
         return device;
     }
     revoke(deviceToken) {

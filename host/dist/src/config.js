@@ -16,7 +16,8 @@ export function resolveConfig(argv = process.argv) {
         .option("--workspace <path>", "additional switchable workspace path. Can be provided multiple times", collectWorkspace, [])
         .option("--state-dir <path>", "directory for LAN bridge session state", ".codex-lan")
         .option("--sandbox <mode>", "Codex sandbox: read-only, workspace-write, or danger-full-access", parseSandboxMode, "workspace-write")
-        .option("--allow-yolo", "allow paired clients to switch a session to danger-full-access/yolo mode", false);
+        .option("--allow-yolo", "allow paired clients to switch a session to danger-full-access/yolo mode", false)
+        .option("--password <password>", "optional LAN password for app login; can also use CODEX_LAN_PASSWORD");
     program.parse(stripPnpmSeparator(argv));
     const opts = program.opts();
     if (!opts.insecureWsDev) {
@@ -37,6 +38,7 @@ export function resolveConfig(argv = process.argv) {
         stateDir,
         sandbox: opts.sandbox,
         allowYolo: opts.allowYolo || opts.sandbox === "danger-full-access",
+        password: opts.password ?? process.env.CODEX_LAN_PASSWORD,
         workspaces: workspacePaths.map((workspacePath, index) => ({
             id: index === 0 ? "default" : `workspace-${index + 1}`,
             label: path.basename(workspacePath) || workspacePath,

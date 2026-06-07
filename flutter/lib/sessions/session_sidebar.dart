@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../app_controller.dart';
 import '../protocol/bridge_messages.dart';
+import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 
 class SessionSidebar extends StatelessWidget {
@@ -71,7 +72,15 @@ class SessionSidebar extends StatelessWidget {
                 children: [
                   _WorkspacePicker(controller: controller),
                   const SizedBox(height: 8),
-                  _YoloSwitch(controller: controller),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const SettingsScreen(),
+                      ),
+                    ),
+                    icon: const Icon(Icons.settings_rounded),
+                    label: const Text('Settings'),
+                  ),
                   const SizedBox(height: 10),
                   FilledButton.icon(
                     onPressed: controller.createSession,
@@ -196,48 +205,6 @@ class _WorkspacePicker extends StatelessWidget {
               : (value) =>
                     value == null ? null : controller.switchWorkspace(value),
         ),
-      ),
-    );
-  }
-}
-
-class _YoloSwitch extends StatelessWidget {
-  const _YoloSwitch({required this.controller});
-
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = controller.activeSession?.mode == RunMode.yolo;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
-      decoration: BoxDecoration(
-        color: CodexColors.panelHigh,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: enabled ? CodexColors.danger : CodexColors.borderSoft,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.bolt_rounded,
-            color: enabled ? CodexColors.danger : CodexColors.muted,
-            size: 16,
-          ),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'YOLO mode',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-          ),
-          Switch(
-            value: enabled,
-            activeThumbColor: CodexColors.danger,
-            onChanged: controller.isRunning ? null : controller.setYolo,
-          ),
-        ],
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../app_controller.dart';
 import '../protocol/bridge_messages.dart';
 import '../sessions/session_sidebar.dart';
+import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 import 'message_bubble.dart';
 
@@ -17,9 +18,38 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _promptController = TextEditingController();
   final _scrollController = ScrollController();
+  AppController? _controller;
+  bool _wasRunning = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final nextController = context.read<AppController>();
+    if (_controller == nextController) return;
+    _controller?.removeListener(_handleControllerChanged);
+    _controller = nextController;
+    _wasRunning = nextController.isRunning;
+    nextController.addListener(_handleControllerChanged);
+  }
+
+  void _handleControllerChanged() {
+    final controller = _controller;
+    if (controller == null) return;
+    if (_wasRunning && !controller.isRunning && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(controller.statusText),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+    _wasRunning = controller.isRunning;
+  }
 
   @override
   void dispose() {
+    _controller?.removeListener(_handleControllerChanged);
     _promptController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -114,10 +144,13 @@ class _FloatingTopBar extends StatelessWidget {
             ),
           ),
           if (controller.isOffline) ...[
-            const SoftPill(
-              label: 'Offline',
-              color: CodexColors.amber,
-              icon: Icons.cloud_off_rounded,
+            GestureDetector(
+              onTap: controller.reconnect,
+              child: const SoftPill(
+                label: 'Offline',
+                color: CodexColors.amber,
+                icon: Icons.cloud_off_rounded,
+              ),
             ),
             const SizedBox(width: AppSpacing.sm),
           ] else if (controller.isRunning) ...[
@@ -139,57 +172,19 @@ class _FloatingTopBar extends StatelessWidget {
               IconButton(
                 tooltip: 'Session info',
                 onPressed: () => _showSessionInfo(context, controller),
-                icon: const Icon(Icons.more_vert_rounded, size: 21),
+                icon: const Icon(Icons.settings_rounded, size: 21),
               ),
             ],
           ),
-          if (session?.mode == RunMode.yolo) ...[
-            const SizedBox(width: 8),
-            const SoftPill(
-              label: 'YOLO',
-              color: CodexColors.danger,
-              icon: Icons.bolt_rounded,
-            ),
-          ],
         ],
       ),
     );
   }
 
   void _showSessionInfo(BuildContext context, AppController controller) {
-    final session = controller.activeSession;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: CodexColors.panel,
-      showDragHandle: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(18, 6, 18, 22),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              session?.title ?? 'Codex session',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              controller.statusText,
-              style: const TextStyle(color: CodexColors.muted, height: 1.35),
-            ),
-            const SizedBox(height: 12),
-            if (session != null)
-              Text(
-                session.workdir,
-                style: const TextStyle(
-                  color: CodexColors.dim,
-                  fontFamily: 'monospace',
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
   }
 }
 
@@ -205,6 +200,7 @@ class _MessageList extends StatelessWidget {
     if (messages.isEmpty) {
       return const _EmptyChatHero();
     }
+    final items = _timelineItems(messages);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (scrollController.hasClients) {
         scrollController.animateTo(
@@ -220,14 +216,63 @@ class _MessageList extends StatelessWidget {
         child: ListView.separated(
           controller: scrollController,
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
-          itemCount: messages.length,
+          itemCount: items.length,
           separatorBuilder: (_, _) => const SizedBox(height: 14),
-          itemBuilder: (context, index) =>
-              MessageBubble(message: messages[index]),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return switch (item) {
+              _SingleTimelineItem(:final message) => MessageBubble(
+                message: message,
+              ),
+              _ActivityTimelineItem(:final messages) => ActivityStackBubble(
+                messages: messages,
+              ),
+            };
+          },
         ),
       ),
     );
   }
+}
+
+sealed class _TimelineItem {}
+
+class _SingleTimelineItem extends _TimelineItem {
+  _SingleTimelineItem(this.message);
+
+  final ChatMessage message;
+}
+
+class _ActivityTimelineItem extends _TimelineItem {
+  _ActivityTimelineItem(this.messages);
+
+  final List<ChatMessage> messages;
+}
+
+List<_TimelineItem> _timelineItems(List<ChatMessage> messages) {
+  final items = <_TimelineItem>[];
+  final pendingActivity = <ChatMessage>[];
+
+  void flushActivity() {
+    if (pendingActivity.isNotEmpty) {
+      items.add(_ActivityTimelineItem(List<ChatMessage>.from(pendingActivity)));
+      pendingActivity.clear();
+    }
+  }
+
+  for (final message in messages) {
+    if (message.kind == AgentMessageKind.thinking && message.complete) {
+      continue;
+    }
+    if (message.kind == AgentMessageKind.executing) {
+      pendingActivity.add(message);
+      continue;
+    }
+    flushActivity();
+    items.add(_SingleTimelineItem(message));
+  }
+  flushActivity();
+  return items;
 }
 
 class _EmptyChatHero extends StatelessWidget {
@@ -270,22 +315,24 @@ class _CommandRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (controller.commands.isEmpty) return const SizedBox.shrink();
+    final commands = controller.commands
+        .where((command) => command.category != 'mode')
+        .toList();
+    if (commands.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: 42,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
         scrollDirection: Axis.horizontal,
-        itemCount: controller.commands.length,
+        itemCount: commands.length,
         separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
-          final command = controller.commands[index];
-          final isYolo = command.commandId == 'mode.yolo';
+          final command = commands[index];
           return ActionChip(
             avatar: Icon(
-              isYolo ? Icons.bolt_rounded : Icons.auto_fix_high_rounded,
+              Icons.auto_fix_high_rounded,
               size: 16,
-              color: isYolo ? CodexColors.danger : CodexColors.muted,
+              color: CodexColors.muted,
             ),
             label: Text(command.title),
             tooltip: command.description,
@@ -310,7 +357,7 @@ class _CommandRail extends StatelessWidget {
   }
 }
 
-class _PromptComposer extends StatelessWidget {
+class _PromptComposer extends StatefulWidget {
   const _PromptComposer({
     required this.controller,
     required this.textController,
@@ -320,7 +367,16 @@ class _PromptComposer extends StatelessWidget {
   final TextEditingController textController;
 
   @override
+  State<_PromptComposer> createState() => _PromptComposerState();
+}
+
+class _PromptComposerState extends State<_PromptComposer> {
+  bool _commandSheetOpen = false;
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final textController = widget.textController;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -379,6 +435,11 @@ class _PromptComposer extends StatelessWidget {
                       ),
                     ),
                     textInputAction: TextInputAction.newline,
+                    onChanged: (value) {
+                      if (value == '/' && !_commandSheetOpen) {
+                        _showCommandPicker(context);
+                      }
+                    },
                   ),
                 ),
                 const SizedBox(width: AppSpacing.xs),
@@ -413,6 +474,43 @@ class _PromptComposer extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _showCommandPicker(BuildContext context) async {
+    final commands = widget.controller.commands
+        .where((command) => command.category != 'mode')
+        .toList();
+    if (commands.isEmpty || !widget.controller.isConnected) return;
+    _commandSheetOpen = true;
+    final picked = await showModalBottomSheet<CodexCommandInfo>(
+      context: context,
+      backgroundColor: CodexColors.panel,
+      showDragHandle: true,
+      builder: (context) => ListView.separated(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.sm,
+          AppSpacing.lg,
+          AppSpacing.xl,
+        ),
+        itemCount: commands.length,
+        separatorBuilder: (_, _) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final command = commands[index];
+          return ListTile(
+            leading: const Icon(Icons.keyboard_command_key_rounded),
+            title: Text('/${command.title}'),
+            subtitle: Text(command.description),
+            onTap: () => Navigator.of(context).pop(command),
+          );
+        },
+      ),
+    );
+    _commandSheetOpen = false;
+    if (!mounted || picked == null) return;
+    widget.textController.clear();
+    widget.controller.runCommand(picked);
   }
 }
 

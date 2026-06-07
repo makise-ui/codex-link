@@ -152,7 +152,21 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
         return;
       }
 
-      send(ws, { type: "error", code: "auth.required", message: "Pairing or auth.resume is required before operational messages." });
+      if (message.type === "auth.password") {
+        const device = options.pairingStore.claimPassword(message.password, message.deviceName);
+        if (!device) {
+          send(ws, { type: "error", code: "auth.invalid", message: "Invalid host password." });
+          return;
+        }
+        state.authenticated = true;
+        state.device = device;
+        options.auditLog.record({ type: "device.authenticated", deviceId: device.id });
+        send(ws, { type: "auth.accepted", version: PROTOCOL_VERSION, deviceId: device.id, sessionId: options.sessionManager.getActiveSessionId() ?? "", deviceToken: device.token });
+        sendBootstrap(ws);
+        return;
+      }
+
+      send(ws, { type: "error", code: "auth.required", message: "Pairing, auth.resume, or auth.password is required before operational messages." });
       return;
     }
 
@@ -221,6 +235,10 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
       }
       case "pairing.claim":
       case "auth.resume": {
+        send(ws, { type: "error", code: "auth.already_authenticated", message: "This socket is already authenticated." });
+        return;
+      }
+      case "auth.password": {
         send(ws, { type: "error", code: "auth.already_authenticated", message: "This socket is already authenticated." });
         return;
       }

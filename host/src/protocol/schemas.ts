@@ -14,6 +14,12 @@ export const authResumeSchema = z.object({
   deviceToken: z.string().min(16),
 });
 
+export const authPasswordSchema = z.object({
+  type: z.literal("auth.password"),
+  password: z.string().min(1).max(256),
+  deviceName: z.string().trim().min(1).max(80),
+});
+
 export const sessionStartSchema = z.object({
   type: z.literal("session.start"),
   sessionId: sessionIdSchema.optional(),
@@ -94,6 +100,7 @@ export const pingSchema = z.object({
 export const clientMessageSchema = z.discriminatedUnion("type", [
   pairingClaimSchema,
   authResumeSchema,
+  authPasswordSchema,
   sessionStartSchema,
   sessionListSchema,
   sessionCreateSchema,

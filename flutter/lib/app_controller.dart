@@ -92,6 +92,29 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  Future<void> loginWithPassword(
+    String url,
+    String password,
+    String deviceName,
+  ) async {
+    final trimmedUrl = url.trim();
+    final trimmedPassword = password.trim();
+    if (trimmedUrl.isEmpty || trimmedPassword.isEmpty) {
+      phase = ConnectionPhase.failed;
+      statusText = 'Host URL and password are required.';
+      notifyListeners();
+      return;
+    }
+    _pendingUrl = trimmedUrl;
+    _connect(trimmedUrl, {
+      'type': 'auth.password',
+      'password': trimmedPassword,
+      'deviceName': deviceName.trim().isEmpty
+          ? 'Flutter Codex Controller'
+          : deviceName.trim(),
+    });
+  }
+
   Future<void> forgetSaved() async {
     await _store.clear();
     credentials = null;
@@ -267,8 +290,7 @@ class AppController extends ChangeNotifier {
         _acceptPairing(message);
         break;
       case 'auth.accepted':
-        phase = ConnectionPhase.connected;
-        statusText = 'Connected to Codex LAN.';
+        _acceptAuth(message);
         break;
       case 'session.list':
         _replaceSessions(message);
@@ -340,6 +362,22 @@ class AppController extends ChangeNotifier {
     final deviceId = message['deviceId'] as String?;
     phase = ConnectionPhase.connected;
     statusText = 'Paired and connected to Codex LAN.';
+    if (url != null && token != null && deviceId != null) {
+      credentials = BridgeCredentials(
+        url: url,
+        deviceToken: token,
+        deviceId: deviceId,
+      );
+      await _store.save(credentials!);
+    }
+  }
+
+  Future<void> _acceptAuth(Map<String, dynamic> message) async {
+    final url = _pendingUrl ?? credentials?.url;
+    final token = message['deviceToken'] as String?;
+    final deviceId = message['deviceId'] as String?;
+    phase = ConnectionPhase.connected;
+    statusText = 'Connected to Codex LAN.';
     if (url != null && token != null && deviceId != null) {
       credentials = BridgeCredentials(
         url: url,

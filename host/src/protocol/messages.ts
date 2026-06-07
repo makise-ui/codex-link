@@ -8,6 +8,7 @@ export type RunMode = "safe" | "yolo";
 export type ClientMessage =
   | PairingClaimMessage
   | AuthResumeMessage
+  | AuthPasswordMessage
   | SessionStartMessage
   | SessionListRequestMessage
   | SessionCreateMessage
@@ -32,6 +33,12 @@ export type PairingClaimMessage = {
 export type AuthResumeMessage = {
   type: "auth.resume";
   deviceToken: string;
+};
+
+export type AuthPasswordMessage = {
+  type: "auth.password";
+  password: string;
+  deviceName: string;
 };
 
 export type SessionStartMessage = {
@@ -174,6 +181,7 @@ export type AuthAcceptedMessage = {
   version: number;
   deviceId: string;
   sessionId: string;
+  deviceToken?: string;
 };
 
 export type SessionStartedMessage = {

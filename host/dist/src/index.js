@@ -12,7 +12,7 @@ const logger = pino({
 try {
     const config = resolveConfig();
     const url = `ws://${config.host}:${config.port}`;
-    const pairingStore = new PairingStore();
+    const pairingStore = new PairingStore({ password: config.password });
     const auditLog = new AuditLog(logger);
     const sessionManager = await CodexSessionManager.create({
         sessionMode: config.sessionMode,
@@ -40,6 +40,9 @@ try {
     }
     else {
         console.log("Pairing is disabled. Start with --pair to create a one-time Android/Flutter pairing token.");
+    }
+    if (config.password) {
+        console.log("Password login is enabled for this LAN bridge.");
     }
     const server = await startBridgeServer({
         host: config.host,

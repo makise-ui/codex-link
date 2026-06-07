@@ -78,13 +78,8 @@ class _AssistantMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (message.kind == AgentMessageKind.thinking) {
-      return _ActivityCard(
-        text: message.complete ? 'Ready' : 'Thinking through the request',
-        title: message.title ?? 'Thinking',
-        icon: Icons.auto_awesome_rounded,
-        active: !message.complete,
-        complete: message.complete,
-      );
+      if (message.complete) return const SizedBox.shrink();
+      return const _ThinkingLine();
     }
     if (message.kind == AgentMessageKind.executing) {
       return _ActivityCard(
@@ -121,6 +116,215 @@ class _AssistantMessage extends StatelessWidget {
             height: 1.5,
           ),
           child: MarkdownCodeRenderer(text: message.text),
+        ),
+      ),
+    );
+  }
+}
+
+class ActivityStackBubble extends StatefulWidget {
+  const ActivityStackBubble({super.key, required this.messages});
+
+  final List<ChatMessage> messages;
+
+  @override
+  State<ActivityStackBubble> createState() => _ActivityStackBubbleState();
+}
+
+class _ActivityStackBubbleState extends State<ActivityStackBubble> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final messages = widget.messages;
+    final active = messages.any((message) => !message.complete);
+    final summary = active
+        ? 'Running ${messages.length} ${messages.length == 1 ? 'action' : 'actions'}'
+        : messages.length == 1
+        ? _singleSummary(messages.first)
+        : '${messages.length} actions completed';
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 620),
+        child: Container(
+          key: const ValueKey('activity-card'),
+          decoration: BoxDecoration(
+            color: CodexColors.panelHigh.withValues(alpha: AppOpacity.panel),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(
+              color: active
+                  ? CodexColors.greenSoft.withValues(alpha: AppOpacity.glow)
+                  : CodexColors.text.withValues(alpha: AppOpacity.hairline),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              InkWell(
+                key: const ValueKey('activity-stack-toggle'),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Row(
+                    children: [
+                      Icon(
+                        active
+                            ? Icons.more_horiz_rounded
+                            : Icons.check_circle_rounded,
+                        color: active
+                            ? CodexColors.greenSoft
+                            : CodexColors.muted,
+                        size: 18,
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: Text(
+                          summary,
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      Icon(
+                        _expanded
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        color: CodexColors.muted,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              AnimatedCrossFade(
+                firstChild: const SizedBox.shrink(),
+                secondChild: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    0,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                  ),
+                  child: Column(
+                    children: [
+                      for (final message in messages)
+                        _ActivityStackRow(message: message),
+                    ],
+                  ),
+                ),
+                crossFadeState: _expanded
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                duration: AppMotion.quick,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _singleSummary(ChatMessage message) {
+    final title = message.title ?? 'Action';
+    if (title.toLowerCase().contains('command')) return 'Ran command';
+    return '$title completed';
+  }
+}
+
+class _ActivityStackRow extends StatelessWidget {
+  const _ActivityStackRow({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: CodexColors.ink2.withValues(alpha: 0.74),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(
+          color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(_activityIconFor(message), color: CodexColors.muted, size: 16),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message.title ?? 'Action',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                if (message.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    message.text.trim(),
+                    style: const TextStyle(
+                      color: CodexColors.muted,
+                      fontFamily: 'monospace',
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingLine extends StatefulWidget {
+  const _ThinkingLine();
+
+  @override
+  State<_ThinkingLine> createState() => _ThinkingLineState();
+}
+
+class _ThinkingLineState extends State<_ThinkingLine>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: AppMotion.pulse)
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Opacity(
+        opacity: 0.72,
+        child: Row(
+          key: const ValueKey('thinking-inline-row'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Thinking',
+              style: TextStyle(
+                color: CodexColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            _ThinkingDots(animation: _controller),
+          ],
         ),
       ),
     );

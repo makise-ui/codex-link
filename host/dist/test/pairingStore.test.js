@@ -20,4 +20,12 @@ describe("PairingStore", () => {
         now = 2_000;
         expect(store.claimPairing(payload.pairingToken, "Pixel")).toBeNull();
     });
+    it("authenticates a device with a configured host password", () => {
+        const store = new PairingStore({ password: "lan-secret" });
+        expect(store.claimPassword("wrong", "Pixel")).toBeNull();
+        const device = store.claimPassword("lan-secret", "Pixel");
+        expect(device?.name).toBe("Pixel");
+        expect(device?.token).toHaveLength(43);
+        expect(store.resume(device.token)?.id).toBe(device.id);
+    });
 });

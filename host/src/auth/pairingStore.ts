@@ -13,6 +13,7 @@ export type PairingStoreOptions = {
   hostId?: string;
   now?: () => number;
   pairingTtlMs?: number;
+  password?: string;
 };
 
 type ActivePairing = {
@@ -26,12 +27,14 @@ export class PairingStore {
   private readonly pairingTtlMs: number;
   private activePairing: ActivePairing | null = null;
   private readonly devicesByToken = new Map<string, PairedDevice>();
+  private readonly password?: string;
   readonly hostId: string;
 
   constructor(options: PairingStoreOptions = {}) {
     this.hostId = options.hostId ?? randomUUID();
     this.now = options.now ?? Date.now;
     this.pairingTtlMs = options.pairingTtlMs ?? 5 * 60 * 1000;
+    this.password = options.password;
   }
 
   createPairingPayload(url: string, insecureDevMode: boolean): PairingPayload {
@@ -79,6 +82,21 @@ export class PairingStore {
       return null;
     }
     device.lastSeenAt = this.now();
+    return device;
+  }
+
+  claimPassword(password: string, deviceName: string): PairedDevice | null {
+    if (!this.password || !safeEqual(this.password, password)) {
+      return null;
+    }
+    const device: PairedDevice = {
+      id: randomUUID(),
+      name: deviceName.trim(),
+      token: randomToken(32),
+      pairedAt: this.now(),
+      lastSeenAt: this.now(),
+    };
+    this.devicesByToken.set(device.token, device);
     return device;
   }
 
