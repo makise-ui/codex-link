@@ -73,6 +73,32 @@ void main() {
     expect(find.textContaining('flutter analyze'), findsOneWidget);
   });
 
+  testWidgets('shows read filename in collapsed activity summary', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: ActivityStackBubble(
+            messages: [
+              ChatMessage(
+                id: 'read-1',
+                role: ChatRole.system,
+                kind: AgentMessageKind.executing,
+                text: 'Reading file: lib/main.dart\nLines: 1-20',
+                createdAt: DateTime(2026),
+                title: 'Reading file',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Read main.dart'), findsOneWidget);
+  });
+
   testWidgets('renders file change events as visible timeline cards', (
     tester,
   ) async {
@@ -85,7 +111,8 @@ void main() {
               id: 'files-1',
               role: ChatRole.system,
               kind: AgentMessageKind.files,
-              text: 'added lib/new_file.dart\nmodified lib/chat.dart',
+              text:
+                  'added lib/new_file.dart\n+class NewFile {}\nmodified lib/chat.dart\n-old\n+new',
               createdAt: DateTime(2026),
               title: 'Files changed',
             ),
@@ -99,5 +126,8 @@ void main() {
     expect(find.text('lib/chat.dart'), findsOneWidget);
     expect(find.text('added'), findsOneWidget);
     expect(find.text('modified'), findsOneWidget);
+    expect(find.text('+class NewFile {}'), findsOneWidget);
+    expect(find.text('-old'), findsOneWidget);
+    expect(find.text('+new'), findsOneWidget);
   });
 }

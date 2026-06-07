@@ -645,7 +645,7 @@ class AppController extends ChangeNotifier {
         (_responseStreamPending[messageId] ?? '') + text;
     if (_responseStreamTimers.containsKey(messageId)) return;
     _responseStreamTimers[messageId] = Timer.periodic(
-      const Duration(milliseconds: 14),
+      const Duration(milliseconds: 12),
       (timer) {
         final pending = _responseStreamPending[messageId] ?? '';
         if (pending.isEmpty) {
@@ -686,7 +686,7 @@ class AppController extends ChangeNotifier {
 
   int _streamChunkLength(String pending) {
     if (pending.length <= 4) return pending.length;
-    final preferred = pending.length > 600 ? 18 : 10;
+    final preferred = pending.length > 600 ? 6 : 4;
     final limit = pending.length < preferred ? pending.length : preferred;
     final newline = pending.indexOf('\n');
     if (newline >= 0 && newline < limit) return newline + 1;
@@ -733,13 +733,16 @@ class AppController extends ChangeNotifier {
     final files = message['files'] as List<dynamic>? ?? const [];
     final lines = files
         .whereType<Map>()
-        .map((item) {
+        .expand((item) {
           final status = item['status'] as String? ?? 'modified';
           final path = item['path'] as String? ?? '';
-          if (path.trim().isEmpty) return null;
-          return '$status $path';
+          if (path.trim().isEmpty) return const <String>[];
+          final patch = item['patch'] as String?;
+          return [
+            '$status $path',
+            if (patch != null && patch.trim().isNotEmpty) ...patch.split('\n'),
+          ];
         })
-        .nonNulls
         .join('\n');
     if (lines.isEmpty) return;
     messagesBySession

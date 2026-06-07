@@ -355,6 +355,7 @@ export type DiffAvailableMessage = {
   files: Array<{
     path: string;
     status: "added" | "modified" | "deleted" | "renamed";
+    patch?: string;
   }>;
 };
 

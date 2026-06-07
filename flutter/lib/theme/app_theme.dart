@@ -41,6 +41,7 @@ class AppRadius {
 class AppMotion {
   static const quick = Duration(milliseconds: 180);
   static const messageEnter = Duration(milliseconds: 240);
+  static const scroll = Duration(milliseconds: 300);
   static const pulse = Duration(milliseconds: 1000);
 }
 

@@ -78,16 +78,46 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               if (wide) const SessionSidebar(),
               Expanded(
-                child: Column(
+                child: Stack(
                   children: [
-                    _FloatingTopBar(controller: controller, showMenu: !wide),
-                    Expanded(
+                    Positioned.fill(
                       child: _MessageList(scrollController: _scrollController),
                     ),
-                    _CommandRail(controller: controller),
-                    _PromptComposer(
-                      controller: controller,
-                      textController: _promptController,
+                    const Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _EdgeFade(top: true),
+                    ),
+                    const Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: _EdgeFade(top: false),
+                    ),
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _FloatingTopBar(
+                        controller: controller,
+                        showMenu: !wide,
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _CommandRail(controller: controller),
+                          _PromptComposer(
+                            controller: controller,
+                            textController: _promptController,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -205,10 +235,90 @@ class _FloatingTopBar extends StatelessWidget {
   }
 }
 
-class _MessageList extends StatelessWidget {
+class _EdgeFade extends StatelessWidget {
+  const _EdgeFade({required this.top});
+
+  final bool top;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: SizedBox(
+        height: top ? 118 : 176,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: top ? Alignment.topCenter : Alignment.bottomCenter,
+              end: top ? Alignment.bottomCenter : Alignment.topCenter,
+              colors: [
+                CodexColors.ink.withValues(alpha: 0.82),
+                CodexColors.ink.withValues(alpha: 0.28),
+                CodexColors.ink.withValues(alpha: 0),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageList extends StatefulWidget {
   const _MessageList({required this.scrollController});
 
   final ScrollController scrollController;
+
+  @override
+  State<_MessageList> createState() => _MessageListState();
+}
+
+class _MessageListState extends State<_MessageList> {
+  bool _showJumpToBottom = false;
+  int _lastItemCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.scrollController.addListener(_handleScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollController == widget.scrollController) return;
+    oldWidget.scrollController.removeListener(_handleScroll);
+    widget.scrollController.addListener(_handleScroll);
+  }
+
+  @override
+  void dispose() {
+    widget.scrollController.removeListener(_handleScroll);
+    super.dispose();
+  }
+
+  void _handleScroll() {
+    if (!widget.scrollController.hasClients) return;
+    final position = widget.scrollController.position;
+    final shouldShow = position.maxScrollExtent - position.pixels > 240;
+    if (shouldShow != _showJumpToBottom && mounted) {
+      setState(() => _showJumpToBottom = shouldShow);
+    }
+  }
+
+  void _scrollToBottom({bool animated = true}) {
+    if (!widget.scrollController.hasClients) return;
+    if (!animated) {
+      widget.scrollController.jumpTo(
+        widget.scrollController.position.maxScrollExtent,
+      );
+      return;
+    }
+    widget.scrollController.animateTo(
+      widget.scrollController.position.maxScrollExtent,
+      duration: AppMotion.scroll,
+      curve: Curves.easeOutCubic,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -222,36 +332,61 @@ class _MessageList extends StatelessWidget {
       isRunning: controller.isRunning,
       runId: controller.activeRunId ?? controller.activeSession?.activeRunId,
     );
+    final itemCountChanged = items.length != _lastItemCount;
+    final shouldAutoScroll = !_showJumpToBottom;
+    _lastItemCount = items.length;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (scrollController.hasClients) {
-        scrollController.animateTo(
-          scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-        );
+      if (shouldAutoScroll && widget.scrollController.hasClients) {
+        _scrollToBottom(animated: itemCountChanged);
       }
     });
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 860),
-        child: ListView.separated(
-          controller: scrollController,
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
-          itemCount: items.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 14),
-          itemBuilder: (context, index) {
-            final item = items[index];
-            return switch (item) {
-              _SingleTimelineItem(:final message) => MessageBubble(
-                message: message,
-              ),
-              _ActivityTimelineItem(:final messages) => ActivityStackBubble(
-                messages: messages,
-              ),
-            };
-          },
+    return Stack(
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: ListView.separated(
+              controller: widget.scrollController,
+              padding: const EdgeInsets.fromLTRB(16, 112, 16, 176),
+              itemCount: items.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 14),
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return switch (item) {
+                  _SingleTimelineItem(:final message) => MessageBubble(
+                    message: message,
+                  ),
+                  _ActivityTimelineItem(:final messages) => ActivityStackBubble(
+                    messages: messages,
+                  ),
+                };
+              },
+            ),
+          ),
         ),
-      ),
+        Positioned(
+          right: AppSpacing.lg,
+          bottom: 152,
+          child: AnimatedScale(
+            scale: _showJumpToBottom ? 1 : 0.82,
+            duration: AppMotion.quick,
+            curve: Curves.easeOutCubic,
+            child: AnimatedOpacity(
+              opacity: _showJumpToBottom ? 1 : 0,
+              duration: AppMotion.quick,
+              child: IgnorePointer(
+                ignoring: !_showJumpToBottom,
+                child: ChatGptCircleButton(
+                  icon: Icons.keyboard_arrow_down_rounded,
+                  size: 42,
+                  background: CodexColors.panelHigh,
+                  onPressed: _scrollToBottom,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -731,49 +866,34 @@ class _RunningIndicatorState extends State<_RunningIndicator>
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 32,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      width: 18,
+      height: 18,
+      padding: const EdgeInsets.all(AppSpacing.xs),
       decoration: BoxDecoration(
-        color: CodexColors.green.withValues(alpha: 0.12),
+        color: CodexColors.text.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: CodexColors.green.withValues(alpha: 0.22)),
+        border: Border.all(color: CodexColors.text.withValues(alpha: 0.12)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              final scale =
-                  0.72 +
-                  (0.28 *
-                      Curves.easeInOut.transform(
-                        _controller.value < 0.5
-                            ? _controller.value * 2
-                            : (1 - _controller.value) * 2,
-                      ));
-              return Transform.scale(scale: scale, child: child);
-            },
-            child: const SizedBox.square(
-              dimension: 7,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: CodexColors.greenSoft,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          final opacity =
+              0.58 +
+              (0.42 *
+                  Curves.easeInOut.transform(
+                    _controller.value < 0.5
+                        ? _controller.value * 2
+                        : (1 - _controller.value) * 2,
+                  ));
+          return Opacity(opacity: opacity, child: child);
+        },
+        child: const DecoratedBox(
+          decoration: BoxDecoration(
+            color: CodexColors.greenSoft,
+            shape: BoxShape.circle,
           ),
-          const SizedBox(width: 7),
-          const Text(
-            'Running',
-            style: TextStyle(
-              color: CodexColors.greenSoft,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
+          child: SizedBox.expand(),
+        ),
       ),
     );
   }

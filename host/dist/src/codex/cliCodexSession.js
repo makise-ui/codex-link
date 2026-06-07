@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { JsonLineBuffer, mapCodexJsonEvent, parseCodexJsonLine } from "./codexJsonEvents.js";
+const execFileAsync = promisify(execFile);
 export class CliCodexSession {
     options;
     sessionId;
@@ -123,7 +126,7 @@ export class CliCodexSession {
                     this.completeThinking(runId);
                     this.emitStartedMessage(runId, mapped.messageKind, mapped.title, mapped.text?.endsWith("\n") ? mapped.text : mapped.text ? `${mapped.text}\n` : undefined, mapped.itemId);
                     if (mapped.title === "Editing files" && mapped.text) {
-                        this.emitFileChanges(mapped.text);
+                        void this.emitFileChanges(mapped.text);
                     }
                     return;
                 case "message":
@@ -225,8 +228,8 @@ export class CliCodexSession {
     emitSystemMessage(runId, text, title) {
         this.emitCompleteMessage(runId, "system", title, text);
     }
-    emitFileChanges(text) {
-        const files = text
+    async emitFileChanges(text) {
+        const parsedFiles = text
             .split(/\r?\n/)
             .flatMap((line) => {
             const match = line.trim().match(/^(added|modified|deleted|renamed)\s+(.+)$/);
@@ -235,8 +238,32 @@ export class CliCodexSession {
             return [{ status: match[1], path: match[2] ?? "" }];
         })
             .filter((file) => file.path.trim().length > 0);
+        const files = await Promise.all(parsedFiles.map(async (file) => ({
+            ...file,
+            patch: await this.filePatchPreview(file.path, file.status),
+        })));
         if (files.length > 0) {
             this.emit({ type: "diff.available", sessionId: this.sessionId, files });
+        }
+    }
+    async filePatchPreview(filePath, status) {
+        const workdir = path.resolve(this.options.workdir);
+        const normalizedPath = filePath.replace(/\\/g, "/");
+        const gitPatch = await gitDiffPreview(workdir, normalizedPath);
+        if (gitPatch)
+            return gitPatch;
+        if (status !== "added")
+            return undefined;
+        const absolutePath = path.resolve(workdir, normalizedPath);
+        if (!isInsideDirectory(absolutePath, workdir))
+            return undefined;
+        try {
+            const raw = await readFile(absolutePath, "utf8");
+            const lines = raw.split(/\r?\n/).slice(0, 80).map((line) => `+${line}`);
+            return summarizePatchLines(lines);
+        }
+        catch {
+            return undefined;
         }
     }
     emit(event) {
@@ -268,4 +295,33 @@ function imageArgs(imagePaths) {
 }
 function removeCodexStdinNotice(text) {
     return text.replace(/(^|\r?\n)Reading additional input from stdin\.\.\.\r?\n?/g, "$1");
+}
+async function gitDiffPreview(workdir, filePath) {
+    try {
+        const { stdout } = await execFileAsync("git", ["diff", "--", filePath], {
+            cwd: workdir,
+            timeout: 1_500,
+            maxBuffer: 256 * 1024,
+        });
+        const lines = stdout
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("@@") || line.startsWith("+") || line.startsWith("-"))
+            .filter((line) => !line.startsWith("+++") && !line.startsWith("---"));
+        return summarizePatchLines(lines);
+    }
+    catch {
+        return undefined;
+    }
+}
+function summarizePatchLines(lines) {
+    const meaningful = lines.filter((line) => line.trim().length > 0);
+    if (meaningful.length === 0)
+        return undefined;
+    if (meaningful.length <= 80)
+        return meaningful.join("\n");
+    return [...meaningful.slice(0, 40), `... ${meaningful.length - 80} diff lines omitted ...`, ...meaningful.slice(-40)].join("\n");
+}
+function isInsideDirectory(targetPath, parentPath) {
+    const relative = path.relative(parentPath, targetPath);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }

@@ -483,7 +483,7 @@ export class CodexSessionManager {
       role: "system",
       kind: "files",
       title: "Files changed",
-      text: event.files.map((file) => `${file.status} ${file.path}`).join("\n"),
+      text: event.files.flatMap((file) => [`${file.status} ${file.path}`, ...(file.patch ? file.patch.split(/\r?\n/) : [])]).join("\n"),
       createdAt: new Date().toISOString(),
       complete: true,
     });

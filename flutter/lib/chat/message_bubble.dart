@@ -227,7 +227,10 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
   String _singleSummary(ChatMessage message) {
     final title = message.title ?? 'Action';
     final lower = title.toLowerCase();
-    if (lower.contains('reading')) return 'Read file';
+    if (lower.contains('reading')) {
+      final target = _activityTarget(message);
+      return target == null ? 'Read file' : 'Read $target';
+    }
     if (lower.contains('editing')) return 'Edited files';
     if (lower.contains('command')) return 'Ran command';
     return '$title completed';
@@ -243,6 +246,19 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
     final extra = labels.length > 3 ? ' +${labels.length - 3}' : '';
     return '$joined$extra';
   }
+}
+
+String? _activityTarget(ChatMessage message) {
+  final text = message.text.trim();
+  final explicit = RegExp(r"Reading file:\s*([^\n]+)").firstMatch(text);
+  final raw = explicit?.group(1) ?? (text.contains('\n') ? null : text);
+  if (raw == null || raw.trim().isEmpty) return null;
+  final normalized = raw.trim().replaceAll('\\', '/');
+  final parts = normalized
+      .split('/')
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  return parts.isEmpty ? null : parts.last;
 }
 
 class _ActivityStackRow extends StatelessWidget {
@@ -601,12 +617,7 @@ class _FileChangeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final files = message.text
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .map(_FileChange.fromLine)
-        .toList();
+    final files = _parseFileChanges(message.text);
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -654,23 +665,32 @@ class _FileChangeCard extends StatelessWidget {
               const SizedBox(height: 8),
               for (final file in files)
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Row(
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _StatusBadge(status: file.status),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          file.path,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: CodexColors.text,
-                            fontSize: 13,
-                            fontFamily: 'monospace',
+                      Row(
+                        children: [
+                          _StatusBadge(status: file.status),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              file.path,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: CodexColors.text,
+                                fontSize: 13,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
+                      if (file.patchLines.isNotEmpty) ...[
+                        const SizedBox(height: AppSpacing.xs),
+                        _PatchPreview(lines: file.patchLines),
+                      ],
                     ],
                   ),
                 ),
@@ -680,6 +700,61 @@ class _FileChangeCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PatchPreview extends StatelessWidget {
+  const _PatchPreview({required this.lines});
+
+  final List<String> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: CodexColors.ink2.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(
+          color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final line in lines.take(16))
+            Text(
+              line,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _patchLineColor(line),
+                fontFamily: 'monospace',
+                fontSize: 12,
+                height: 1.25,
+              ),
+            ),
+          if (lines.length > 16)
+            Text(
+              '... ${lines.length - 16} more diff lines',
+              style: const TextStyle(
+                color: CodexColors.dim,
+                fontFamily: 'monospace',
+                fontSize: 12,
+                height: 1.25,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+Color _patchLineColor(String line) {
+  if (line.startsWith('+')) return CodexColors.greenSoft;
+  if (line.startsWith('-')) return CodexColors.danger;
+  if (line.startsWith('@@')) return CodexColors.blue;
+  return CodexColors.muted;
 }
 
 class _StatusBadge extends StatelessWidget {
@@ -719,21 +794,55 @@ class _StatusBadge extends StatelessWidget {
 }
 
 class _FileChange {
-  const _FileChange({required this.status, required this.path});
-
-  factory _FileChange.fromLine(String line) {
-    final splitAt = line.indexOf(' ');
-    if (splitAt <= 0 || splitAt >= line.length - 1) {
-      return _FileChange(status: 'modified', path: line);
-    }
-    return _FileChange(
-      status: line.substring(0, splitAt),
-      path: line.substring(splitAt + 1),
-    );
-  }
+  const _FileChange({
+    required this.status,
+    required this.path,
+    this.patchLines = const [],
+  });
 
   final String status;
   final String path;
+  final List<String> patchLines;
+}
+
+List<_FileChange> _parseFileChanges(String text) {
+  final files = <_FileChange>[];
+  String? status;
+  String? path;
+  final patch = <String>[];
+
+  void flush() {
+    final currentStatus = status;
+    final currentPath = path;
+    if (currentStatus == null || currentPath == null) return;
+    files.add(
+      _FileChange(
+        status: currentStatus,
+        path: currentPath,
+        patchLines: List<String>.from(patch),
+      ),
+    );
+    patch.clear();
+  }
+
+  for (final rawLine in text.split('\n')) {
+    final line = rawLine.trimRight();
+    if (line.trim().isEmpty) continue;
+    final match = RegExp(
+      r"^(added|modified|deleted|renamed)\s+(.+)$",
+    ).firstMatch(line.trim());
+    if (match != null) {
+      flush();
+      status = match.group(1);
+      path = match.group(2);
+      continue;
+    }
+    if (status != null) {
+      patch.add(line);
+    }
+  }
+  flush();
+  return files;
 }
 
 class _ErrorBlock extends StatelessWidget {
