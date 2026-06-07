@@ -45,8 +45,11 @@ export class CodexSessionManager {
             active: workspace.id === activeWorkspaceId,
         }));
     }
-    async addWorkspace(workspacePath, sessionId) {
+    async addWorkspace(workspacePath, sessionId, options = {}) {
         const resolvedPath = path.resolve(workspacePath);
+        if (options.create) {
+            await mkdir(resolvedPath, { recursive: true });
+        }
         const stats = await stat(resolvedPath);
         if (!stats.isDirectory()) {
             throw new Error(`Workspace path is not a directory: ${resolvedPath}`);
@@ -193,6 +196,24 @@ export class CodexSessionManager {
         await this.saveAndEmit(record);
         return record;
     }
+    async setSessionConfig(sessionId, config) {
+        const record = this.requireSession(sessionId);
+        if (record.activeRunId) {
+            throw new Error("Cannot change model settings while a run is active.");
+        }
+        await this.closeAdapter(sessionId);
+        if (Object.prototype.hasOwnProperty.call(config, "model")) {
+            const model = config.model?.trim();
+            record.model = model || undefined;
+        }
+        if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort")) {
+            record.reasoningEffort = config.reasoningEffort;
+        }
+        record.updatedAt = new Date().toISOString();
+        this.activeSessionId = sessionId;
+        await this.saveAndEmit(record);
+        return record;
+    }
     async sendPrompt(sessionId, prompt, attachments = []) {
         const record = this.requireSession(sessionId);
         this.activeSessionId = sessionId;
@@ -289,6 +310,8 @@ export class CodexSessionManager {
                 command: this.options.codexCommand,
                 workdir: record.workdir,
                 sandbox: record.sandbox,
+                model: record.model,
+                reasoningEffort: record.reasoningEffort,
                 codexThreadId: record.codexThreadId,
                 onThreadStarted: (threadId) => {
                     void this.updateThreadId(record.sessionId, threadId).catch((error) => {
@@ -382,7 +405,7 @@ export class CodexSessionManager {
             existing.text += event.text;
             return true;
         }
-        if (event.text.trim().length === 0)
+        if (event.text.trim().length === 0 || isThinkingNoise(event.text))
             return false;
         this.appendHistory(event.sessionId, {
             messageId: event.messageId,
@@ -560,4 +583,7 @@ function isImageAttachment(attachment) {
     if (mimeType.startsWith("image/"))
         return true;
     return /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(attachment.name);
+}
+function isThinkingNoise(text) {
+    return text.trim().replace(/\.+$/, "").replace(/…$/, "").toLowerCase() === "thinking";
 }

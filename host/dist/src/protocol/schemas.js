@@ -1,6 +1,7 @@
 import { z } from "zod";
 const sessionIdSchema = z.string().trim().min(1);
 const runModeSchema = z.enum(["safe", "yolo"]);
+const reasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
 const attachmentSchema = z.object({
     name: z.string().trim().min(1).max(160),
     mimeType: z.string().trim().min(1).max(120).optional(),
@@ -47,6 +48,12 @@ export const sessionModeSetSchema = z.object({
     sessionId: sessionIdSchema,
     mode: runModeSchema,
 });
+export const sessionConfigSetSchema = z.object({
+    type: z.literal("session.config.set"),
+    sessionId: sessionIdSchema,
+    model: z.string().trim().max(120).optional(),
+    reasoningEffort: reasoningEffortSchema.optional(),
+});
 export const workspaceListSchema = z.object({
     type: z.literal("workspace.list"),
 });
@@ -54,6 +61,7 @@ export const workspaceAddSchema = z.object({
     type: z.literal("workspace.add"),
     path: z.string().trim().min(1).max(4096),
     sessionId: sessionIdSchema.optional(),
+    create: z.boolean().optional(),
 });
 export const workspaceSwitchSchema = z.object({
     type: z.literal("workspace.switch"),
@@ -106,6 +114,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     sessionRenameSchema,
     sessionDeleteSchema,
     sessionModeSetSchema,
+    sessionConfigSetSchema,
     workspaceListSchema,
     workspaceAddSchema,
     workspaceSwitchSchema,

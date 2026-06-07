@@ -30,6 +30,9 @@ class AppController extends ChangeNotifier {
   final List<CodexCommandInfo> commands = [];
   final List<ExternalSessionInfo> externalSessions = [];
   final Map<String, List<ChatMessage>> messagesBySession = {};
+  final Map<String, Timer> _responseStreamTimers = {};
+  final Map<String, String> _responseStreamPending = {};
+  final Set<String> _responseCompleteWhenStreamed = {};
 
   CodexSessionInfo? get activeSession {
     final id = activeSessionId;
@@ -47,7 +50,8 @@ class AppController extends ChangeNotifier {
   bool get isOffline => phase == ConnectionPhase.offline;
   bool get canShowChat =>
       phase == ConnectionPhase.connected || phase == ConnectionPhase.offline;
-  bool get isRunning => activeSession?.isRunning == true || activeRunId != null;
+  bool get isRunning =>
+      isConnected && (activeSession?.isRunning == true || activeRunId != null);
 
   Future<void> loadSavedCredentials() async {
     credentials = await _store.load();
@@ -164,6 +168,24 @@ class AppController extends ChangeNotifier {
   void switchWorkspace(String workspaceId) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
+    final workspace = workspaces
+        .where((item) => item.workspaceId == workspaceId)
+        .firstOrNull;
+    if (workspace != null) {
+      final index = sessions.indexWhere((item) => item.sessionId == sessionId);
+      if (index >= 0) {
+        sessions[index] = sessions[index].copyWith(
+          workspaceId: workspace.workspaceId,
+          workdir: workspace.path,
+        );
+      }
+      for (var i = 0; i < workspaces.length; i++) {
+        workspaces[i] = workspaces[i].copyWith(
+          active: workspaces[i].workspaceId == workspaceId,
+        );
+      }
+      notifyListeners();
+    }
     _send({
       'type': 'workspace.switch',
       'sessionId': sessionId,
@@ -171,15 +193,24 @@ class AppController extends ChangeNotifier {
     });
   }
 
-  void addWorkspacePath(String path) {
+  void addWorkspacePath(String path, {bool create = false}) {
     final trimmed = path.trim();
     if (trimmed.isEmpty) return;
     _send({
       'type': 'workspace.add',
       'path': trimmed,
+      if (create) 'create': true,
       if (activeSession?.sessionId != null)
         'sessionId': activeSession!.sessionId,
     });
+  }
+
+  void refreshExternalSessions() {
+    _send({'type': 'external.session.list'});
+  }
+
+  void refreshWorkspaces() {
+    _send({'type': 'workspace.list'});
   }
 
   void importExternalSession(ExternalSessionInfo session) {
@@ -198,6 +229,23 @@ class AppController extends ChangeNotifier {
       'sessionId': sessionId,
       'mode': enabled ? 'yolo' : 'safe',
     });
+  }
+
+  void setSessionConfig({String? model, String? reasoningEffort}) {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null) return;
+    final trimmedModel = model?.trim();
+    final message = <String, dynamic>{
+      'type': 'session.config.set',
+      'sessionId': sessionId,
+    };
+    if (trimmedModel != null) {
+      message['model'] = trimmedModel;
+    }
+    if (reasoningEffort != null && reasoningEffort.isNotEmpty) {
+      message['reasoningEffort'] = reasoningEffort;
+    }
+    _send(message);
   }
 
   void runCommand(CodexCommandInfo command) {
@@ -264,6 +312,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> disposeController() async {
+    _cancelResponseStreams();
     await _socket.close();
   }
 
@@ -476,6 +525,7 @@ class AppController extends ChangeNotifier {
   void _replaceMessageHistory(Map<String, dynamic> message) {
     final sessionId = message['sessionId'] as String?;
     if (sessionId == null || sessionId.isEmpty) return;
+    _cancelResponseStreams();
     messagesBySession[sessionId] =
         ((message['messages'] as List<dynamic>? ?? const []))
             .map(
@@ -483,7 +533,9 @@ class AppController extends ChangeNotifier {
                 Map<String, dynamic>.from(item as Map),
               ),
             )
-            .where((item) => item.id.isNotEmpty)
+            .where(
+              (item) => item.id.isNotEmpty && !_isReplayThinkingNoise(item),
+            )
             .toList();
   }
 
@@ -543,6 +595,10 @@ class AppController extends ChangeNotifier {
     final index = list.indexWhere((item) => item.id == messageId);
     if (index >= 0) {
       final current = list[index];
+      if (current.kind == AgentMessageKind.response && text.length > 24) {
+        _queueResponseText(sessionId, current.id, text);
+        return;
+      }
       final nextText =
           current.kind == AgentMessageKind.thinking &&
               current.text == 'Thinking…'
@@ -572,8 +628,80 @@ class AppController extends ChangeNotifier {
     if (list == null) return;
     final index = list.indexWhere((item) => item.id == messageId);
     if (index >= 0) {
+      if (list[index].kind == AgentMessageKind.response &&
+          (_responseStreamPending[messageId]?.isNotEmpty == true ||
+              _responseStreamTimers.containsKey(messageId))) {
+        if (messageId != null) {
+          _responseCompleteWhenStreamed.add(messageId);
+        }
+        return;
+      }
       list[index] = list[index].copyWith(complete: true);
     }
+  }
+
+  void _queueResponseText(String sessionId, String messageId, String text) {
+    _responseStreamPending[messageId] =
+        (_responseStreamPending[messageId] ?? '') + text;
+    if (_responseStreamTimers.containsKey(messageId)) return;
+    _responseStreamTimers[messageId] = Timer.periodic(
+      const Duration(milliseconds: 14),
+      (timer) {
+        final pending = _responseStreamPending[messageId] ?? '';
+        if (pending.isEmpty) {
+          timer.cancel();
+          _responseStreamTimers.remove(messageId);
+          _responseStreamPending.remove(messageId);
+          if (_responseCompleteWhenStreamed.remove(messageId)) {
+            _markMessageComplete(sessionId, messageId);
+          }
+          notifyListeners();
+          return;
+        }
+        final take = _streamChunkLength(pending);
+        final chunk = pending.substring(0, take);
+        _responseStreamPending[messageId] = pending.substring(take);
+        _appendTextToMessage(sessionId, messageId, chunk);
+        notifyListeners();
+      },
+    );
+  }
+
+  void _appendTextToMessage(String sessionId, String messageId, String text) {
+    final list = messagesBySession[sessionId];
+    if (list == null) return;
+    final index = list.indexWhere((item) => item.id == messageId);
+    if (index < 0) return;
+    list[index] = list[index].copyWith(text: list[index].text + text);
+  }
+
+  void _markMessageComplete(String sessionId, String messageId) {
+    final list = messagesBySession[sessionId];
+    if (list == null) return;
+    final index = list.indexWhere((item) => item.id == messageId);
+    if (index >= 0) {
+      list[index] = list[index].copyWith(complete: true);
+    }
+  }
+
+  int _streamChunkLength(String pending) {
+    if (pending.length <= 4) return pending.length;
+    final preferred = pending.length > 600 ? 18 : 10;
+    final limit = pending.length < preferred ? pending.length : preferred;
+    final newline = pending.indexOf('\n');
+    if (newline >= 0 && newline < limit) return newline + 1;
+    final space = pending.lastIndexOf(' ', limit);
+    if (space > 3) return space + 1;
+    return limit;
+  }
+
+  void _cancelResponseStreams() {
+    for (final timer in _responseStreamTimers.values) {
+      timer.cancel();
+    }
+    _responseStreamTimers.clear();
+    _responseStreamPending.clear();
+    _responseCompleteWhenStreamed.clear();
   }
 
   void _handleLegacyOutput(Map<String, dynamic> message) {
@@ -655,4 +783,12 @@ class AppController extends ChangeNotifier {
           ),
         );
   }
+}
+
+bool _isReplayThinkingNoise(ChatMessage message) {
+  final text = message.text.trim().replaceAll('.', '').replaceAll('…', '');
+  return message.role == ChatRole.system &&
+      (message.kind == AgentMessageKind.system ||
+          message.kind == AgentMessageKind.thinking) &&
+      text.toLowerCase() == 'thinking';
 }

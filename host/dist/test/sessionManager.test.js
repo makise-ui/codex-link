@@ -87,6 +87,71 @@ describe("CodexSessionManager", () => {
         expect(restored.getWorkspaces().some((item) => item.path === extraWorkspace)).toBe(true);
         await restored.close();
     });
+    it("can create a new host workspace directory from the client request", async () => {
+        const stateDir = await tempStateDir();
+        const parent = await tempStateDir();
+        const newWorkspace = path.join(parent, "created-from-phone");
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+        });
+        const [session] = manager.listSessions();
+        const workspace = await manager.addWorkspace(newWorkspace, session.sessionId, { create: true });
+        expect(workspace.path).toBe(newWorkspace);
+        expect(workspace.active).toBe(true);
+        expect(manager.getWorkspaces(session.sessionId).some((item) => item.path === newWorkspace && item.active)).toBe(true);
+        await manager.close();
+    });
+    it("persists model and reasoning effort with the session", async () => {
+        const stateDir = await tempStateDir();
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+        });
+        const [session] = manager.listSessions();
+        const updated = await manager.setSessionConfig(session.sessionId, { model: "gpt-5-codex", reasoningEffort: "xhigh" });
+        expect(updated.model).toBe("gpt-5-codex");
+        expect(updated.reasoningEffort).toBe("xhigh");
+        await manager.close();
+        const restored = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+        });
+        expect(restored.listSessions()[0]).toEqual(expect.objectContaining({ model: "gpt-5-codex", reasoningEffort: "xhigh" }));
+        await restored.close();
+    });
+    it("preserves model when only effort changes and clears model when requested", async () => {
+        const stateDir = await tempStateDir();
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+        });
+        const [session] = manager.listSessions();
+        await manager.setSessionConfig(session.sessionId, { model: "gpt-5-codex", reasoningEffort: "medium" });
+        const effortOnly = await manager.setSessionConfig(session.sessionId, { reasoningEffort: "low" });
+        expect(effortOnly.model).toBe("gpt-5-codex");
+        expect(effortOnly.reasoningEffort).toBe("low");
+        const cleared = await manager.setSessionConfig(session.sessionId, { model: "" });
+        expect(cleared.model).toBeUndefined();
+        expect(cleared.reasoningEffort).toBe("low");
+        await manager.close();
+    });
     it("stores user prompts and streamed agent messages as replayable history", async () => {
         vi.useFakeTimers();
         const stateDir = await tempStateDir();
@@ -107,7 +172,38 @@ describe("CodexSessionManager", () => {
         expect(history.some((message) => message.role === "user" && message.text === "hello history")).toBe(true);
         expect(history.some((message) => message.kind === "executing" && message.text.includes("Checking the LAN bridge"))).toBe(true);
         expect(history.every((message) => message.kind !== "thinking")).toBe(true);
+        expect(history.every((message) => message.text.trim() !== "Thinking…")).toBe(true);
         vi.useRealTimers();
+    });
+    it("replays saved history after a manager restart", async () => {
+        vi.useFakeTimers();
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        const first = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = first.listSessions();
+        await first.sendPrompt(session.sessionId, "persist this after restart");
+        await vi.advanceTimersByTimeAsync(2_000);
+        await first.close();
+        vi.useRealTimers();
+        const restarted = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const history = restarted.getSessionHistory(session.sessionId);
+        expect(history.some((message) => message.role === "user" && message.text === "persist this after restart")).toBe(true);
+        expect(history.some((message) => message.role === "assistant" && message.text.includes("Connected to the local Codex LAN bridge"))).toBe(true);
+        await restarted.close();
     });
 });
 async function tempStateDir() {

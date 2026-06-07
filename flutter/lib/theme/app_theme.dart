@@ -116,7 +116,7 @@ ThemeData buildCodexTheme() {
       centerTitle: false,
     ),
     drawerTheme: const DrawerThemeData(
-      backgroundColor: CodexColors.ink,
+      backgroundColor: Colors.transparent,
       scrimColor: Colors.black54,
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -175,11 +175,24 @@ class AnimatedChatGptBackdrop extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  Color(0xFF080809),
-                  Color(0xFF000000),
-                  Color(0xFF050606),
+                  Color(0xFF171719),
+                  Color(0xFF050506),
+                  Color(0xFF202023),
                 ],
-                stops: [0.0, 0.62, 1.0],
+                stops: [0.0, 0.58, 1.0],
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withValues(alpha: 0.055),
+                  Colors.transparent,
+                  Colors.white.withValues(alpha: 0.025),
+                ],
               ),
             ),
           ),

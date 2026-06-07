@@ -142,7 +142,7 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
         ? 'Running ${messages.length} ${messages.length == 1 ? 'action' : 'actions'}'
         : messages.length == 1
         ? _singleSummary(messages.first)
-        : '${messages.length} actions completed';
+        : _stackSummary(messages);
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -226,8 +226,22 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
 
   String _singleSummary(ChatMessage message) {
     final title = message.title ?? 'Action';
-    if (title.toLowerCase().contains('command')) return 'Ran command';
+    final lower = title.toLowerCase();
+    if (lower.contains('reading')) return 'Read file';
+    if (lower.contains('editing')) return 'Edited files';
+    if (lower.contains('command')) return 'Ran command';
     return '$title completed';
+  }
+
+  String _stackSummary(List<ChatMessage> messages) {
+    final labels = <String>[];
+    for (final message in messages) {
+      final label = _singleSummary(message);
+      if (!labels.contains(label)) labels.add(label);
+    }
+    final joined = labels.take(3).join(', ');
+    final extra = labels.length > 3 ? ' +${labels.length - 3}' : '';
+    return '$joined$extra';
   }
 }
 
@@ -568,7 +582,7 @@ class _ThinkingDots extends StatelessWidget {
                 margin: const EdgeInsets.only(right: AppSpacing.xs),
                 decoration: BoxDecoration(
                   color: index == activeDot
-                      ? CodexColors.greenSoft
+                      ? CodexColors.text
                       : CodexColors.dim,
                   shape: BoxShape.circle,
                 ),

@@ -5,6 +5,7 @@ export type MessageKind = "thinking" | "executing" | "response" | "system";
 export type StoredMessageKind = MessageKind | "files" | "error";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type RunMode = "safe" | "yolo";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export type ClientMessage =
   | PairingClaimMessage
@@ -16,6 +17,7 @@ export type ClientMessage =
   | SessionRenameMessage
   | SessionDeleteMessage
   | SessionModeSetMessage
+  | SessionConfigSetMessage
   | WorkspaceListRequestMessage
   | WorkspaceAddMessage
   | WorkspaceSwitchMessage
@@ -78,6 +80,13 @@ export type SessionModeSetMessage = {
   mode: RunMode;
 };
 
+export type SessionConfigSetMessage = {
+  type: "session.config.set";
+  sessionId: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+};
+
 export type WorkspaceListRequestMessage = {
   type: "workspace.list";
 };
@@ -86,6 +95,7 @@ export type WorkspaceAddMessage = {
   type: "workspace.add";
   path: string;
   sessionId?: string;
+  create?: boolean;
 };
 
 export type WorkspaceSwitchMessage = {
@@ -180,6 +190,8 @@ export type SessionRecord = {
   lastStatus: SessionStatus;
   mode: RunMode;
   sandbox: SandboxMode;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
 };
 
 export type StoredChatMessage = {

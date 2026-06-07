@@ -15,6 +15,7 @@
     { "$ref": "#/$defs/SessionRename" },
     { "$ref": "#/$defs/SessionDelete" },
     { "$ref": "#/$defs/SessionModeSet" },
+    { "$ref": "#/$defs/SessionConfigSet" },
     { "$ref": "#/$defs/WorkspaceList" },
     { "$ref": "#/$defs/WorkspaceAdd" },
     { "$ref": "#/$defs/WorkspaceSwitch" },
@@ -102,6 +103,16 @@
         "mode": { "enum": ["safe", "yolo"] }
       }
     },
+    "SessionConfigSet": {
+      "type": "object",
+      "required": ["type", "sessionId"],
+      "properties": {
+        "type": { "const": "session.config.set" },
+        "sessionId": { "type": "string" },
+        "model": { "type": "string", "maxLength": 120 },
+        "reasoningEffort": { "enum": ["low", "medium", "high", "xhigh"] }
+      }
+    },
     "WorkspaceList": {
       "type": "object",
       "required": ["type"],
@@ -113,7 +124,8 @@
       "properties": {
         "type": { "const": "workspace.add" },
         "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
-        "sessionId": { "type": "string" }
+        "sessionId": { "type": "string" },
+        "create": { "type": "boolean" }
       }
     },
     "WorkspaceSwitch": {

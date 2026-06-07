@@ -5,8 +5,24 @@ import '../app_controller.dart';
 import '../protocol/bridge_messages.dart';
 import '../theme/app_theme.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final controller = context.read<AppController>();
+      controller.refreshWorkspaces();
+      controller.refreshExternalSessions();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +76,11 @@ class SettingsScreen extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
+                title: 'Model',
+                children: [_ModelConfigSection(controller: controller)],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
                 title: 'Workspace',
                 children: [
                   _AddWorkspaceRow(controller: controller),
@@ -91,6 +112,32 @@ class SettingsScreen extends StatelessWidget {
               _Section(
                 title: 'External Codex sessions',
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      0,
+                      AppSpacing.md,
+                      AppSpacing.xs,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${controller.externalSessions.length} found in ~/.codex/sessions',
+                            style: const TextStyle(
+                              color: CodexColors.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: controller.refreshExternalSessions,
+                          icon: const Icon(Icons.refresh_rounded, size: 17),
+                          label: const Text('Refresh'),
+                        ),
+                      ],
+                    ),
+                  ),
                   if (controller.externalSessions.isEmpty)
                     const ListTile(
                       leading: Icon(Icons.history_toggle_off_rounded),
@@ -114,6 +161,115 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ModelConfigSection extends StatefulWidget {
+  const _ModelConfigSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_ModelConfigSection> createState() => _ModelConfigSectionState();
+}
+
+class _ModelConfigSectionState extends State<_ModelConfigSection> {
+  late final TextEditingController _modelController;
+
+  @override
+  void initState() {
+    super.initState();
+    _modelController = TextEditingController(
+      text: widget.controller.activeSession?.model ?? '',
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _ModelConfigSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final next = widget.controller.activeSession?.model ?? '';
+    if (_modelController.text != next &&
+        oldWidget.controller.activeSession?.sessionId !=
+            widget.controller.activeSession?.sessionId) {
+      _modelController.text = next;
+    }
+  }
+
+  @override
+  void dispose() {
+    _modelController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = widget.controller.activeSession;
+    final effort = session?.reasoningEffort ?? 'medium';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.md,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _modelController,
+            enabled: !widget.controller.isRunning,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.memory_rounded),
+              hintText: 'Default from Codex CLI',
+              labelText: 'Model',
+            ),
+            onSubmitted: (_) => _save(effort),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: AppSpacing.xs,
+            runSpacing: AppSpacing.xs,
+            children: [
+              for (final value in const ['low', 'medium', 'high', 'xhigh'])
+                ChoiceChip(
+                  label: Text(value),
+                  selected: effort == value,
+                  onSelected: widget.controller.isRunning
+                      ? null
+                      : (_) => _save(value),
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: CodexColors.panelHigh,
+                  selectedColor: CodexColors.green.withValues(alpha: 0.18),
+                  side: BorderSide(
+                    color: effort == value
+                        ? CodexColors.greenSoft.withValues(alpha: 0.36)
+                        : CodexColors.borderSoft,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              onPressed: widget.controller.isRunning
+                  ? null
+                  : () => _save(effort),
+              icon: const Icon(Icons.check_rounded, size: 17),
+              label: const Text('Apply'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _save(String effort) {
+    widget.controller.setSessionConfig(
+      model: _modelController.text,
+      reasoningEffort: effort,
     );
   }
 }
@@ -166,6 +322,12 @@ class _AddWorkspaceRowState extends State<_AddWorkspaceRow> {
             onPressed: widget.controller.isRunning ? null : _submit,
             icon: const Icon(Icons.add_rounded),
           ),
+          const SizedBox(width: AppSpacing.xs),
+          IconButton.filledTonal(
+            tooltip: 'Create workspace folder',
+            onPressed: widget.controller.isRunning ? null : _create,
+            icon: const Icon(Icons.create_new_folder_rounded),
+          ),
         ],
       ),
     );
@@ -173,6 +335,11 @@ class _AddWorkspaceRowState extends State<_AddWorkspaceRow> {
 
   void _submit() {
     widget.controller.addWorkspacePath(_controller.text);
+    _controller.clear();
+  }
+
+  void _create() {
+    widget.controller.addWorkspacePath(_controller.text, create: true);
     _controller.clear();
   }
 }

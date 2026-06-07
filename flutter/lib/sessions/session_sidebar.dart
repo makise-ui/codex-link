@@ -17,7 +17,13 @@ class SessionSidebar extends StatelessWidget {
     return SafeArea(
       child: Container(
         width: 288,
-        color: CodexColors.ink,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1B1B1D), Color(0xFF0A0A0B), Color(0xFF161618)],
+          ),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -136,6 +142,20 @@ class _SessionRow extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 82),
+                child: Text(
+                  session.workdirName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: CodexColors.dim,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
               if (session.isRunning)
                 const Padding(
                   padding: EdgeInsets.only(left: 8),
@@ -197,7 +217,10 @@ class _WorkspacePicker extends StatelessWidget {
             for (final workspace in controller.workspaces)
               DropdownMenuItem(
                 value: workspace.workspaceId,
-                child: Text(workspace.label, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  workspace.displayName,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
           ],
           onChanged: controller.isRunning

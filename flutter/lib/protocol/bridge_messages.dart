@@ -60,6 +60,8 @@ class CodexSessionInfo {
     required this.sandbox,
     this.activeRunId,
     this.codexThreadId,
+    this.model,
+    this.reasoningEffort,
   });
 
   final String sessionId;
@@ -72,28 +74,38 @@ class CodexSessionInfo {
   final String sandbox;
   final String? activeRunId;
   final String? codexThreadId;
+  final String? model;
+  final String? reasoningEffort;
 
   bool get isRunning =>
       activeRunId != null ||
       lastStatus == 'running' ||
       lastStatus == 'cancelling';
 
+  String get workdirName => _baseName(workdir);
+
   CodexSessionInfo copyWith({
     String? title,
+    String? workspaceId,
+    String? workdir,
     String? lastStatus,
     String? activeRunId,
+    String? model,
+    String? reasoningEffort,
   }) {
     return CodexSessionInfo(
       sessionId: sessionId,
       title: title ?? this.title,
       updatedAt: updatedAt,
-      workspaceId: workspaceId,
-      workdir: workdir,
+      workspaceId: workspaceId ?? this.workspaceId,
+      workdir: workdir ?? this.workdir,
       lastStatus: lastStatus ?? this.lastStatus,
       mode: mode,
       sandbox: sandbox,
       activeRunId: activeRunId ?? this.activeRunId,
       codexThreadId: codexThreadId,
+      model: model ?? this.model,
+      reasoningEffort: reasoningEffort ?? this.reasoningEffort,
     );
   }
 
@@ -109,6 +121,8 @@ class CodexSessionInfo {
       sandbox: json['sandbox'] as String? ?? 'workspace-write',
       activeRunId: json['activeRunId'] as String?,
       codexThreadId: json['codexThreadId'] as String?,
+      model: json['model'] as String?,
+      reasoningEffort: json['reasoningEffort'] as String?,
     );
   }
 }
@@ -126,6 +140,20 @@ class WorkspaceInfo {
   final String path;
   final bool active;
 
+  String get displayName {
+    final trimmed = label.trim();
+    return trimmed.isNotEmpty ? trimmed : _baseName(path);
+  }
+
+  WorkspaceInfo copyWith({bool? active}) {
+    return WorkspaceInfo(
+      workspaceId: workspaceId,
+      label: label,
+      path: path,
+      active: active ?? this.active,
+    );
+  }
+
   factory WorkspaceInfo.fromJson(Map<String, dynamic> json) {
     return WorkspaceInfo(
       workspaceId: json['workspaceId'] as String? ?? '',
@@ -134,6 +162,16 @@ class WorkspaceInfo {
       active: json['active'] as bool? ?? false,
     );
   }
+}
+
+String _baseName(String path) {
+  final normalized = path.replaceAll('\\', '/');
+  final parts = normalized
+      .split('/')
+      .where((part) => part.trim().isNotEmpty)
+      .toList(growable: false);
+  if (parts.isEmpty) return path;
+  return parts.last;
 }
 
 class CodexCommandInfo {

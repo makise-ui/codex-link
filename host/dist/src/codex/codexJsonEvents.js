@@ -49,7 +49,7 @@ function mapStartedItem(event) {
         kind: "message_started",
         messageKind: action.messageKind,
         title: action.title,
-        text: fileChangeText ?? extractActionText(item) ?? action.fallbackText,
+        text: fileChangeText ?? formatActionStartText(item, action) ?? action.fallbackText,
         itemId: readString(item, "id") ?? readString(event, "item_id"),
     };
 }
@@ -60,7 +60,7 @@ function mapCompletedItem(event) {
     if (itemType === "file_change" && itemId) {
         return { kind: "message_completed", itemId };
     }
-    const text = extractText(item) ?? extractText(event);
+    const text = formatActionCompletionText(item) ?? formatActionCompletionText(event);
     if (!text || text.trim().length === 0) {
         return itemId ? { kind: "message_completed", itemId } : { kind: "ignored" };
     }
@@ -81,6 +81,25 @@ function extractText(value) {
             return text;
     }
     return undefined;
+}
+function formatActionStartText(value, action) {
+    const command = extractActionText(value);
+    if (!command)
+        return undefined;
+    if (action.title !== "Reading file")
+        return command;
+    const metadata = readCommandMetadata(command);
+    if (!metadata)
+        return command;
+    return [
+        `Reading file: ${metadata.filePath}`,
+        metadata.lines ? `Lines: ${metadata.lines}` : undefined,
+        `Command: ${command}`,
+    ].filter(Boolean).join("\n");
+}
+function formatActionCompletionText(value) {
+    const text = extractText(value);
+    return text ? summarizeLongOutput(text) : undefined;
 }
 function formatFileChanges(value) {
     const changes = value.changes;
@@ -137,6 +156,19 @@ function extractActionText(value) {
     const nested = readObject(value, "tool") ?? readObject(value, "call") ?? readObject(value, "function");
     return nested ? extractActionText(nested) ?? extractText(nested) : undefined;
 }
+function summarizeLongOutput(text) {
+    const lineEnding = text.endsWith("\n") ? "\n" : "";
+    const lines = text.replace(/\n$/, "").split(/\r?\n/);
+    if (lines.length > 80) {
+        const first = lines.slice(0, 30);
+        const last = lines.slice(-30);
+        const omitted = lines.length - first.length - last.length;
+        return [...first, `... ${omitted} lines omitted ...`, ...last].join("\n") + lineEnding;
+    }
+    if (text.length <= 10_000)
+        return text;
+    return `${text.slice(0, 5_000)}\n... ${text.length - 10_000} characters omitted ...\n${text.slice(-5_000)}`;
+}
 function stringifyContent(value) {
     if (typeof value === "string")
         return value;
@@ -185,9 +217,13 @@ function readableTitle(value) {
         .join(" ") || "Codex Event";
 }
 function classifyItem(itemType, item) {
-    const haystack = `${itemType} ${readString(item, "name") ?? ""} ${readString(item, "tool_name") ?? ""}`.toLowerCase();
+    const actionText = extractActionText(item) ?? "";
+    const haystack = `${itemType} ${readString(item, "name") ?? ""} ${readString(item, "tool_name") ?? ""} ${actionText}`.toLowerCase();
     if (itemType === "file_change") {
         return { messageKind: "executing", title: "Editing files", fallbackText: "Applying file changes..." };
+    }
+    if (isReadCommand(actionText)) {
+        return { messageKind: "executing", title: "Reading file", fallbackText: "Reading file..." };
     }
     if (haystack.includes("read") || haystack.includes("open") || haystack.includes("cat")) {
         return { messageKind: "executing", title: "Reading file", fallbackText: "Reading file..." };
@@ -199,4 +235,54 @@ function classifyItem(itemType, item) {
         return { messageKind: "executing", title: haystack.includes("command") || haystack.includes("shell") || haystack.includes("exec") ? "Running command" : readableTitle(itemType), fallbackText: "Running tool..." };
     }
     return { messageKind: "system", title: readableTitle(itemType), fallbackText: "" };
+}
+function isReadCommand(command) {
+    if (!command.trim())
+        return false;
+    const payload = shellPayload(command).toLowerCase();
+    return /(^|\s)(cat|less|more)\s+/.test(payload) ||
+        /(^|\s)(head|tail)\b/.test(payload) ||
+        /(^|\s)sed\s+-n\s+/.test(payload);
+}
+function readCommandMetadata(command) {
+    const payload = shellPayload(command);
+    const sed = payload.match(/(?:^|\s)sed\s+-n\s+['"]?(\d+)(?:,(\d+))?p['"]?\s+(.+?)\s*$/);
+    if (sed) {
+        const filePath = stripShellQuotes(sed[3] ?? "");
+        if (filePath) {
+            return {
+                filePath,
+                lines: sed[2] ? `${sed[1]}-${sed[2]}` : `${sed[1]}`,
+            };
+        }
+    }
+    const cat = payload.match(/(?:^|\s)cat\s+(.+?)\s*$/);
+    if (cat) {
+        const filePath = stripShellQuotes(cat[1] ?? "");
+        if (filePath)
+            return { filePath };
+    }
+    const headTail = payload.match(/(?:^|\s)(head|tail)(?:\s+-n\s+(\d+))?\s+(.+?)\s*$/);
+    if (headTail) {
+        const filePath = stripShellQuotes(headTail[3] ?? "");
+        if (filePath) {
+            return {
+                filePath,
+                lines: headTail[2] ? `${headTail[1] === "tail" ? "last " : "first "}${headTail[2]}` : undefined,
+            };
+        }
+    }
+    return undefined;
+}
+function shellPayload(command) {
+    const trimmed = command.trim();
+    const shell = trimmed.match(/(?:^|\s)(?:\/usr\/bin\/|\/bin\/)?(?:zsh|bash|sh)\s+-lc\s+(.+)$/);
+    return shell ? stripShellQuotes(shell[1] ?? trimmed) : trimmed;
+}
+function stripShellQuotes(value) {
+    let output = value.trim();
+    if ((output.startsWith('"') && output.endsWith('"')) || (output.startsWith("'") && output.endsWith("'"))) {
+        output = output.slice(1, -1);
+    }
+    return output.replace(/\\"/g, '"').replace(/\\'/g, "'").trim();
 }

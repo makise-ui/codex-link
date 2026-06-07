@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import type { SandboxMode } from "../protocol/messages.js";
+import type { ReasoningEffort, SandboxMode } from "../protocol/messages.js";
 import type { CodexEvent, CodexSession, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 import { JsonLineBuffer, mapCodexJsonEvent, parseCodexJsonLine } from "./codexJsonEvents.js";
 
@@ -12,6 +12,8 @@ export type CliCodexSessionOptions = {
   command: string;
   workdir: string;
   sandbox?: SandboxMode;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
   codexThreadId?: string;
   argsPrefix?: string[];
   cancelGraceMs?: number;
@@ -58,6 +60,8 @@ export class CliCodexSession implements CodexSession {
       argsPrefix: this.options.argsPrefix,
       codexThreadId: this.codexThreadId,
       sandbox: this.options.sandbox ?? "workspace-write",
+      model: this.options.model,
+      reasoningEffort: this.options.reasoningEffort,
       imagePaths: options.attachments?.filter((attachment) => attachment.kind === "image").map((attachment) => attachment.path),
     });
     const stdinMode = process.stdin.isTTY ? "inherit" : "ignore";
@@ -161,6 +165,9 @@ export class CliCodexSession implements CodexSession {
         case "message_started":
           this.completeThinking(runId);
           this.emitStartedMessage(runId, mapped.messageKind, mapped.title, mapped.text?.endsWith("\n") ? mapped.text : mapped.text ? `${mapped.text}\n` : undefined, mapped.itemId);
+          if (mapped.title === "Editing files" && mapped.text) {
+            this.emitFileChanges(mapped.text);
+          }
           return;
         case "message":
           this.emitCompleteMessage(runId, mapped.messageKind, mapped.title, mapped.text.endsWith("\n") ? mapped.text : `${mapped.text}\n`, mapped.itemId);
@@ -264,6 +271,20 @@ export class CliCodexSession implements CodexSession {
     this.emitCompleteMessage(runId, "system", title, text);
   }
 
+  private emitFileChanges(text: string): void {
+    const files = text
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const match = line.trim().match(/^(added|modified|deleted|renamed)\s+(.+)$/);
+        if (!match) return [];
+        return [{ status: match[1] as "added" | "modified" | "deleted" | "renamed", path: match[2] ?? "" }];
+      })
+      .filter((file) => file.path.trim().length > 0);
+    if (files.length > 0) {
+      this.emit({ type: "diff.available", sessionId: this.sessionId, files });
+    }
+  }
+
   private emit(event: CodexEvent): void {
     for (const listener of this.listeners) {
       listener(event);
@@ -275,6 +296,8 @@ export type BuildCodexArgsOptions = {
   argsPrefix?: string[];
   codexThreadId?: string;
   sandbox?: SandboxMode;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
   imagePaths?: string[];
 };
 
@@ -284,9 +307,13 @@ export function buildCodexArgs(prompt: string, options: BuildCodexArgsOptions = 
   }
 
   const sandbox = options.sandbox ?? "workspace-write";
+  const configArgs = [
+    ...(options.model?.trim() ? ["--model", options.model.trim()] : []),
+    ...(options.reasoningEffort ? ["-c", `model_reasoning_effort="${options.reasoningEffort}"`] : []),
+  ];
   const globalArgs = sandbox === "danger-full-access"
-    ? ["--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
-    : ["--json", "--skip-git-repo-check", "--sandbox", sandbox];
+    ? ["--json", "--skip-git-repo-check", ...configArgs, "--dangerously-bypass-approvals-and-sandbox"]
+    : ["--json", "--skip-git-repo-check", ...configArgs, "--sandbox", sandbox];
   const images = imageArgs(options.imagePaths);
   if (options.codexThreadId) {
     return ["exec", ...globalArgs, ...images, "resume", options.codexThreadId, "--", prompt];

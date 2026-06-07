@@ -13,7 +13,7 @@ export async function listExternalSessions(options: ListExternalSessionsOptions 
   const root = options.root ?? path.join(os.homedir(), ".codex", "sessions");
   const limit = options.limit ?? 80;
   const files = await listJsonlFiles(root).catch(() => []);
-  const records = await Promise.all(files.map((filePath) => readExternalSession(filePath)));
+  const records = await Promise.all(files.map((filePath) => readExternalSession(filePath).catch(() => undefined)));
   return records
     .flatMap((record) => (record ? [record] : []))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -115,14 +115,19 @@ function titleFromLines(lines: string[]): string | undefined {
     const payload = event.payload;
     if (payload.type === "user_message") {
       const text = readString(payload, "message") ?? readString(payload, "text");
-      if (text) return compactTitle(text);
+      if (text && !isEnvironmentContext(text)) return compactTitle(text);
     }
     if (payload.type === "message" && payload.role === "user" && Array.isArray(payload.content)) {
       const text = payload.content.flatMap((part) => (isRecord(part) ? [readString(part, "text") ?? ""] : [])).join(" ");
-      if (text.trim()) return compactTitle(text);
+      if (text.trim() && !isEnvironmentContext(text)) return compactTitle(text);
     }
   }
   return undefined;
+}
+
+function isEnvironmentContext(value: string): boolean {
+  const compact = value.trim().toLowerCase();
+  return compact.startsWith("<environment_context>") || compact.startsWith("<cwd>") || compact.includes("<cwd>");
 }
 
 function compactTitle(value: string): string {

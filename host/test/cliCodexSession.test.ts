@@ -73,6 +73,22 @@ describe("buildCodexArgs", () => {
       "see image",
     ]);
   });
+
+  it("passes model and reasoning effort to codex exec", () => {
+    expect(buildCodexArgs("think hard", { model: "gpt-5-codex", reasoningEffort: "high" })).toEqual([
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "--model",
+      "gpt-5-codex",
+      "-c",
+      'model_reasoning_effort="high"',
+      "--sandbox",
+      "workspace-write",
+      "--",
+      "think hard",
+    ]);
+  });
 });
 
 describe("CliCodexSession", () => {
@@ -153,6 +169,7 @@ describe("CliCodexSession", () => {
     expect(thinkingStarted.every((message) => events.some((event) => event.type === "message.completed" && event.messageId === message.messageId))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("notes.txt"))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("added") && event.text.includes("notes.txt"))).toBe(true);
+    expect(events.some((event) => event.type === "diff.available" && event.files.some((file) => file.path.endsWith("notes.txt") && file.status === "added"))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("2 tests passed"))).toBe(true);
     expect(duplicatedSystemThinking).toBe(false);
   });

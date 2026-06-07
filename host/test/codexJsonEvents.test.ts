@@ -26,7 +26,7 @@ describe("Codex JSONL mapping", () => {
     ).toEqual({ kind: "message", messageKind: "executing", title: "Running command", text: "pnpm test", itemId: undefined });
   });
 
-  it("maps raw Codex command completions with aggregated output", () => {
+  it("maps raw Codex read-command completions with aggregated output", () => {
     expect(
       mapCodexJsonEvent(
         parseCodexJsonLine(
@@ -36,10 +36,56 @@ describe("Codex JSONL mapping", () => {
     ).toEqual({
       kind: "message",
       messageKind: "executing",
-      title: "Running command",
+      title: "Reading file",
       text: "Line 1\nLine 2\n",
       itemId: "cmd-1",
     });
+  });
+
+  it("formats sed read commands with file and line range metadata", () => {
+    expect(
+      mapCodexJsonEvent(
+        {
+          type: "item.started",
+          item: {
+            id: "cmd-1",
+            type: "command_execution",
+            command: "/usr/bin/zsh -lc \"sed -n '1,20p' notes.txt\"",
+          },
+        },
+      ),
+    ).toEqual({
+      kind: "message_started",
+      messageKind: "executing",
+      title: "Reading file",
+      text: "Reading file: notes.txt\nLines: 1-20\nCommand: /usr/bin/zsh -lc \"sed -n '1,20p' notes.txt\"",
+      itemId: "cmd-1",
+    });
+  });
+
+  it("summarizes very long command output with first and last lines", () => {
+    const output = Array.from({ length: 95 }, (_, index) => `line ${index + 1}`).join("\n");
+
+    const mapped = mapCodexJsonEvent({
+      type: "item.completed",
+      item: {
+        id: "cmd-1",
+        type: "command_execution",
+        command: "seq 1 95",
+        aggregated_output: output,
+      },
+    });
+
+    expect(mapped).toEqual(
+      expect.objectContaining({
+        kind: "message",
+        messageKind: "executing",
+        title: "Running command",
+      }),
+    );
+    expect(mapped.kind === "message" ? mapped.text : "").toContain("line 1");
+    expect(mapped.kind === "message" ? mapped.text : "").toContain("line 95");
+    expect(mapped.kind === "message" ? mapped.text : "").toContain("... 35 lines omitted ...");
   });
 
   it("maps raw Codex file changes to visible editing activity", () => {

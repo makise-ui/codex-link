@@ -63,7 +63,7 @@ void main() {
       ),
     );
 
-    expect(find.text('2 actions completed'), findsOneWidget);
+    expect(find.text('Ran command'), findsOneWidget);
     expect(find.text('pnpm test'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('activity-stack-toggle')));

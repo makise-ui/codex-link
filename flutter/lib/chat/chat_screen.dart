@@ -111,75 +111,89 @@ class _FloatingTopBar extends StatelessWidget {
     final session = controller.activeSession;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-      child: Row(
-        children: [
-          if (showMenu)
-            Builder(
-              builder: (context) => ChatGptCircleButton(
-                icon: Icons.menu_rounded,
-                onPressed: () => Scaffold.of(context).openDrawer(),
+      child: GlassCard(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        radius: AppRadius.xl,
+        color: CodexColors.panel.withValues(alpha: 0.56),
+        blur: 24,
+        child: Row(
+          children: [
+            if (showMenu)
+              Builder(
+                builder: (context) => ChatGptCircleButton(
+                  icon: Icons.menu_rounded,
+                  size: 38,
+                  background: CodexColors.composer,
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                ),
+              ),
+            if (showMenu) const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    session?.title ?? 'Codex',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    [
+                      if (session?.workdirName.isNotEmpty == true)
+                        session!.workdirName,
+                      controller.statusText,
+                    ].join(' • '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: CodexColors.dim,
+                      fontSize: 12,
+                      height: 1.1,
+                    ),
+                  ),
+                ],
               ),
             ),
-          if (showMenu) const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  session?.title ?? 'Codex',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium,
+            if (controller.isOffline) ...[
+              GestureDetector(
+                onTap: controller.reconnect,
+                child: const SoftPill(
+                  label: 'Offline',
+                  color: CodexColors.amber,
+                  icon: Icons.cloud_off_rounded,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  controller.statusText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: CodexColors.dim,
-                    fontSize: 12,
-                    height: 1.1,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+            ] else if (controller.isRunning) ...[
+              const _RunningIndicator(),
+              const SizedBox(width: AppSpacing.sm),
+            ],
+            ChatGptActionPill(
+              children: [
+                IconButton(
+                  tooltip: controller.isRunning ? 'Stop' : 'New chat',
+                  onPressed: controller.isRunning
+                      ? controller.cancelRun
+                      : controller.createSession,
+                  icon: Icon(
+                    controller.isRunning
+                        ? Icons.stop_rounded
+                        : Icons.edit_square,
+                    size: 20,
                   ),
+                ),
+                IconButton(
+                  tooltip: 'Session info',
+                  onPressed: () => _showSessionInfo(context, controller),
+                  icon: const Icon(Icons.settings_rounded, size: 21),
                 ),
               ],
             ),
-          ),
-          if (controller.isOffline) ...[
-            GestureDetector(
-              onTap: controller.reconnect,
-              child: const SoftPill(
-                label: 'Offline',
-                color: CodexColors.amber,
-                icon: Icons.cloud_off_rounded,
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-          ] else if (controller.isRunning) ...[
-            const _RunningIndicator(),
-            const SizedBox(width: AppSpacing.sm),
           ],
-          ChatGptActionPill(
-            children: [
-              IconButton(
-                tooltip: controller.isRunning ? 'Stop' : 'New chat',
-                onPressed: controller.isRunning
-                    ? controller.cancelRun
-                    : controller.createSession,
-                icon: Icon(
-                  controller.isRunning ? Icons.stop_rounded : Icons.edit_square,
-                  size: 20,
-                ),
-              ),
-              IconButton(
-                tooltip: 'Session info',
-                onPressed: () => _showSessionInfo(context, controller),
-                icon: const Icon(Icons.settings_rounded, size: 21),
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -200,10 +214,14 @@ class _MessageList extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final messages = controller.activeMessages;
-    if (messages.isEmpty) {
+    if (messages.isEmpty && !controller.isRunning) {
       return const _EmptyChatHero();
     }
-    final items = _timelineItems(messages);
+    final items = _timelineItems(
+      messages,
+      isRunning: controller.isRunning,
+      runId: controller.activeRunId ?? controller.activeSession?.activeRunId,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (scrollController.hasClients) {
         scrollController.animateTo(
@@ -252,9 +270,14 @@ class _ActivityTimelineItem extends _TimelineItem {
   final List<ChatMessage> messages;
 }
 
-List<_TimelineItem> _timelineItems(List<ChatMessage> messages) {
+List<_TimelineItem> _timelineItems(
+  List<ChatMessage> messages, {
+  bool isRunning = false,
+  String? runId,
+}) {
   final items = <_TimelineItem>[];
   final pendingActivity = <ChatMessage>[];
+  var hasActiveLiveItem = false;
 
   void flushActivity() {
     if (pendingActivity.isNotEmpty) {
@@ -264,6 +287,12 @@ List<_TimelineItem> _timelineItems(List<ChatMessage> messages) {
   }
 
   for (final message in messages) {
+    if (!message.complete &&
+        (message.kind == AgentMessageKind.thinking ||
+            message.kind == AgentMessageKind.executing ||
+            message.kind == AgentMessageKind.response)) {
+      hasActiveLiveItem = true;
+    }
     if (message.kind == AgentMessageKind.thinking && message.complete) {
       continue;
     }
@@ -275,6 +304,22 @@ List<_TimelineItem> _timelineItems(List<ChatMessage> messages) {
     items.add(_SingleTimelineItem(message));
   }
   flushActivity();
+  if (isRunning && !hasActiveLiveItem) {
+    items.add(
+      _SingleTimelineItem(
+        ChatMessage(
+          id: 'live-thinking-${runId ?? 'active'}',
+          role: ChatRole.system,
+          kind: AgentMessageKind.thinking,
+          text: 'Thinking…',
+          title: 'Thinking',
+          runId: runId,
+          createdAt: DateTime.now(),
+          complete: false,
+        ),
+      ),
+    );
+  }
   return items;
 }
 
@@ -399,7 +444,8 @@ class _PromptComposerState extends State<_PromptComposer> {
               AppSpacing.xs,
             ),
             radius: AppRadius.xl,
-            color: CodexColors.composer,
+            color: CodexColors.composer.withValues(alpha: 0.72),
+            blur: 24,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

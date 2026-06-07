@@ -164,12 +164,20 @@ export async function startBridgeServer(options) {
                 sendSessionList(ws);
                 return;
             }
+            case "session.config.set": {
+                await options.sessionManager.setSessionConfig(message.sessionId, {
+                    model: message.model,
+                    reasoningEffort: message.reasoningEffort,
+                });
+                sendSessionList(ws);
+                return;
+            }
             case "workspace.list": {
                 sendWorkspaceList(ws);
                 return;
             }
             case "workspace.add": {
-                await options.sessionManager.addWorkspace(message.path, message.sessionId);
+                await options.sessionManager.addWorkspace(message.path, message.sessionId, { create: message.create });
                 sendWorkspaceList(ws, message.sessionId);
                 sendSessionList(ws);
                 return;

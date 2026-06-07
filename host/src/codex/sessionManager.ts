@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { ExternalSessionRecord, PromptAttachment, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { ExternalSessionRecord, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceRecord } from "../protocol/messages.js";
 import type { CodexEvent, CodexSession, PreparedAttachment, SendPromptResult } from "./codexSession.js";
 import { CliCodexSession } from "./cliCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
@@ -71,8 +71,11 @@ export class CodexSessionManager {
     }));
   }
 
-  async addWorkspace(workspacePath: string, sessionId?: string): Promise<WorkspaceRecord> {
+  async addWorkspace(workspacePath: string, sessionId?: string, options: { create?: boolean } = {}): Promise<WorkspaceRecord> {
     const resolvedPath = path.resolve(workspacePath);
+    if (options.create) {
+      await mkdir(resolvedPath, { recursive: true });
+    }
     const stats = await stat(resolvedPath);
     if (!stats.isDirectory()) {
       throw new Error(`Workspace path is not a directory: ${resolvedPath}`);
@@ -234,6 +237,26 @@ export class CodexSessionManager {
     return record;
   }
 
+  async setSessionConfig(sessionId: string, config: { model?: string; reasoningEffort?: ReasoningEffort }): Promise<SessionRecord> {
+    const record = this.requireSession(sessionId);
+    if (record.activeRunId) {
+      throw new Error("Cannot change model settings while a run is active.");
+    }
+
+    await this.closeAdapter(sessionId);
+    if (Object.prototype.hasOwnProperty.call(config, "model")) {
+      const model = config.model?.trim();
+      record.model = model || undefined;
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort")) {
+      record.reasoningEffort = config.reasoningEffort;
+    }
+    record.updatedAt = new Date().toISOString();
+    this.activeSessionId = sessionId;
+    await this.saveAndEmit(record);
+    return record;
+  }
+
   async sendPrompt(sessionId: string, prompt: string, attachments: PromptAttachment[] = []): Promise<SendPromptResult> {
     const record = this.requireSession(sessionId);
     this.activeSessionId = sessionId;
@@ -336,6 +359,8 @@ export class CodexSessionManager {
           command: this.options.codexCommand,
           workdir: record.workdir,
           sandbox: record.sandbox,
+          model: record.model,
+          reasoningEffort: record.reasoningEffort,
           codexThreadId: record.codexThreadId,
           onThreadStarted: (threadId) => {
             void this.updateThreadId(record.sessionId, threadId).catch((error) => {
@@ -431,7 +456,7 @@ export class CodexSessionManager {
       existing.text += event.text;
       return true;
     }
-    if (event.text.trim().length === 0) return false;
+    if (event.text.trim().length === 0 || isThinkingNoise(event.text)) return false;
     this.appendHistory(event.sessionId, {
       messageId: event.messageId,
       role: "system",
@@ -611,4 +636,8 @@ function isImageAttachment(attachment: PromptAttachment): boolean {
   const mimeType = attachment.mimeType?.toLowerCase() ?? "";
   if (mimeType.startsWith("image/")) return true;
   return /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(attachment.name);
+}
+
+function isThinkingNoise(text: string): boolean {
+  return text.trim().replace(/\.+$/, "").replace(/…$/, "").toLowerCase() === "thinking";
 }

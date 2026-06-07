@@ -29,6 +29,8 @@ export class CliCodexSession {
             argsPrefix: this.options.argsPrefix,
             codexThreadId: this.codexThreadId,
             sandbox: this.options.sandbox ?? "workspace-write",
+            model: this.options.model,
+            reasoningEffort: this.options.reasoningEffort,
             imagePaths: options.attachments?.filter((attachment) => attachment.kind === "image").map((attachment) => attachment.path),
         });
         const stdinMode = process.stdin.isTTY ? "inherit" : "ignore";
@@ -120,6 +122,9 @@ export class CliCodexSession {
                 case "message_started":
                     this.completeThinking(runId);
                     this.emitStartedMessage(runId, mapped.messageKind, mapped.title, mapped.text?.endsWith("\n") ? mapped.text : mapped.text ? `${mapped.text}\n` : undefined, mapped.itemId);
+                    if (mapped.title === "Editing files" && mapped.text) {
+                        this.emitFileChanges(mapped.text);
+                    }
                     return;
                 case "message":
                     this.emitCompleteMessage(runId, mapped.messageKind, mapped.title, mapped.text.endsWith("\n") ? mapped.text : `${mapped.text}\n`, mapped.itemId);
@@ -220,6 +225,20 @@ export class CliCodexSession {
     emitSystemMessage(runId, text, title) {
         this.emitCompleteMessage(runId, "system", title, text);
     }
+    emitFileChanges(text) {
+        const files = text
+            .split(/\r?\n/)
+            .flatMap((line) => {
+            const match = line.trim().match(/^(added|modified|deleted|renamed)\s+(.+)$/);
+            if (!match)
+                return [];
+            return [{ status: match[1], path: match[2] ?? "" }];
+        })
+            .filter((file) => file.path.trim().length > 0);
+        if (files.length > 0) {
+            this.emit({ type: "diff.available", sessionId: this.sessionId, files });
+        }
+    }
     emit(event) {
         for (const listener of this.listeners) {
             listener(event);
@@ -231,9 +250,13 @@ export function buildCodexArgs(prompt, options = {}) {
         return [...options.argsPrefix, ...imageArgs(options.imagePaths), "--", prompt];
     }
     const sandbox = options.sandbox ?? "workspace-write";
+    const configArgs = [
+        ...(options.model?.trim() ? ["--model", options.model.trim()] : []),
+        ...(options.reasoningEffort ? ["-c", `model_reasoning_effort="${options.reasoningEffort}"`] : []),
+    ];
     const globalArgs = sandbox === "danger-full-access"
-        ? ["--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
-        : ["--json", "--skip-git-repo-check", "--sandbox", sandbox];
+        ? ["--json", "--skip-git-repo-check", ...configArgs, "--dangerously-bypass-approvals-and-sandbox"]
+        : ["--json", "--skip-git-repo-check", ...configArgs, "--sandbox", sandbox];
     const images = imageArgs(options.imagePaths);
     if (options.codexThreadId) {
         return ["exec", ...globalArgs, ...images, "resume", options.codexThreadId, "--", prompt];

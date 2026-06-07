@@ -24,15 +24,22 @@ describe("protocol schemas", () => {
       sessionId: "s1",
       workspaceId: "workspace-2",
     });
-    expect(parseClientMessage({ type: "workspace.add", sessionId: "s1", path: "/tmp/other-repo" })).toEqual({
+    expect(parseClientMessage({ type: "workspace.add", sessionId: "s1", path: "/tmp/other-repo", create: true })).toEqual({
       type: "workspace.add",
       sessionId: "s1",
       path: "/tmp/other-repo",
+      create: true,
     });
     expect(parseClientMessage({ type: "session.mode.set", sessionId: "s1", mode: "yolo" })).toEqual({
       type: "session.mode.set",
       sessionId: "s1",
       mode: "yolo",
+    });
+    expect(parseClientMessage({ type: "session.config.set", sessionId: "s1", model: "gpt-5-codex", reasoningEffort: "high" })).toEqual({
+      type: "session.config.set",
+      sessionId: "s1",
+      model: "gpt-5-codex",
+      reasoningEffort: "high",
     });
     expect(parseClientMessage({ type: "command.run", sessionId: "s1", commandId: "codex.test" })).toEqual({
       type: "command.run",
