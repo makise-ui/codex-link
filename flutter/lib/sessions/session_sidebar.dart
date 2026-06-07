@@ -31,7 +31,10 @@ class SessionSidebar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
               child: Row(
                 children: [
-                  Text('Codex', style: Theme.of(context).textTheme.titleLarge),
+                  Text(
+                    'Codex Link',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
                   const Spacer(),
                   ChatGptCircleButton(
                     icon: Icons.edit_square,

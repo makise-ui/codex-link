@@ -13,7 +13,7 @@ const logger = pino({
 
 try {
   const config = resolveConfig();
-  const url = `ws://${config.host}:${config.port}`;
+  const url = config.publicUrl ?? config.localUrl;
   const pairingStore = new PairingStore({ password: config.password });
   const auditLog = new AuditLog(logger);
   const sessionManager = await CodexSessionManager.create({
@@ -25,8 +25,14 @@ try {
     allowYolo: config.allowYolo,
   });
 
-  console.warn("\n⚠️  DEV-ONLY LAN MODE: this bridge uses cleartext ws://. Use only on a trusted local network.");
-  console.warn("⚠️  Do not expose this port to the public internet or a VPS.");
+  if (config.remoteMode === "tunnel") {
+    console.warn("\nREMOTE TUNNEL MODE: keep the host bound locally/private and expose it through your tunnel provider.");
+    console.warn("Tunnel public URL:", config.publicUrl);
+    console.warn("Tunnel provider:", config.tunnelProvider);
+  } else {
+    console.warn("\nDEV-ONLY LAN MODE: this bridge uses cleartext ws://. Use only on a trusted local network.");
+    console.warn("Do not expose this port to the public internet or a VPS.");
+  }
   console.log(`Workspaces: ${config.workspaces.map((workspace) => `${workspace.label}=${workspace.path}`).join(", ")}`);
   console.log(`Session state: ${config.stateDir}`);
   console.log(`Default sandbox: ${config.sandbox}`);
@@ -37,7 +43,13 @@ try {
   }
 
   if (config.pair) {
-    const payload = pairingStore.createPairingPayload(url, config.insecureWsDev);
+    const payload = pairingStore.createPairingPayload({
+      url,
+      localUrl: config.localUrl,
+      insecureDevMode: url.startsWith("wss://") ? false : config.insecureWsDev,
+      connectionMode: config.remoteMode,
+      tunnelProvider: config.remoteMode === "tunnel" ? config.tunnelProvider : undefined,
+    });
     auditLog.record({ type: "pairing.created" });
     printPairingPayload(payload);
   } else {
@@ -55,13 +67,24 @@ try {
     sessionManager,
     auditLog,
     logger,
+    hostInfo: {
+      connectionMode: config.remoteMode,
+      tunnelProvider: config.remoteMode === "tunnel" ? config.tunnelProvider : undefined,
+      publicUrl: config.publicUrl,
+      localUrl: config.localUrl,
+      hostLabel: "Codex Link",
+      yoloAllowed: config.allowYolo,
+    },
   });
 
-  console.log(`\nCodex LAN host bridge listening at ${url}`);
-  console.log("Health check:", `${url.replace("ws://", "http://")}/health`);
+  console.log(`\nCodex Link host bridge listening at ${config.localUrl}`);
+  if (config.publicUrl) {
+    console.log(`Public tunnel URL: ${config.publicUrl}`);
+  }
+  console.log("Health check:", `${config.localUrl.replace("ws://", "http://")}/health`);
 
   const shutdown = async () => {
-    console.log("\nShutting down Codex LAN host bridge...");
+    console.log("\nShutting down Codex Link host bridge...");
     await server.close();
     process.exit(0);
   };
@@ -69,7 +92,7 @@ try {
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());
 } catch (error) {
-  logger.error({ error }, "Failed to start Codex LAN host bridge");
+  logger.error({ error }, "Failed to start Codex Link host bridge");
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }

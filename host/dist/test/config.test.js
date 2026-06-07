@@ -31,6 +31,46 @@ describe("resolveConfig", () => {
         expect(config.allowYolo).toBe(true);
         expect(config.sandbox).toBe("workspace-write");
     });
+    it("parses tunnel remote mode with public url and provider", () => {
+        const config = resolveConfig([
+            "node",
+            "src/index.ts",
+            "--insecure-ws-dev",
+            "--remote-mode",
+            "tunnel",
+            "--public-url",
+            "wss://unit.trycloudflare.com",
+            "--tunnel-provider",
+            "cloudflared",
+            "--password",
+            "secret",
+        ]);
+        expect(config.remoteMode).toBe("tunnel");
+        expect(config.publicUrl).toBe("wss://unit.trycloudflare.com");
+        expect(config.tunnelProvider).toBe("cloudflared");
+    });
+    it("requires password in tunnel mode", () => {
+        expect(() => resolveConfig([
+            "node",
+            "src/index.ts",
+            "--insecure-ws-dev",
+            "--remote-mode",
+            "tunnel",
+            "--public-url",
+            "wss://unit.trycloudflare.com",
+        ])).toThrow(/--password/);
+    });
+    it("requires public url in tunnel mode", () => {
+        expect(() => resolveConfig([
+            "node",
+            "src/index.ts",
+            "--insecure-ws-dev",
+            "--remote-mode",
+            "tunnel",
+            "--password",
+            "secret",
+        ])).toThrow(/--public-url/);
+    });
     it("still requires explicit insecure dev mode", () => {
         expect(() => resolveConfig(["node", "src/index.ts", "--pair"])).toThrow(/--insecure-ws-dev/);
     });

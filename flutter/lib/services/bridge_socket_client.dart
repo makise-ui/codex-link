@@ -36,7 +36,10 @@ class BridgeSocketClient {
       await channel.ready.timeout(timeout);
     } catch (error) {
       await close();
-      throw TimeoutException('Could not reach the Codex LAN host at $url within ${timeout.inSeconds}s. Check that the host is running, the phone is on the same Wi-Fi, and the port is not blocked.', timeout);
+      throw TimeoutException(
+        'Could not reach the Codex Link host at $url within ${timeout.inSeconds}s. Check that the host is running and the LAN or tunnel URL is reachable.',
+        timeout,
+      );
     }
   }
 

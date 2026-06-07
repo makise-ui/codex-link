@@ -3,6 +3,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CliCodexSession } from "./cliCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
+import { FileTransferManager } from "./fileTransferManager.js";
 import { MockCodexSession } from "./mockCodexSession.js";
 import { SessionStore } from "./sessionStore.js";
 export class CodexSessionManager {
@@ -10,6 +11,7 @@ export class CodexSessionManager {
     store;
     listeners = new Set();
     adapters = new Map();
+    fileTransfers;
     sessions = new Map();
     messageHistory = new Map();
     workspaces = [];
@@ -18,6 +20,10 @@ export class CodexSessionManager {
     constructor(options) {
         this.options = options;
         this.store = new SessionStore(options.stateDir);
+        this.fileTransfers = new FileTransferManager({
+            workspaces: options.workspaces,
+            maxBytes: 10 * 1024 * 1024,
+        });
     }
     static async create(options) {
         const manager = new CodexSessionManager(options);
@@ -62,6 +68,7 @@ export class CodexSessionManager {
                 path: resolvedPath,
             };
             this.workspaces.push(workspace);
+            this.fileTransfers.setWorkspaces(this.workspaces);
         }
         if (sessionId) {
             await this.switchWorkspace(sessionId, workspace.id);
@@ -249,6 +256,9 @@ export class CodexSessionManager {
                     status: "added",
                 })),
             });
+            for (const attachment of preparedAttachments) {
+                await this.emitFileOffer(record, path.relative(record.workdir, attachment.path) || attachment.path, "attachment");
+            }
         }
         await this.save();
         const adapter = this.adapterFor(record);
@@ -260,6 +270,9 @@ export class CodexSessionManager {
             throw new Error(`No active session adapter found for ${sessionId}`);
         }
         await adapter.cancel(runId);
+    }
+    async downloadFile(fileId) {
+        return this.fileTransfers.download(fileId);
     }
     onEvent(listener) {
         this.listeners.add(listener);
@@ -275,6 +288,7 @@ export class CodexSessionManager {
     async init() {
         const snapshot = await this.store.load();
         this.workspaces = mergeWorkspaces(this.options.workspaces, snapshot.workspaces ?? []);
+        this.fileTransfers.setWorkspaces(this.workspaces);
         this.messageHistory = new Map(Object.entries(snapshot.messages ?? {}).map(([sessionId, messages]) => [sessionId, messages.map((message) => ({ ...message, complete: message.kind === "thinking" ? true : message.complete }))]));
         for (const persisted of snapshot.sessions) {
             const workspace = this.workspaces.find((candidate) => candidate.id === persisted.workspaceId) ?? this.workspaces.find((candidate) => candidate.path === persisted.workdir) ?? this.workspaces[0];
@@ -349,6 +363,7 @@ export class CodexSessionManager {
         }
         if (event.type === "diff.available") {
             historyChanged = this.recordDiffAvailable(event) || historyChanged;
+            await this.emitFileOffersForDiff(record, event);
         }
         if (event.type === "run.started") {
             record.activeRunId = event.runId;
@@ -451,6 +466,29 @@ export class CodexSessionManager {
             history.push(message);
         }
         this.messageHistory.set(sessionId, history.slice(-500));
+    }
+    async emitFileOffersForDiff(record, event) {
+        for (const file of event.files) {
+            if (file.status === "deleted")
+                continue;
+            await this.emitFileOffer(record, file.path, "generated");
+        }
+    }
+    async emitFileOffer(record, relativePath, reason) {
+        try {
+            const offer = await this.fileTransfers.offerWorkspaceFile({
+                sessionId: record.sessionId,
+                workspaceRoot: record.workdir,
+                relativePath,
+                reason,
+            });
+            this.emit(offer);
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const code = message.includes("too large") ? "file.too_large" : message.includes("outside workspace") ? "file.forbidden" : "file.offer_failed";
+            this.emit({ type: "error", code, message });
+        }
     }
     async prepareAttachments(record, attachments) {
         if (attachments.length === 0)

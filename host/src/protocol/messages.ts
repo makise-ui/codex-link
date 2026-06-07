@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
 export type MessageKind = "thinking" | "executing" | "response" | "system";
@@ -6,6 +6,8 @@ export type StoredMessageKind = MessageKind | "files" | "error";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type RunMode = "safe" | "yolo";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type ConnectionMode = "lan" | "tunnel";
+export type TunnelProvider = "ngrok" | "cloudflared" | "tailscale" | "other";
 
 export type ClientMessage =
   | PairingClaimMessage
@@ -26,6 +28,7 @@ export type ClientMessage =
   | CommandListRequestMessage
   | CommandRunMessage
   | PromptSendMessage
+  | FileRequestMessage
   | RunCancelMessage
   | ApprovalDecisionMessage
   | PingMessage;
@@ -136,6 +139,11 @@ export type PromptAttachment = {
   dataBase64: string;
 };
 
+export type FileRequestMessage = {
+  type: "file.request";
+  fileId: string;
+};
+
 export type RunCancelMessage = {
   type: "run.cancel";
   sessionId: string;
@@ -157,6 +165,7 @@ export type PingMessage = {
 export type ServerMessage =
   | PairingAcceptedMessage
   | AuthAcceptedMessage
+  | HostInfoMessage
   | SessionStartedMessage
   | SessionListMessage
   | SessionUpdatedMessage
@@ -174,6 +183,8 @@ export type ServerMessage =
   | StatusMessage
   | ApprovalRequestedMessage
   | DiffAvailableMessage
+  | FileOfferMessage
+  | FileDownloadMessage
   | RunCompletedMessage
   | ErrorMessage
   | PongMessage;
@@ -243,6 +254,17 @@ export type AuthAcceptedMessage = {
   deviceId: string;
   sessionId: string;
   deviceToken?: string;
+};
+
+export type HostInfoMessage = {
+  type: "host.info";
+  version: number;
+  connectionMode: ConnectionMode;
+  tunnelProvider?: TunnelProvider;
+  publicUrl?: string;
+  localUrl: string;
+  hostLabel: string;
+  yoloAllowed: boolean;
 };
 
 export type SessionStartedMessage = {
@@ -359,6 +381,26 @@ export type DiffAvailableMessage = {
   }>;
 };
 
+export type FileOfferMessage = {
+  type: "file.offer";
+  fileId: string;
+  sessionId?: string;
+  path: string;
+  name: string;
+  mimeType?: string;
+  sizeBytes: number;
+  reason: "requested" | "generated" | "attachment";
+};
+
+export type FileDownloadMessage = {
+  type: "file.download";
+  fileId: string;
+  name: string;
+  mimeType?: string;
+  sizeBytes: number;
+  dataBase64: string;
+};
+
 export type RunCompletedMessage = {
   type: "run.completed";
   sessionId: string;
@@ -380,7 +422,10 @@ export type PongMessage = {
 export type PairingPayload = {
   version: number;
   url: string;
+  localUrl?: string;
   pairingToken: string;
   hostId: string;
+  connectionMode?: ConnectionMode;
+  tunnelProvider?: TunnelProvider;
   insecureDevMode: boolean;
 };

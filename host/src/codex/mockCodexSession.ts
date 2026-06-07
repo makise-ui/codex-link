@@ -50,7 +50,7 @@ export class MockCodexSession implements CodexSession {
     run.timers.push(
       setTimeout(() => {
         if (run.cancelled) return;
-        this.emitMessage(run, "executing", "Mock execution", "Checking the LAN bridge and simulated Codex workspace…\n");
+        this.emitMessage(run, "executing", "Mock execution", "Checking the host bridge and simulated Codex workspace…\n");
       }, 550),
     );
 
@@ -62,7 +62,7 @@ export class MockCodexSession implements CodexSession {
           "response",
           "Response",
           [
-            "Connected to the local Codex LAN bridge.",
+            "Connected to the local Codex Link bridge.",
             "",
             `Prompt received: ${prompt.trim()}`,
             ifAttachments(options.attachments),

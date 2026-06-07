@@ -139,6 +139,7 @@ class _FloatingTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = controller.activeSession;
+    final connection = _connectionLabel(controller);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: GlassCard(
@@ -164,7 +165,7 @@ class _FloatingTopBar extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    session?.title ?? 'Codex',
+                    session?.title ?? 'Codex Link',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium,
@@ -187,17 +188,16 @@ class _FloatingTopBar extends StatelessWidget {
                 ],
               ),
             ),
-            if (controller.isOffline) ...[
-              GestureDetector(
-                onTap: controller.reconnect,
-                child: const SoftPill(
-                  label: 'Offline',
-                  color: CodexColors.amber,
-                  icon: Icons.cloud_off_rounded,
-                ),
+            GestureDetector(
+              onTap: controller.isOffline ? controller.reconnect : null,
+              child: SoftPill(
+                label: connection.label,
+                color: connection.color,
+                icon: connection.icon,
               ),
-              const SizedBox(width: AppSpacing.sm),
-            ] else if (controller.isRunning) ...[
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            if (controller.isRunning) ...[
               const _RunningIndicator(),
               const SizedBox(width: AppSpacing.sm),
             ],
@@ -233,6 +233,45 @@ class _FloatingTopBar extends StatelessWidget {
       context,
     ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
   }
+}
+
+class _ConnectionBadge {
+  const _ConnectionBadge({
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+}
+
+_ConnectionBadge _connectionLabel(AppController controller) {
+  if (controller.isOffline) {
+    return const _ConnectionBadge(
+      label: 'Offline',
+      icon: Icons.cloud_off_rounded,
+      color: CodexColors.amber,
+    );
+  }
+  final info = controller.hostInfo;
+  if (info?.connectionMode == 'tunnel') {
+    final provider = info?.tunnelProvider;
+    final label = provider == null || provider.isEmpty
+        ? 'Tunnel'
+        : 'Tunnel: $provider';
+    return _ConnectionBadge(
+      label: label,
+      icon: Icons.cloud_done_rounded,
+      color: CodexColors.greenSoft,
+    );
+  }
+  return const _ConnectionBadge(
+    label: 'Local',
+    icon: Icons.lan_rounded,
+    color: CodexColors.muted,
+  );
 }
 
 class _EdgeFade extends StatelessWidget {

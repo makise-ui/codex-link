@@ -1,5 +1,6 @@
 import 'package:codex_lan_flutter/app_controller.dart';
 import 'package:codex_lan_flutter/protocol/bridge_messages.dart';
+import 'package:codex_lan_flutter/services/pairing_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -105,7 +106,35 @@ void main() {
     expect(controller.activeMessages.single.text, 'hello');
   });
 
-  test('streams large assistant deltas into the visible message', () async {
+  test('stores host info from bridge bootstrap', () {
+    final controller = AppController()
+      ..handleBridgeMessageForTest({
+        'type': 'host.info',
+        'version': 3,
+        'connectionMode': 'tunnel',
+        'tunnelProvider': 'cloudflared',
+        'publicUrl': 'wss://unit.trycloudflare.com',
+        'localUrl': 'ws://127.0.0.1:8787',
+        'hostLabel': 'Codex Link',
+        'yoloAllowed': false,
+      });
+
+    expect(controller.hostInfo?.connectionMode, 'tunnel');
+    expect(controller.hostInfo?.tunnelProvider, 'cloudflared');
+    expect(controller.hostInfo?.publicUrl, 'wss://unit.trycloudflare.com');
+  });
+
+  test('parses v3 pairing payload tunnel metadata', () {
+    final payload = parsePairingPayload(
+      '{"version":3,"url":"wss://unit.trycloudflare.com","localUrl":"ws://127.0.0.1:8787","pairingToken":"abc","hostId":"host","connectionMode":"tunnel","tunnelProvider":"cloudflared","insecureDevMode":false}',
+    );
+
+    expect(payload.connectionMode, 'tunnel');
+    expect(payload.tunnelProvider, 'cloudflared');
+    expect(payload.localUrl, 'ws://127.0.0.1:8787');
+  });
+
+  test('applies large assistant deltas without artificial typewriter delay', () {
     final controller = AppController()
       ..handleBridgeMessageForTest({
         'type': 'session.list',
@@ -143,11 +172,7 @@ void main() {
       'text': text,
     });
 
-    expect(controller.activeMessages.single.text, isNot(text));
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-    expect(controller.activeMessages.single.text, isNotEmpty);
-    expect(text.startsWith(controller.activeMessages.single.text), isTrue);
-    await controller.disposeController();
+    expect(controller.activeMessages.single.text, text);
   });
 
   test('parses external Codex sessions', () {
@@ -194,5 +219,30 @@ void main() {
 
     expect(controller.activeSession?.model, 'gpt-5-codex');
     expect(controller.activeSession?.reasoningEffort, 'high');
+  });
+
+  test('stores file offers and downloads from host', () {
+    final controller = AppController()
+      ..handleBridgeMessageForTest({
+        'type': 'file.offer',
+        'fileId': 'file-1',
+        'sessionId': 's1',
+        'path': 'lib/generated.dart',
+        'name': 'generated.dart',
+        'sizeBytes': 12,
+        'reason': 'generated',
+      });
+
+    expect(controller.fileOffers.single.name, 'generated.dart');
+
+    controller.handleBridgeMessageForTest({
+      'type': 'file.download',
+      'fileId': 'file-1',
+      'name': 'generated.dart',
+      'sizeBytes': 5,
+      'dataBase64': 'aGVsbG8=',
+    });
+
+    expect(controller.downloadedFiles.single.dataBase64, 'aGVsbG8=');
   });
 }

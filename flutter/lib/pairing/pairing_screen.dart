@@ -15,7 +15,7 @@ class PairingScreen extends StatefulWidget {
 
 class _PairingScreenState extends State<PairingScreen> {
   final _payloadController = TextEditingController();
-  final _deviceController = TextEditingController(text: 'Codex Controller');
+  final _deviceController = TextEditingController(text: 'Codex Link Mobile');
   final _urlController = TextEditingController(text: 'ws://127.0.0.1:8787');
   final _passwordController = TextEditingController();
 
@@ -44,7 +44,7 @@ class _PairingScreenState extends State<PairingScreen> {
                 Row(
                   children: [
                     Text(
-                      'Codex',
+                      'Codex Link',
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                     const Spacer(),
@@ -69,18 +69,18 @@ class _PairingScreenState extends State<PairingScreen> {
                 ),
                 const SizedBox(height: 48),
                 const SoftPill(
-                  label: 'LOCAL NETWORK ONLY',
+                  label: 'LOCAL OR TUNNEL',
                   color: CodexColors.greenSoft,
                   icon: Icons.lock_outline_rounded,
                 ),
                 const SizedBox(height: 28),
                 Text(
-                  'Pair your Codex CLI',
+                  'Connect to Codex',
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 14),
                 const Text(
-                  'Scan the QR from the host bridge, or paste the pairing JSON. The bridge must stay running on the same Wi‑Fi/LAN.',
+                  'Scan the QR from the host bridge, paste pairing JSON, or login with a local ws:// URL or secure tunnel wss:// URL from cloudflared, ngrok, or another tunnel.',
                   style: TextStyle(
                     color: CodexColors.muted,
                     fontSize: 18,
@@ -157,7 +157,9 @@ class _PairingScreenState extends State<PairingScreen> {
                 TextField(
                   controller: _urlController,
                   decoration: const InputDecoration(
-                    labelText: 'Host WebSocket URL',
+                    labelText: 'Host or tunnel WebSocket URL',
+                    hintText:
+                        'ws://127.0.0.1:8787 or wss://name.trycloudflare.com',
                   ),
                 ),
                 const SizedBox(height: 12),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPrivateOrLoopbackAddress, normalizeRemoteAddress } from "../src/safety/networkGuard.js";
+import { assertAllowedRemoteAddress, isPrivateOrLoopbackAddress, normalizeRemoteAddress } from "../src/safety/networkGuard.js";
 
 describe("networkGuard", () => {
   it("normalizes IPv4-mapped IPv6 addresses", () => {
@@ -20,5 +20,17 @@ describe("networkGuard", () => {
     expect(isPrivateOrLoopbackAddress("8.8.8.8")).toBe(false);
     expect(isPrivateOrLoopbackAddress("172.32.0.1")).toBe(false);
     expect(isPrivateOrLoopbackAddress("1.2.3.4")).toBe(false);
+  });
+
+  it("allows public remote addresses when tunnel mode is explicit", () => {
+    expect(() =>
+      assertAllowedRemoteAddress("203.0.113.10", { remoteMode: "tunnel" }),
+    ).not.toThrow();
+  });
+
+  it("keeps rejecting public remote addresses in lan mode", () => {
+    expect(() =>
+      assertAllowedRemoteAddress("203.0.113.10", { remoteMode: "lan" }),
+    ).toThrow(/Rejected non-LAN/);
   });
 });

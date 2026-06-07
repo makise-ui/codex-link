@@ -40,10 +40,21 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                     GlassCard(
                       child: Row(
                         children: [
-                          const Icon(Icons.qr_code_scanner_rounded, color: CodexColors.greenSoft),
+                          const Icon(
+                            Icons.qr_code_scanner_rounded,
+                            color: CodexColors.greenSoft,
+                          ),
                           const SizedBox(width: 12),
-                          Expanded(child: Text('Scan the Codex LAN QR', style: Theme.of(context).textTheme.titleMedium)),
-                          IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close_rounded)),
+                          Expanded(
+                            child: Text(
+                              'Scan the Codex Link QR',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
                         ],
                       ),
                     ),
@@ -51,11 +62,27 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                     Container(
                       width: 280,
                       height: 280,
-                      decoration: BoxDecoration(borderRadius: BorderRadius.circular(36), border: Border.all(color: CodexColors.greenSoft, width: 2), boxShadow: [BoxShadow(color: CodexColors.green.withValues(alpha: 0.25), blurRadius: 32)]),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(36),
+                        border: Border.all(
+                          color: CodexColors.greenSoft,
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: CodexColors.green.withValues(alpha: 0.25),
+                            blurRadius: 32,
+                          ),
+                        ],
+                      ),
                     ),
                     const Spacer(),
                     const GlassCard(
-                      child: Text('Keep the one-time pairing QR inside the frame. The app pairs automatically when detected.', textAlign: TextAlign.center, style: TextStyle(color: CodexColors.muted)),
+                      child: Text(
+                        'Keep the one-time pairing QR inside the frame. The app pairs automatically when detected.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: CodexColors.muted),
+                      ),
                     ),
                   ],
                 ),

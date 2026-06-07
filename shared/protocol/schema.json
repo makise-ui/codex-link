@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.local/codex-lan-control.schema.json",
-  "title": "Codex LAN Control Protocol",
-  "description": "Versioned JSON-over-WebSocket protocol between the mobile controller and local host bridge.",
-  "version": 2,
+  "$id": "https://example.local/codex-link-control.schema.json",
+  "title": "Codex Link Control Protocol",
+  "description": "Versioned JSON-over-WebSocket protocol between the mobile controller and local/tunnel host bridge.",
+  "version": 3,
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/PairingClaim" },
@@ -24,6 +24,7 @@
     { "$ref": "#/$defs/CommandList" },
     { "$ref": "#/$defs/CommandRun" },
     { "$ref": "#/$defs/PromptSend" },
+    { "$ref": "#/$defs/FileRequest" },
     { "$ref": "#/$defs/RunCancel" },
     { "$ref": "#/$defs/Ping" }
   ],
@@ -193,6 +194,14 @@
         "type": { "const": "run.cancel" },
         "sessionId": { "type": "string" },
         "runId": { "type": "string" }
+      }
+    },
+    "FileRequest": {
+      "type": "object",
+      "required": ["type", "fileId"],
+      "properties": {
+        "type": { "const": "file.request" },
+        "fileId": { "type": "string", "minLength": 1, "maxLength": 160 }
       }
     },
     "Ping": {

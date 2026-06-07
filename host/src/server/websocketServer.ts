@@ -5,7 +5,7 @@ import { ZodError } from "zod";
 import type { PairingStore, PairedDevice } from "../auth/pairingStore.js";
 import { COMMAND_CATALOG, promptForCommand } from "../codex/commandCatalog.js";
 import type { CodexSessionManager } from "../codex/sessionManager.js";
-import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from "../protocol/messages.js";
+import { PROTOCOL_VERSION, type ClientMessage, type ConnectionMode, type ServerMessage, type TunnelProvider } from "../protocol/messages.js";
 import { parseClientMessage } from "../protocol/schemas.js";
 import { assertAllowedRemoteAddress } from "../safety/networkGuard.js";
 import type { AuditLog } from "../safety/auditLog.js";
@@ -18,6 +18,14 @@ export type BridgeServerOptions = {
   sessionManager: CodexSessionManager;
   auditLog: AuditLog;
   logger: pino.Logger;
+  hostInfo: {
+    connectionMode: ConnectionMode;
+    tunnelProvider?: TunnelProvider;
+    publicUrl?: string;
+    localUrl: string;
+    hostLabel: string;
+    yoloAllowed: boolean;
+  };
 };
 
 export type BridgeServer = {
@@ -56,7 +64,7 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
 
   wss.on("connection", (ws, req) => {
     try {
-      assertAllowedRemoteAddress(req.socket.remoteAddress);
+      assertAllowedRemoteAddress(req.socket.remoteAddress, { remoteMode: options.hostInfo.connectionMode });
     } catch (error) {
       send(ws, { type: "error", code: "network.rejected", message: error instanceof Error ? error.message : "Remote address rejected" });
       ws.close(1008, "LAN/private sources only");
@@ -92,7 +100,7 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
     });
   });
 
-  options.logger.info({ url: options.url }, "Codex LAN host bridge listening");
+  options.logger.info({ url: options.url }, "Codex Link host bridge listening");
 
   return {
     async close() {
@@ -252,6 +260,10 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
         await options.sessionManager.sendPrompt(message.sessionId, message.prompt, message.attachments);
         return;
       }
+      case "file.request": {
+        send(ws, await options.sessionManager.downloadFile(message.fileId));
+        return;
+      }
       case "run.cancel": {
         await options.sessionManager.cancel(message.sessionId, message.runId);
         options.auditLog.record({ type: "run.cancelled", deviceId: state.device?.id, sessionId: message.sessionId, runId: message.runId });
@@ -297,6 +309,7 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
   }
 
   function sendBootstrap(ws: WebSocket): void {
+    sendHostInfo(ws);
     sendSessionList(ws);
     sendWorkspaceList(ws);
     sendCommandList(ws);
@@ -309,6 +322,14 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
 
   function sendSessionList(ws: WebSocket): void {
     send(ws, { type: "session.list", sessions: options.sessionManager.listSessions(), activeSessionId: options.sessionManager.getActiveSessionId() });
+  }
+
+  function sendHostInfo(ws: WebSocket): void {
+    send(ws, {
+      type: "host.info",
+      version: PROTOCOL_VERSION,
+      ...options.hostInfo,
+    });
   }
 
   function sendWorkspaceList(ws: WebSocket, activeSessionId = options.sessionManager.getActiveSessionId()): void {

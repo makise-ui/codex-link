@@ -27,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final hostInfo = controller.hostInfo;
     return AnimatedChatGptBackdrop(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -53,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     icon: controller.isOffline
                         ? Icons.cloud_off_rounded
                         : Icons.cloud_done_rounded,
-                    title: controller.isOffline ? 'Offline' : 'Bridge',
+                    title: controller.isOffline ? 'Offline' : 'Codex Link',
                     subtitle: controller.statusText,
                     trailing: controller.credentials == null
                         ? null
@@ -62,6 +63,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             child: const Text('Reconnect'),
                           ),
                   ),
+                  if (hostInfo != null) ...[
+                    _SettingRow(
+                      icon: hostInfo.connectionMode == 'tunnel'
+                          ? Icons.cloud_done_rounded
+                          : Icons.lan_rounded,
+                      title: 'Connection mode',
+                      subtitle: _hostModeLabel(hostInfo),
+                    ),
+                    if (hostInfo.publicUrl?.isNotEmpty == true)
+                      _SettingRow(
+                        icon: Icons.public_rounded,
+                        title: 'Public URL',
+                        subtitle: hostInfo.publicUrl!,
+                      ),
+                    if (hostInfo.localUrl.isNotEmpty)
+                      _SettingRow(
+                        icon: Icons.router_rounded,
+                        title: 'Local bridge',
+                        subtitle: hostInfo.localUrl,
+                      ),
+                    _SettingRow(
+                      icon: Icons.info_outline_rounded,
+                      title: 'Host protocol',
+                      subtitle:
+                          'v${hostInfo.version} - yolo ${hostInfo.yoloAllowed ? 'allowed' : 'disabled'}',
+                    ),
+                  ],
                   if (controller.credentials != null)
                     _SettingRow(
                       icon: Icons.link_rounded,
@@ -342,6 +370,16 @@ class _AddWorkspaceRowState extends State<_AddWorkspaceRow> {
     widget.controller.addWorkspacePath(_controller.text, create: true);
     _controller.clear();
   }
+}
+
+String _hostModeLabel(HostInfo hostInfo) {
+  if (hostInfo.connectionMode == 'tunnel') {
+    final provider = hostInfo.tunnelProvider;
+    return provider == null || provider.isEmpty
+        ? 'Tunnel'
+        : 'Tunnel via $provider';
+  }
+  return 'Local';
 }
 
 class _Section extends StatelessWidget {

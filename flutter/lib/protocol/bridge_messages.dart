@@ -39,13 +39,51 @@ class PairingPayload {
     required this.pairingToken,
     required this.hostId,
     required this.insecureDevMode,
+    this.localUrl,
+    this.connectionMode,
+    this.tunnelProvider,
   });
 
   final int version;
   final String url;
+  final String? localUrl;
   final String pairingToken;
   final String hostId;
   final bool insecureDevMode;
+  final String? connectionMode;
+  final String? tunnelProvider;
+}
+
+class HostInfo {
+  const HostInfo({
+    required this.version,
+    required this.connectionMode,
+    required this.localUrl,
+    required this.hostLabel,
+    required this.yoloAllowed,
+    this.tunnelProvider,
+    this.publicUrl,
+  });
+
+  final int version;
+  final String connectionMode;
+  final String? tunnelProvider;
+  final String? publicUrl;
+  final String localUrl;
+  final String hostLabel;
+  final bool yoloAllowed;
+
+  factory HostInfo.fromJson(Map<String, dynamic> json) {
+    return HostInfo(
+      version: json['version'] as int? ?? 1,
+      connectionMode: json['connectionMode'] as String? ?? 'lan',
+      tunnelProvider: json['tunnelProvider'] as String?,
+      publicUrl: json['publicUrl'] as String?,
+      localUrl: json['localUrl'] as String? ?? '',
+      hostLabel: json['hostLabel'] as String? ?? 'Codex Link',
+      yoloAllowed: json['yoloAllowed'] as bool? ?? false,
+    );
+  }
 }
 
 class CodexSessionInfo {
@@ -213,6 +251,64 @@ class PromptAttachmentInfo {
     'dataBase64': dataBase64,
     if (mimeType != null) 'mimeType': mimeType,
   };
+}
+
+class FileOfferInfo {
+  const FileOfferInfo({
+    required this.fileId,
+    required this.path,
+    required this.name,
+    required this.sizeBytes,
+    required this.reason,
+    this.sessionId,
+    this.mimeType,
+  });
+
+  final String fileId;
+  final String? sessionId;
+  final String path;
+  final String name;
+  final String? mimeType;
+  final int sizeBytes;
+  final String reason;
+
+  factory FileOfferInfo.fromJson(Map<String, dynamic> json) {
+    return FileOfferInfo(
+      fileId: json['fileId'] as String? ?? '',
+      sessionId: json['sessionId'] as String?,
+      path: json['path'] as String? ?? '',
+      name: json['name'] as String? ?? 'download',
+      mimeType: json['mimeType'] as String?,
+      sizeBytes: json['sizeBytes'] as int? ?? 0,
+      reason: json['reason'] as String? ?? 'generated',
+    );
+  }
+}
+
+class DownloadedFileInfo {
+  const DownloadedFileInfo({
+    required this.fileId,
+    required this.name,
+    required this.sizeBytes,
+    required this.dataBase64,
+    this.mimeType,
+  });
+
+  final String fileId;
+  final String name;
+  final String? mimeType;
+  final int sizeBytes;
+  final String dataBase64;
+
+  factory DownloadedFileInfo.fromJson(Map<String, dynamic> json) {
+    return DownloadedFileInfo(
+      fileId: json['fileId'] as String? ?? '',
+      name: json['name'] as String? ?? 'download',
+      mimeType: json['mimeType'] as String?,
+      sizeBytes: json['sizeBytes'] as int? ?? 0,
+      dataBase64: json['dataBase64'] as String? ?? '',
+    );
+  }
 }
 
 class ExternalSessionInfo {

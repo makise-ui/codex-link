@@ -13,7 +13,10 @@ export class PairingStore {
         this.pairingTtlMs = options.pairingTtlMs ?? 5 * 60 * 1000;
         this.password = options.password;
     }
-    createPairingPayload(url, insecureDevMode) {
+    createPairingPayload(input, insecureDevMode = false) {
+        const payloadInput = typeof input === "string"
+            ? { url: input, insecureDevMode }
+            : input;
         const token = randomToken(32);
         this.activePairing = {
             token,
@@ -22,10 +25,13 @@ export class PairingStore {
         };
         return {
             version: PROTOCOL_VERSION,
-            url,
+            url: payloadInput.url,
             pairingToken: token,
             hostId: this.hostId,
-            insecureDevMode,
+            insecureDevMode: payloadInput.insecureDevMode,
+            ...(payloadInput.localUrl ? { localUrl: payloadInput.localUrl } : {}),
+            ...(payloadInput.connectionMode ? { connectionMode: payloadInput.connectionMode } : {}),
+            ...(payloadInput.tunnelProvider ? { tunnelProvider: payloadInput.tunnelProvider } : {}),
         };
     }
     claimPairing(pairingToken, deviceName) {

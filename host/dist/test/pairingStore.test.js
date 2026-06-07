@@ -20,6 +20,20 @@ describe("PairingStore", () => {
         now = 2_000;
         expect(store.claimPairing(payload.pairingToken, "Pixel")).toBeNull();
     });
+    it("includes tunnel metadata in pairing payloads", () => {
+        const store = new PairingStore({ hostId: "host" });
+        const payload = store.createPairingPayload({
+            url: "wss://unit.trycloudflare.com",
+            localUrl: "ws://127.0.0.1:8787",
+            insecureDevMode: false,
+            connectionMode: "tunnel",
+            tunnelProvider: "cloudflared",
+        });
+        expect(payload.url).toBe("wss://unit.trycloudflare.com");
+        expect(payload.localUrl).toBe("ws://127.0.0.1:8787");
+        expect(payload.connectionMode).toBe("tunnel");
+        expect(payload.tunnelProvider).toBe("cloudflared");
+    });
     it("authenticates a device with a configured host password", () => {
         const store = new PairingStore({ password: "lan-secret" });
         expect(store.claimPassword("wrong", "Pixel")).toBeNull();

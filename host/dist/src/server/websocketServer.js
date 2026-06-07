@@ -28,7 +28,7 @@ export async function startBridgeServer(options) {
     });
     wss.on("connection", (ws, req) => {
         try {
-            assertAllowedRemoteAddress(req.socket.remoteAddress);
+            assertAllowedRemoteAddress(req.socket.remoteAddress, { remoteMode: options.hostInfo.connectionMode });
         }
         catch (error) {
             send(ws, { type: "error", code: "network.rejected", message: error instanceof Error ? error.message : "Remote address rejected" });
@@ -61,7 +61,7 @@ export async function startBridgeServer(options) {
             resolve();
         });
     });
-    options.logger.info({ url: options.url }, "Codex LAN host bridge listening");
+    options.logger.info({ url: options.url }, "Codex Link host bridge listening");
     return {
         async close() {
             unsubscribe();
@@ -213,6 +213,10 @@ export async function startBridgeServer(options) {
                 await options.sessionManager.sendPrompt(message.sessionId, message.prompt, message.attachments);
                 return;
             }
+            case "file.request": {
+                send(ws, await options.sessionManager.downloadFile(message.fileId));
+                return;
+            }
             case "run.cancel": {
                 await options.sessionManager.cancel(message.sessionId, message.runId);
                 options.auditLog.record({ type: "run.cancelled", deviceId: state.device?.id, sessionId: message.sessionId, runId: message.runId });
@@ -254,6 +258,7 @@ export async function startBridgeServer(options) {
         await options.sessionManager.sendPrompt(targetSessionId, prompt);
     }
     function sendBootstrap(ws) {
+        sendHostInfo(ws);
         sendSessionList(ws);
         sendWorkspaceList(ws);
         sendCommandList(ws);
@@ -266,6 +271,13 @@ export async function startBridgeServer(options) {
     }
     function sendSessionList(ws) {
         send(ws, { type: "session.list", sessions: options.sessionManager.listSessions(), activeSessionId: options.sessionManager.getActiveSessionId() });
+    }
+    function sendHostInfo(ws) {
+        send(ws, {
+            type: "host.info",
+            version: PROTOCOL_VERSION,
+            ...options.hostInfo,
+        });
     }
     function sendWorkspaceList(ws, activeSessionId = options.sessionManager.getActiveSessionId()) {
         send(ws, { type: "workspace.list", workspaces: options.sessionManager.getWorkspaces(activeSessionId) });

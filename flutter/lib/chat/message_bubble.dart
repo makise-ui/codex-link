@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
+import '../app_controller.dart';
 import '../protocol/bridge_messages.dart';
 import '../theme/app_theme.dart';
 import 'markdown_code_renderer.dart';
@@ -61,14 +64,103 @@ class _UserMessage extends StatelessWidget {
             color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
           ),
         ),
-        child: Text(
-          message.text,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: CodexColors.text,
-            height: 1.34,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onLongPress: () => _copyMessage(context, message.text),
+              child: Text(
+                message.text,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: CodexColors.text,
+                  height: 1.34,
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            _CopyMessageButton(text: message.text),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _CopyMessageButton extends StatelessWidget {
+  const _CopyMessageButton({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Copy message',
+      visualDensity: VisualDensity.compact,
+      iconSize: 17,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+      onPressed: text.trim().isEmpty ? null : () => _copyMessage(context, text),
+      icon: const Icon(Icons.copy_rounded, color: CodexColors.muted),
+    );
+  }
+}
+
+void _copyMessage(BuildContext context, String text) {
+  if (text.trim().isEmpty) return;
+  Clipboard.setData(ClipboardData(text: text));
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('Copied'),
+      behavior: SnackBarBehavior.floating,
+      duration: Duration(seconds: 1),
+    ),
+  );
+}
+
+class _ResponseReveal extends StatelessWidget {
+  const _ResponseReveal({
+    required this.child,
+    required this.complete,
+    required this.long,
+  });
+
+  final Widget child;
+  final bool complete;
+  final bool long;
+
+  @override
+  Widget build(BuildContext context) {
+    final disableAnimations =
+        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (disableAnimations) return child;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: complete ? 0.22 : 0.76, end: complete ? 1 : 0.86),
+      duration: long
+          ? const Duration(milliseconds: 380)
+          : const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Opacity(
+            opacity: (1 - value).clamp(0.0, 0.7),
+            child: Container(
+              width: 2,
+              height: 24,
+              decoration: BoxDecoration(
+                color: CodexColors.greenSoft,
+                borderRadius: BorderRadius.circular(AppRadius.pill),
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Opacity(opacity: value, child: child),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }
@@ -113,12 +205,26 @@ class _AssistantMessage extends StatelessWidget {
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
-        child: DefaultTextStyle.merge(
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: CodexColors.text,
-            height: 1.5,
-          ),
-          child: MarkdownCodeRenderer(text: message.text),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onLongPress: () => _copyMessage(context, message.text),
+              child: _ResponseReveal(
+                complete: message.complete,
+                long: message.text.length > 600,
+                child: DefaultTextStyle.merge(
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: CodexColors.text,
+                    height: 1.5,
+                  ),
+                  child: MarkdownCodeRenderer(text: message.text),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            _CopyMessageButton(text: message.text),
+          ],
         ),
       ),
     );
@@ -688,6 +794,36 @@ class _FileChangeCard extends StatelessWidget {
                               ),
                             ),
                           ),
+                          IconButton(
+                            tooltip: 'Copy file path',
+                            visualDensity: VisualDensity.compact,
+                            iconSize: 16,
+                            onPressed: () => _copyMessage(context, file.path),
+                            icon: const Icon(
+                              Icons.copy_rounded,
+                              color: CodexColors.muted,
+                            ),
+                          ),
+                          if (file.fileId != null)
+                            TextButton.icon(
+                              onPressed: () {
+                                final controller = context
+                                    .read<AppController>();
+                                final offer = controller.fileOffers
+                                    .where(
+                                      (offer) => offer.fileId == file.fileId,
+                                    )
+                                    .firstOrNull;
+                                if (offer != null) {
+                                  controller.requestFileDownload(offer);
+                                }
+                              },
+                              icon: const Icon(
+                                Icons.download_rounded,
+                                size: 16,
+                              ),
+                              label: const Text('Download'),
+                            ),
                         ],
                       ),
                       if (file.patchLines.isNotEmpty) ...[
@@ -801,17 +937,23 @@ class _FileChange {
     required this.status,
     required this.path,
     this.patchLines = const [],
+    this.fileId,
+    this.sizeBytes,
   });
 
   final String status;
   final String path;
   final List<String> patchLines;
+  final String? fileId;
+  final int? sizeBytes;
 }
 
 List<_FileChange> _parseFileChanges(String text) {
   final files = <_FileChange>[];
   String? status;
   String? path;
+  String? fileId;
+  int? sizeBytes;
   final patch = <String>[];
 
   void flush() {
@@ -823,8 +965,12 @@ List<_FileChange> _parseFileChanges(String text) {
         status: currentStatus,
         path: currentPath,
         patchLines: List<String>.from(patch),
+        fileId: fileId,
+        sizeBytes: sizeBytes,
       ),
     );
+    fileId = null;
+    sizeBytes = null;
     patch.clear();
   }
 
@@ -832,7 +978,7 @@ List<_FileChange> _parseFileChanges(String text) {
     final line = rawLine.trimRight();
     if (line.trim().isEmpty) continue;
     final match = RegExp(
-      r"^(added|modified|deleted|renamed)\s+(.+)$",
+      r"^(added|modified|deleted|renamed|generated|attachment|downloaded)\s+(.+)$",
     ).firstMatch(line.trim());
     if (match != null) {
       flush();
@@ -841,6 +987,15 @@ List<_FileChange> _parseFileChanges(String text) {
       continue;
     }
     if (status != null) {
+      final trimmed = line.trim();
+      if (trimmed.startsWith('fileId ')) {
+        fileId = trimmed.substring('fileId '.length).trim();
+        continue;
+      }
+      if (trimmed.startsWith('size ')) {
+        sizeBytes = int.tryParse(trimmed.substring('size '.length).trim());
+        continue;
+      }
       patch.add(line);
     }
   }

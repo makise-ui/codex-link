@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { PROTOCOL_VERSION, type PairingPayload } from "../protocol/messages.js";
+import { PROTOCOL_VERSION, type ConnectionMode, type PairingPayload, type TunnelProvider } from "../protocol/messages.js";
 
 export type PairedDevice = {
   id: string;
@@ -22,6 +22,14 @@ type ActivePairing = {
   used: boolean;
 };
 
+export type CreatePairingPayloadInput = {
+  url: string;
+  insecureDevMode: boolean;
+  localUrl?: string;
+  connectionMode?: ConnectionMode;
+  tunnelProvider?: TunnelProvider;
+};
+
 export class PairingStore {
   private readonly now: () => number;
   private readonly pairingTtlMs: number;
@@ -37,7 +45,12 @@ export class PairingStore {
     this.password = options.password;
   }
 
-  createPairingPayload(url: string, insecureDevMode: boolean): PairingPayload {
+  createPairingPayload(url: string, insecureDevMode: boolean): PairingPayload;
+  createPairingPayload(input: CreatePairingPayloadInput): PairingPayload;
+  createPairingPayload(input: string | CreatePairingPayloadInput, insecureDevMode = false): PairingPayload {
+    const payloadInput = typeof input === "string"
+      ? { url: input, insecureDevMode }
+      : input;
     const token = randomToken(32);
     this.activePairing = {
       token,
@@ -47,10 +60,13 @@ export class PairingStore {
 
     return {
       version: PROTOCOL_VERSION,
-      url,
+      url: payloadInput.url,
       pairingToken: token,
       hostId: this.hostId,
-      insecureDevMode,
+      insecureDevMode: payloadInput.insecureDevMode,
+      ...(payloadInput.localUrl ? { localUrl: payloadInput.localUrl } : {}),
+      ...(payloadInput.connectionMode ? { connectionMode: payloadInput.connectionMode } : {}),
+      ...(payloadInput.tunnelProvider ? { tunnelProvider: payloadInput.tunnelProvider } : {}),
     };
   }
 

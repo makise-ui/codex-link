@@ -130,4 +130,48 @@ void main() {
     expect(find.text('-old'), findsOneWidget);
     expect(find.text('+new'), findsOneWidget);
   });
+
+  testWidgets('assistant response exposes copy action', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'response-1',
+              role: ChatRole.assistant,
+              kind: AgentMessageKind.response,
+              text: 'copy me',
+              createdAt: DateTime(2026),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byTooltip('Copy message'), findsOneWidget);
+  });
+
+  testWidgets('file offer cards expose download action', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'file-offer-1',
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              text: 'generated lib/generated.dart\nsize 12\nfileId file-1',
+              createdAt: DateTime(2026),
+              title: 'File available',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.byTooltip('Copy file path'), findsOneWidget);
+  });
 }

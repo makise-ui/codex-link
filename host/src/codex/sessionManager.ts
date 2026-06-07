@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { ExternalSessionRecord, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceRecord } from "../protocol/messages.js";
 import type { CodexEvent, CodexSession, PreparedAttachment, SendPromptResult } from "./codexSession.js";
 import { CliCodexSession } from "./cliCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
+import { FileTransferManager } from "./fileTransferManager.js";
 import { MockCodexSession } from "./mockCodexSession.js";
 import { SessionStore } from "./sessionStore.js";
 
@@ -29,6 +30,7 @@ export class CodexSessionManager {
   private readonly store: SessionStore;
   private readonly listeners = new Set<Listener>();
   private readonly adapters = new Map<string, ManagedAdapter>();
+  private readonly fileTransfers: FileTransferManager;
   private sessions = new Map<string, SessionRecord>();
   private messageHistory = new Map<string, StoredChatMessage[]>();
   private workspaces: WorkspaceConfig[] = [];
@@ -37,6 +39,10 @@ export class CodexSessionManager {
 
   private constructor(private readonly options: CodexSessionManagerOptions) {
     this.store = new SessionStore(options.stateDir);
+    this.fileTransfers = new FileTransferManager({
+      workspaces: options.workspaces,
+      maxBytes: 10 * 1024 * 1024,
+    });
   }
 
   static async create(options: CodexSessionManagerOptions): Promise<CodexSessionManager> {
@@ -88,6 +94,7 @@ export class CodexSessionManager {
         path: resolvedPath,
       };
       this.workspaces.push(workspace);
+      this.fileTransfers.setWorkspaces(this.workspaces);
     }
     if (sessionId) {
       await this.switchWorkspace(sessionId, workspace.id);
@@ -292,6 +299,9 @@ export class CodexSessionManager {
           status: "added",
         })),
       });
+      for (const attachment of preparedAttachments) {
+        await this.emitFileOffer(record, path.relative(record.workdir, attachment.path) || attachment.path, "attachment");
+      }
     }
     await this.save();
     const adapter = this.adapterFor(record);
@@ -304,6 +314,10 @@ export class CodexSessionManager {
       throw new Error(`No active session adapter found for ${sessionId}`);
     }
     await adapter.cancel(runId);
+  }
+
+  async downloadFile(fileId: string): Promise<FileDownloadMessage> {
+    return this.fileTransfers.download(fileId);
   }
 
   onEvent(listener: Listener): () => void {
@@ -322,6 +336,7 @@ export class CodexSessionManager {
   private async init(): Promise<void> {
     const snapshot = await this.store.load();
     this.workspaces = mergeWorkspaces(this.options.workspaces, snapshot.workspaces ?? []);
+    this.fileTransfers.setWorkspaces(this.workspaces);
     this.messageHistory = new Map(Object.entries(snapshot.messages ?? {}).map(([sessionId, messages]) => [sessionId, messages.map((message) => ({ ...message, complete: message.kind === "thinking" ? true : message.complete }))]));
     for (const persisted of snapshot.sessions) {
       const workspace = this.workspaces.find((candidate) => candidate.id === persisted.workspaceId) ?? this.workspaces.find((candidate) => candidate.path === persisted.workdir) ?? this.workspaces[0];
@@ -399,6 +414,7 @@ export class CodexSessionManager {
     }
     if (event.type === "diff.available") {
       historyChanged = this.recordDiffAvailable(event) || historyChanged;
+      await this.emitFileOffersForDiff(record, event);
     }
     if (event.type === "run.started") {
       record.activeRunId = event.runId;
@@ -500,6 +516,29 @@ export class CodexSessionManager {
       history.push(message);
     }
     this.messageHistory.set(sessionId, history.slice(-500));
+  }
+
+  private async emitFileOffersForDiff(record: SessionRecord, event: DiffAvailableMessage): Promise<void> {
+    for (const file of event.files) {
+      if (file.status === "deleted") continue;
+      await this.emitFileOffer(record, file.path, "generated");
+    }
+  }
+
+  private async emitFileOffer(record: SessionRecord, relativePath: string, reason: "requested" | "generated" | "attachment"): Promise<void> {
+    try {
+      const offer = await this.fileTransfers.offerWorkspaceFile({
+        sessionId: record.sessionId,
+        workspaceRoot: record.workdir,
+        relativePath,
+        reason,
+      });
+      this.emit(offer);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message.includes("too large") ? "file.too_large" : message.includes("outside workspace") ? "file.forbidden" : "file.offer_failed";
+      this.emit({ type: "error", code, message });
+    }
   }
 
   private async prepareAttachments(record: SessionRecord, attachments: PromptAttachment[]): Promise<PreparedAttachment[]> {

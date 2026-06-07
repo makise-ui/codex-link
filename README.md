@@ -1,20 +1,20 @@
-# Codex LAN Control Prototype
+# Codex Link
 
-A local-network prototype for controlling a Codex CLI/agent session from a mobile app.
+Codex Link controls a Codex CLI/agent session from a mobile app over a local connection or an explicit secure tunnel.
 
 The project intentionally uses a **host bridge** instead of exposing Codex directly to the phone:
 
 ```text
-Flutter/Android app  ──ws:// LAN dev prototype──▶  Host bridge  ──local process/stdio──▶  Codex CLI
+Flutter app  ──ws:// local or wss:// tunnel──▶  Host bridge  ──local process/stdio──▶  Codex CLI
 ```
 
 ## Security posture
 
-This is a LAN-only prototype. The current milestone uses `ws://` with one-time pairing tokens so we can verify the app, protocol, streaming, sessions, workspace switching, and cancellation quickly.
+The default mode is still local/LAN. Remote access in V1 is tunnel-first: keep the host bridge bound locally or privately, then expose it through a tunnel provider such as cloudflared, ngrok, Tailscale Funnel, or a reverse proxy that gives the phone a `wss://` URL.
 
-Do **not** expose the bridge to the public internet. Do **not** port-forward it. For production hardening, switch to `wss://` with a self-signed certificate fingerprint pinned from the pairing QR payload.
+Do **not** expose the bridge directly on a public VPS port for V1. Tunnel mode requires `--remote-mode tunnel`, `--public-url`, and a host password. The tunnel provider should terminate TLS for the public `wss://` URL.
 
-The mobile app never sends arbitrary shell commands. It sends structured messages (`prompt.send`, `session.create`, `workspace.switch`, `command.run`, `run.cancel`, etc.) to the host bridge. The host remains the policy authority.
+The mobile app never sends arbitrary shell commands. It sends structured messages (`prompt.send`, `session.create`, `workspace.switch`, `command.run`, `file.request`, `run.cancel`, etc.) to the host bridge. The host remains the policy authority.
 
 Yolo mode is intentionally gated. The app can only switch a session to yolo when the host is started with `--allow-yolo`; that maps future runs in that session to Codex `--dangerously-bypass-approvals-and-sandbox` and should only be used in a trusted local workspace.
 
@@ -25,8 +25,8 @@ The new Flutter UI uses a ChatGPT-mobile-inspired dark theme: pure black backgro
 ## Project layout
 
 ```text
-host/      Node.js + TypeScript bridge with pairing, protocol v2, multi-session state, and CLI Codex adapter
-flutter/   Flutter Android client with QR pairing, sessions, workspace switching, commands, yolo toggle, and rich chat UI
+host/      Node.js + TypeScript bridge with pairing, protocol v3, multi-session state, tunnel metadata, file offers, and CLI Codex adapter
+flutter/   Flutter Android client with QR/password pairing, sessions, workspace switching, commands, model settings, file cards, and rich chat UI
 android/   Original Kotlin + Jetpack Compose prototype client kept as a fallback
 shared/    Protocol reference schema
 ```
@@ -40,6 +40,82 @@ pnpm --filter @codex-lan/host dev -- --pair --insecure-ws-dev --port 8787
 ```
 
 The host prints both a pairing JSON payload and a terminal QR code. In the Flutter app, tap **Scan QR and pair** to scan it and pair automatically, or paste the JSON manually.
+
+## Tunnel-first remote testing
+
+### Free cloudflared quick tunnel
+
+Start the tunnel first:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+Cloudflared prints an `https://...trycloudflare.com` URL. Convert it to `wss://...trycloudflare.com`, then start the host with that public URL:
+
+```bash
+export CODEX_LINK_PASSWORD="testpass"
+
+pnpm --filter @codex-lan/host dev -- \
+  --pair \
+  --insecure-ws-dev \
+  --session-mode cli \
+  --codex-command codex \
+  --workdir /path/to/allowed/project \
+  --sandbox workspace-write \
+  --password "$CODEX_LINK_PASSWORD" \
+  --remote-mode tunnel \
+  --public-url wss://YOUR-CLOUDFLARED-DOMAIN.trycloudflare.com \
+  --tunnel-provider cloudflared
+```
+
+In the Flutter app, scan the QR or use password login with:
+
+```text
+wss://YOUR-CLOUDFLARED-DOMAIN.trycloudflare.com
+```
+
+Cloudflare Quick Tunnels are convenient for testing and can rotate or disappear. For regular use, configure a named tunnel or another stable provider.
+
+### ngrok
+
+```bash
+ngrok http 8787
+```
+
+Use the printed public HTTPS host as `wss://...`:
+
+```bash
+pnpm --filter @codex-lan/host dev -- \
+  --pair \
+  --insecure-ws-dev \
+  --session-mode cli \
+  --codex-command codex \
+  --workdir /path/to/allowed/project \
+  --sandbox workspace-write \
+  --password "$CODEX_LINK_PASSWORD" \
+  --remote-mode tunnel \
+  --public-url wss://YOUR-NGROK-DOMAIN \
+  --tunnel-provider ngrok
+```
+
+### Generic tunnel
+
+Any provider that forwards WebSocket traffic from a public `wss://` URL to `http://127.0.0.1:8787` can work:
+
+```bash
+pnpm --filter @codex-lan/host dev -- \
+  --pair \
+  --insecure-ws-dev \
+  --session-mode cli \
+  --codex-command codex \
+  --workdir /path/to/allowed/project \
+  --sandbox workspace-write \
+  --password "$CODEX_LINK_PASSWORD" \
+  --remote-mode tunnel \
+  --public-url wss://YOUR-TUNNEL-HOST \
+  --tunnel-provider other
+```
 
 ## Host bridge with real Codex CLI
 
@@ -108,22 +184,27 @@ Install the debug APK from:
 ## MVP capabilities
 
 - One-time QR/manual pairing.
-- Stored device token reconnect.
-- Protocol v2 session list/create/delete/rename.
+- Password login and stored device token reconnect.
+- Local/LAN mode and explicit tunnel mode.
+- Protocol v3 session list/create/delete/rename.
+- Host info dashboard with local URL, public URL, provider, and yolo allowance.
 - Persistent Codex thread id per mobile session.
 - Workspace switching from the app, limited to host-configured paths.
 - Safe/yolo mode toggle with host-side yolo opt-in.
 - Host command catalog exposed to the app.
-- Send prompts and stream rich agent events.
+- Send prompts and render rich agent events.
+- Host-to-app file offers and downloads for workspace-bound files.
 - Render `thinking`, `executing`, `response`, system, and error messages.
+- Copy actions for prompts, responses, file paths, and file cards.
 - Markdown and syntax-highlighted code rendering.
 - Cancel active runs.
 - Smooth ChatGPT/Codex-style Flutter UI.
 
 ## Planned hardening
 
-- `wss://` with QR-pinned certificate fingerprint.
+- QR-pinned certificate fingerprint for self-hosted TLS.
 - Device revocation UI.
 - Real Codex app-server JSON-RPC adapter.
 - Approval request forwarding.
-- Diff viewer and approval-specific risk display.
+- Chunked file downloads for larger files.
+- Approval-specific risk display.

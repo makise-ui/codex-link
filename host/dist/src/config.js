@@ -4,8 +4,8 @@ import { findLanAddress } from "./util/lanAddress.js";
 export function resolveConfig(argv = process.argv) {
     const program = new Command();
     program
-        .name("codex-lan-host")
-        .description("Local-network host bridge for the Codex Android/Flutter companion prototype")
+        .name("codex-link-host")
+        .description("Local/tunnel host bridge for the Codex Link Flutter controller")
         .option("--host <ip>", "LAN IP to bind. Defaults to detected LAN IP in pairing mode, otherwise 127.0.0.1")
         .option("--port <port>", "port to bind", parsePort, 8787)
         .option("--pair", "create a new one-time pairing token and print a QR/manual payload", false)
@@ -17,7 +17,10 @@ export function resolveConfig(argv = process.argv) {
         .option("--state-dir <path>", "directory for LAN bridge session state", ".codex-lan")
         .option("--sandbox <mode>", "Codex sandbox: read-only, workspace-write, or danger-full-access", parseSandboxMode, "workspace-write")
         .option("--allow-yolo", "allow paired clients to switch a session to danger-full-access/yolo mode", false)
-        .option("--password <password>", "optional LAN password for app login; can also use CODEX_LAN_PASSWORD");
+        .option("--remote-mode <mode>", "remote access mode: lan or tunnel", parseRemoteMode, "lan")
+        .option("--public-url <url>", "public tunnel WebSocket URL, for example wss://name.trycloudflare.com")
+        .option("--tunnel-provider <provider>", "tunnel provider: ngrok, cloudflared, tailscale, or other", parseTunnelProvider, "other")
+        .option("--password <password>", "optional host password for app login; can also use CODEX_LINK_PASSWORD or CODEX_LAN_PASSWORD");
     program.parse(stripPnpmSeparator(argv));
     const opts = program.opts();
     if (!opts.insecureWsDev) {
@@ -27,6 +30,18 @@ export function resolveConfig(argv = process.argv) {
     const workdir = path.resolve(opts.workdir);
     const stateDir = path.resolve(workdir, opts.stateDir);
     const workspacePaths = uniquePaths([workdir, ...opts.workspace.map((workspace) => path.resolve(workspace))]);
+    const localUrl = `ws://${host}:${opts.port}`;
+    const password = opts.password ?? process.env.CODEX_LINK_PASSWORD ?? process.env.CODEX_LAN_PASSWORD;
+    const publicUrl = opts.publicUrl?.trim();
+    if (opts.remoteMode === "tunnel") {
+        if (!password) {
+            throw new Error("--password or CODEX_LINK_PASSWORD is required when --remote-mode tunnel is used.");
+        }
+        if (!publicUrl) {
+            throw new Error("--public-url is required when --remote-mode tunnel is used.");
+        }
+        validatePublicUrl(publicUrl);
+    }
     return {
         host,
         port: opts.port,
@@ -38,7 +53,11 @@ export function resolveConfig(argv = process.argv) {
         stateDir,
         sandbox: opts.sandbox,
         allowYolo: opts.allowYolo || opts.sandbox === "danger-full-access",
-        password: opts.password ?? process.env.CODEX_LAN_PASSWORD,
+        remoteMode: opts.remoteMode,
+        publicUrl,
+        tunnelProvider: opts.tunnelProvider,
+        localUrl,
+        password,
         workspaces: workspacePaths.map((workspacePath, index) => ({
             id: index === 0 ? "default" : `workspace-${index + 1}`,
             label: path.basename(workspacePath) || workspacePath,
@@ -68,6 +87,32 @@ function parseSandboxMode(value) {
     if (value === "read-only" || value === "workspace-write" || value === "danger-full-access")
         return value;
     throw new Error(`Invalid sandbox: ${value}. Expected read-only, workspace-write, or danger-full-access.`);
+}
+function parseRemoteMode(value) {
+    if (value === "lan" || value === "tunnel")
+        return value;
+    throw new Error(`Invalid remote mode: ${value}. Expected lan or tunnel.`);
+}
+function parseTunnelProvider(value) {
+    if (value === "ngrok" || value === "cloudflared" || value === "tailscale" || value === "other")
+        return value;
+    throw new Error(`Invalid tunnel provider: ${value}. Expected ngrok, cloudflared, tailscale, or other.`);
+}
+function validatePublicUrl(value) {
+    let parsed;
+    try {
+        parsed = new URL(value);
+    }
+    catch {
+        throw new Error(`Invalid --public-url: ${value}`);
+    }
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+        throw new Error("--public-url must use ws:// or wss://.");
+    }
+    const localhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
+    if (parsed.protocol !== "wss:" && !localhost) {
+        throw new Error("--public-url must use wss:// for tunnel mode.");
+    }
 }
 function collectWorkspace(value, previous) {
     return [...previous, value];

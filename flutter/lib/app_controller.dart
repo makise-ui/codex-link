@@ -13,17 +13,14 @@ class AppController extends ChangeNotifier {
     : _socket = socket ?? BridgeSocketClient(),
       _store = store ?? SecureCredentialsStore();
 
-  static const _responseStreamFrame = Duration(milliseconds: 16);
-  static const _responseStreamChunk = 5;
-  static const _responseStreamLargeChunk = 8;
-
   final BridgeSocketClient _socket;
   final SecureCredentialsStore _store;
   final _uuid = const Uuid();
 
   ConnectionPhase phase = ConnectionPhase.idle;
-  String statusText = 'Scan the host QR to pair on your LAN.';
+  String statusText = 'Scan the host QR or login with a local/tunnel URL.';
   BridgeCredentials? credentials;
+  HostInfo? hostInfo;
   String? activeSessionId;
   String? activeRunId;
   String? _pendingUrl;
@@ -33,10 +30,9 @@ class AppController extends ChangeNotifier {
   final List<WorkspaceInfo> workspaces = [];
   final List<CodexCommandInfo> commands = [];
   final List<ExternalSessionInfo> externalSessions = [];
+  final List<FileOfferInfo> fileOffers = [];
+  final List<DownloadedFileInfo> downloadedFiles = [];
   final Map<String, List<ChatMessage>> messagesBySession = {};
-  final Map<String, Timer> _responseStreamTimers = {};
-  final Map<String, String> _responseStreamPending = {};
-  final Set<String> _responseCompleteWhenStreamed = {};
 
   CodexSessionInfo? get activeSession {
     final id = activeSessionId;
@@ -76,7 +72,7 @@ class AppController extends ChangeNotifier {
         'type': 'pairing.claim',
         'pairingToken': payload.pairingToken,
         'deviceName': deviceName.trim().isEmpty
-            ? 'Flutter Codex Controller'
+            ? 'Codex Link Mobile'
             : deviceName.trim(),
       });
     } catch (error) {
@@ -119,7 +115,7 @@ class AppController extends ChangeNotifier {
       'type': 'auth.password',
       'password': trimmedPassword,
       'deviceName': deviceName.trim().isEmpty
-          ? 'Flutter Codex Controller'
+          ? 'Codex Link Mobile'
           : deviceName.trim(),
     });
   }
@@ -315,8 +311,12 @@ class AppController extends ChangeNotifier {
     _send({'type': 'run.cancel', 'sessionId': sessionId, 'runId': runId});
   }
 
+  void requestFileDownload(FileOfferInfo offer) {
+    if (offer.fileId.isEmpty) return;
+    _send({'type': 'file.request', 'fileId': offer.fileId});
+  }
+
   Future<void> disposeController() async {
-    _cancelResponseStreams();
     await _socket.close();
   }
 
@@ -391,6 +391,9 @@ class AppController extends ChangeNotifier {
             message['detail'] as String? ??
             message['status'] as String? ??
             statusText;
+        break;
+      case 'host.info':
+        hostInfo = HostInfo.fromJson(message);
         break;
       case 'pairing.accepted':
         _acceptPairing(message);
@@ -468,6 +471,12 @@ class AppController extends ChangeNotifier {
       case 'diff.available':
         _appendFileChangeEvent(message);
         break;
+      case 'file.offer':
+        _appendFileOfferEvent(message);
+        break;
+      case 'file.download':
+        _appendFileDownloadEvent(message);
+        break;
       case 'error':
         _appendError(message['message'] as String? ?? 'Unknown bridge error');
         statusText = message['message'] as String? ?? statusText;
@@ -481,7 +490,7 @@ class AppController extends ChangeNotifier {
     final token = message['deviceToken'] as String?;
     final deviceId = message['deviceId'] as String?;
     phase = ConnectionPhase.connected;
-    statusText = 'Paired and connected to Codex LAN.';
+    statusText = 'Paired and connected to Codex Link.';
     if (url != null && token != null && deviceId != null) {
       credentials = BridgeCredentials(
         url: url,
@@ -497,7 +506,7 @@ class AppController extends ChangeNotifier {
     final token = message['deviceToken'] as String?;
     final deviceId = message['deviceId'] as String?;
     phase = ConnectionPhase.connected;
-    statusText = 'Connected to Codex LAN.';
+    statusText = 'Connected to Codex Link.';
     if (url != null && token != null && deviceId != null) {
       credentials = BridgeCredentials(
         url: url,
@@ -529,7 +538,6 @@ class AppController extends ChangeNotifier {
   void _replaceMessageHistory(Map<String, dynamic> message) {
     final sessionId = message['sessionId'] as String?;
     if (sessionId == null || sessionId.isEmpty) return;
-    _cancelResponseStreams();
     messagesBySession[sessionId] =
         ((message['messages'] as List<dynamic>? ?? const []))
             .map(
@@ -599,10 +607,6 @@ class AppController extends ChangeNotifier {
     final index = list.indexWhere((item) => item.id == messageId);
     if (index >= 0) {
       final current = list[index];
-      if (current.kind == AgentMessageKind.response && text.length > 24) {
-        _queueResponseText(sessionId, current.id, text);
-        return;
-      }
       final nextText =
           current.kind == AgentMessageKind.thinking &&
               current.text == 'Thinking…'
@@ -632,81 +636,8 @@ class AppController extends ChangeNotifier {
     if (list == null) return;
     final index = list.indexWhere((item) => item.id == messageId);
     if (index >= 0) {
-      if (list[index].kind == AgentMessageKind.response &&
-          (_responseStreamPending[messageId]?.isNotEmpty == true ||
-              _responseStreamTimers.containsKey(messageId))) {
-        if (messageId != null) {
-          _responseCompleteWhenStreamed.add(messageId);
-        }
-        return;
-      }
       list[index] = list[index].copyWith(complete: true);
     }
-  }
-
-  void _queueResponseText(String sessionId, String messageId, String text) {
-    _responseStreamPending[messageId] =
-        (_responseStreamPending[messageId] ?? '') + text;
-    if (_responseStreamTimers.containsKey(messageId)) return;
-    _responseStreamTimers[messageId] = Timer.periodic(_responseStreamFrame, (
-      timer,
-    ) {
-      final pending = _responseStreamPending[messageId] ?? '';
-      if (pending.isEmpty) {
-        timer.cancel();
-        _responseStreamTimers.remove(messageId);
-        _responseStreamPending.remove(messageId);
-        if (_responseCompleteWhenStreamed.remove(messageId)) {
-          _markMessageComplete(sessionId, messageId);
-        }
-        notifyListeners();
-        return;
-      }
-      final take = _streamChunkLength(pending);
-      final chunk = pending.substring(0, take);
-      _responseStreamPending[messageId] = pending.substring(take);
-      _appendTextToMessage(sessionId, messageId, chunk);
-      notifyListeners();
-    });
-  }
-
-  void _appendTextToMessage(String sessionId, String messageId, String text) {
-    final list = messagesBySession[sessionId];
-    if (list == null) return;
-    final index = list.indexWhere((item) => item.id == messageId);
-    if (index < 0) return;
-    list[index] = list[index].copyWith(text: list[index].text + text);
-  }
-
-  void _markMessageComplete(String sessionId, String messageId) {
-    final list = messagesBySession[sessionId];
-    if (list == null) return;
-    final index = list.indexWhere((item) => item.id == messageId);
-    if (index >= 0) {
-      list[index] = list[index].copyWith(complete: true);
-    }
-  }
-
-  int _streamChunkLength(String pending) {
-    if (pending.length <= 4) return pending.length;
-    final preferred = pending.length > 600
-        ? _responseStreamLargeChunk
-        : _responseStreamChunk;
-    final limit = pending.length < preferred ? pending.length : preferred;
-    final newline = pending.indexOf('\n');
-    if (newline >= 0 && newline < limit) return newline + 1;
-    final space = pending.lastIndexOf(' ', limit);
-    if (space > 3) return space + 1;
-    return limit;
-  }
-
-  void _cancelResponseStreams() {
-    for (final timer in _responseStreamTimers.values) {
-      timer.cancel();
-    }
-    _responseStreamTimers.clear();
-    _responseStreamPending.clear();
-    _responseCompleteWhenStreamed.clear();
   }
 
   void _handleLegacyOutput(Map<String, dynamic> message) {
@@ -764,9 +695,51 @@ class AppController extends ChangeNotifier {
         );
   }
 
+  void _appendFileOfferEvent(Map<String, dynamic> message) {
+    final offer = FileOfferInfo.fromJson(message);
+    if (offer.fileId.isEmpty) return;
+    fileOffers.add(offer);
+    final sessionId = offer.sessionId ?? activeSession?.sessionId;
+    if (sessionId == null) return;
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: 'file-offer-${offer.fileId}',
+            role: ChatRole.system,
+            kind: AgentMessageKind.files,
+            title: 'File available',
+            text:
+                '${offer.reason} ${offer.path}\nsize ${offer.sizeBytes}\nfileId ${offer.fileId}',
+            createdAt: DateTime.now(),
+          ),
+        );
+  }
+
+  void _appendFileDownloadEvent(Map<String, dynamic> message) {
+    final file = DownloadedFileInfo.fromJson(message);
+    if (file.fileId.isEmpty) return;
+    downloadedFiles.add(file);
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null) return;
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: 'file-download-${file.fileId}',
+            role: ChatRole.system,
+            kind: AgentMessageKind.files,
+            title: 'File downloaded',
+            text:
+                'downloaded ${file.name}\nsize ${file.sizeBytes}\nfileId ${file.fileId}',
+            createdAt: DateTime.now(),
+          ),
+        );
+  }
+
   String _friendlyBridgeError(Object error, String url) {
     if (error is TimeoutException) {
-      return 'Could not reach $url. Make sure the host bridge is still running, your phone is on the same Wi‑Fi/LAN, the QR is fresh, and port ${Uri.tryParse(url)?.port ?? ''} is not blocked by a firewall.';
+      return 'Could not reach $url. Make sure the host bridge is running, the LAN or tunnel URL is reachable, the QR is fresh, and the port or tunnel is not blocked.';
     }
     final text = error.toString();
     if (text.contains('Connection refused') || text.contains('OS Error')) {

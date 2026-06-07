@@ -32,7 +32,8 @@ export function isPrivateOrLoopbackAddress(address: string | undefined): boolean
   return false;
 }
 
-export function assertAllowedRemoteAddress(address: string | undefined): void {
+export function assertAllowedRemoteAddress(address: string | undefined, options: { remoteMode?: "lan" | "tunnel" } = {}): void {
+  if (options.remoteMode === "tunnel") return;
   if (!isPrivateOrLoopbackAddress(address)) {
     throw new Error(`Rejected non-LAN remote address: ${address ?? "unknown"}`);
   }

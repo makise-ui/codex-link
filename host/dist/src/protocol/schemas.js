@@ -89,6 +89,10 @@ export const promptSendSchema = z.object({
     prompt: z.string().min(1).max(64 * 1024),
     attachments: z.array(attachmentSchema).max(4).optional(),
 });
+export const fileRequestSchema = z.object({
+    type: z.literal("file.request"),
+    fileId: z.string().trim().min(1).max(160),
+});
 export const runCancelSchema = z.object({
     type: z.literal("run.cancel"),
     sessionId: sessionIdSchema,
@@ -123,6 +127,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     commandListSchema,
     commandRunSchema,
     promptSendSchema,
+    fileRequestSchema,
     runCancelSchema,
     approvalDecisionSchema,
     pingSchema,

@@ -34,7 +34,7 @@ class _CodexLanAppState extends State<CodexLanApp> {
     return ChangeNotifierProvider.value(
       value: _controller,
       child: MaterialApp(
-        title: 'Codex LAN',
+        title: 'Codex Link',
         debugShowCheckedModeBanner: false,
         theme: buildCodexTheme(),
         home: Consumer<AppController>(

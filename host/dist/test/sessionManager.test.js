@@ -170,10 +170,41 @@ describe("CodexSessionManager", () => {
         await manager.close();
         const history = manager.getSessionHistory(session.sessionId);
         expect(history.some((message) => message.role === "user" && message.text === "hello history")).toBe(true);
-        expect(history.some((message) => message.kind === "executing" && message.text.includes("Checking the LAN bridge"))).toBe(true);
+        expect(history.some((message) => message.kind === "executing" && message.text.includes("Checking the host bridge"))).toBe(true);
         expect(history.every((message) => message.kind !== "thinking")).toBe(true);
         expect(history.every((message) => message.text.trim() !== "Thinking…")).toBe(true);
         vi.useRealTimers();
+    });
+    it("emits file offers for uploaded workspace files and downloads them", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const events = [];
+        manager.onEvent((event) => {
+            if (event.type === "file.offer") {
+                events.push(event);
+            }
+        });
+        const [session] = manager.listSessions();
+        await manager.sendPrompt(session.sessionId, "use this file", [
+            {
+                name: "notes.txt",
+                mimeType: "text/plain",
+                dataBase64: Buffer.from("hello from phone").toString("base64"),
+            },
+        ]);
+        const offer = events.find((event) => event.type === "file.offer");
+        expect(offer).toMatchObject({ name: "notes.txt" });
+        const download = await manager.downloadFile(offer.fileId);
+        expect(download.dataBase64).toBe(Buffer.from("hello from phone").toString("base64"));
+        await manager.close();
     });
     it("replays saved history after a manager restart", async () => {
         vi.useFakeTimers();
@@ -202,7 +233,7 @@ describe("CodexSessionManager", () => {
         });
         const history = restarted.getSessionHistory(session.sessionId);
         expect(history.some((message) => message.role === "user" && message.text === "persist this after restart")).toBe(true);
-        expect(history.some((message) => message.role === "assistant" && message.text.includes("Connected to the local Codex LAN bridge"))).toBe(true);
+        expect(history.some((message) => message.role === "assistant" && message.text.includes("Connected to the local Codex Link bridge"))).toBe(true);
         await restarted.close();
     });
 });

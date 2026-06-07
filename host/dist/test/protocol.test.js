@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { PROTOCOL_VERSION } from "../src/protocol/messages.js";
 import { parseClientMessage } from "../src/protocol/schemas.js";
 describe("protocol schemas", () => {
+    it("uses protocol version 3", () => {
+        expect(PROTOCOL_VERSION).toBe(3);
+    });
     it("accepts a valid prompt", () => {
         expect(parseClientMessage({
             type: "prompt.send",
@@ -78,6 +82,12 @@ describe("protocol schemas", () => {
         expect(parseClientMessage({ type: "external.session.import", externalSessionId: "019ea1ae-ac01-7123-8247-f3f94f79383d" })).toEqual({
             type: "external.session.import",
             externalSessionId: "019ea1ae-ac01-7123-8247-f3f94f79383d",
+        });
+    });
+    it("accepts file request client messages", () => {
+        expect(parseClientMessage({ type: "file.request", fileId: "file-1" })).toEqual({
+            type: "file.request",
+            fileId: "file-1",
         });
     });
     it("rejects empty prompts", () => {

@@ -32,6 +32,7 @@ type ActiveProcess = {
   messageCounter: number;
   itemMessageIds: Map<string, string>;
   messageKinds: Map<string, "thinking" | "executing" | "response" | "system">;
+  pendingFileChanges: Promise<void>[];
   thinkingMessageId?: string;
 };
 
@@ -76,7 +77,7 @@ export class CliCodexSession implements CodexSession {
       stdio: [stdinMode, "pipe", "pipe"],
     });
 
-    this.active = { runId, child, finished: false, jsonBuffer: new JsonLineBuffer(), messageCounter: 0, itemMessageIds: new Map(), messageKinds: new Map() };
+    this.active = { runId, child, finished: false, jsonBuffer: new JsonLineBuffer(), messageCounter: 0, itemMessageIds: new Map(), messageKinds: new Map(), pendingFileChanges: [] };
     this.emit({ type: "run.started", sessionId: this.sessionId, runId });
     this.emit({ type: "status", status: "running", sessionId: this.sessionId, runId });
 
@@ -101,16 +102,7 @@ export class CliCodexSession implements CodexSession {
     });
 
     child.on("close", (code) => {
-      const active = this.active;
-      if (!active || active.runId !== runId || active.finished) return;
-      for (const line of active.jsonBuffer.flush()) {
-        this.handleJsonLine(runId, line);
-      }
-      this.completeOpenMessages(runId);
-      active.finished = true;
-      this.emit({ type: "status", status: code === 0 ? "completed" : "failed", sessionId: this.sessionId, runId, detail: `exit=${code ?? "signal"}` });
-      this.emit({ type: "run.completed", sessionId: this.sessionId, runId, exitCode: code ?? undefined });
-      this.active = null;
+      void this.finishRun(runId, code);
     });
 
     return { runId };
@@ -158,6 +150,7 @@ export class CliCodexSession implements CodexSession {
     try {
       const codexEvent = parseCodexJsonLine(line);
       const mapped = mapCodexJsonEvent(codexEvent);
+      const active = this.active;
       switch (mapped.kind) {
         case "thread":
           this.codexThreadId = mapped.threadId;
@@ -170,7 +163,7 @@ export class CliCodexSession implements CodexSession {
           this.completeThinking(runId);
           this.emitStartedMessage(runId, mapped.messageKind, mapped.title, mapped.text?.endsWith("\n") ? mapped.text : mapped.text ? `${mapped.text}\n` : undefined, mapped.itemId);
           if (mapped.title === "Editing files" && mapped.text) {
-            void this.emitFileChanges(mapped.text);
+            active?.pendingFileChanges.push(this.emitFileChanges(mapped.text));
           }
           return;
         case "message":
@@ -317,6 +310,22 @@ export class CliCodexSession implements CodexSession {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+
+  private async finishRun(runId: string, code: number | null): Promise<void> {
+    const active = this.active;
+    if (!active || active.runId !== runId || active.finished) return;
+    for (const line of active.jsonBuffer.flush()) {
+      this.handleJsonLine(runId, line);
+    }
+    this.completeOpenMessages(runId);
+    if (active.pendingFileChanges.length > 0) {
+      await Promise.allSettled(active.pendingFileChanges);
+    }
+    active.finished = true;
+    this.emit({ type: "status", status: code === 0 ? "completed" : "failed", sessionId: this.sessionId, runId, detail: `exit=${code ?? "signal"}` });
+    this.emit({ type: "run.completed", sessionId: this.sessionId, runId, exitCode: code ?? undefined });
+    this.active = null;
   }
 }
 
