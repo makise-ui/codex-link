@@ -1,0 +1,13 @@
+node_modules/
+**/node_modules/
+
+.dart_tool/
+**/.dart_tool/
+build/
+**/build/
+
+.gradle/
+**/.gradle/
+
+.DS_Store
+*.log

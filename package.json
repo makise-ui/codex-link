@@ -1,0 +1,12 @@
+{
+  "name": "codex-lan-control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-network Android companion prototype for controlling a Codex agent through a safe host bridge.",
+  "scripts": {
+    "dev:host": "pnpm --filter @codex-lan/host dev",
+    "test:host": "pnpm --filter @codex-lan/host test",
+    "typecheck:host": "pnpm --filter @codex-lan/host typecheck"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

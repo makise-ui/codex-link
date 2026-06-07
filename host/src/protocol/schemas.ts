@@ -1,0 +1,117 @@
+import { z } from "zod";
+
+const sessionIdSchema = z.string().trim().min(1);
+const runModeSchema = z.enum(["safe", "yolo"]);
+
+export const pairingClaimSchema = z.object({
+  type: z.literal("pairing.claim"),
+  pairingToken: z.string().min(16),
+  deviceName: z.string().trim().min(1).max(80),
+});
+
+export const authResumeSchema = z.object({
+  type: z.literal("auth.resume"),
+  deviceToken: z.string().min(16),
+});
+
+export const sessionStartSchema = z.object({
+  type: z.literal("session.start"),
+  sessionId: sessionIdSchema.optional(),
+});
+
+export const sessionListSchema = z.object({
+  type: z.literal("session.list"),
+});
+
+export const sessionCreateSchema = z.object({
+  type: z.literal("session.create"),
+  title: z.string().trim().min(1).max(80).optional(),
+  workspaceId: z.string().trim().min(1).optional(),
+  mode: runModeSchema.optional(),
+});
+
+export const sessionRenameSchema = z.object({
+  type: z.literal("session.rename"),
+  sessionId: sessionIdSchema,
+  title: z.string().trim().min(1).max(80),
+});
+
+export const sessionDeleteSchema = z.object({
+  type: z.literal("session.delete"),
+  sessionId: sessionIdSchema,
+});
+
+export const sessionModeSetSchema = z.object({
+  type: z.literal("session.mode.set"),
+  sessionId: sessionIdSchema,
+  mode: runModeSchema,
+});
+
+export const workspaceListSchema = z.object({
+  type: z.literal("workspace.list"),
+});
+
+export const workspaceSwitchSchema = z.object({
+  type: z.literal("workspace.switch"),
+  sessionId: sessionIdSchema,
+  workspaceId: z.string().trim().min(1),
+});
+
+export const commandListSchema = z.object({
+  type: z.literal("command.list"),
+});
+
+export const commandRunSchema = z.object({
+  type: z.literal("command.run"),
+  commandId: z.string().trim().min(1).max(80),
+  sessionId: sessionIdSchema.optional(),
+});
+
+export const promptSendSchema = z.object({
+  type: z.literal("prompt.send"),
+  sessionId: sessionIdSchema,
+  prompt: z.string().min(1).max(64 * 1024),
+});
+
+export const runCancelSchema = z.object({
+  type: z.literal("run.cancel"),
+  sessionId: sessionIdSchema,
+  runId: z.string().min(1),
+});
+
+export const approvalDecisionSchema = z.object({
+  type: z.literal("approval.decision"),
+  sessionId: sessionIdSchema,
+  approvalId: z.string().min(1),
+  decision: z.enum(["approve", "reject"]),
+});
+
+export const pingSchema = z.object({
+  type: z.literal("ping"),
+  nonce: z.string().optional(),
+});
+
+export const clientMessageSchema = z.discriminatedUnion("type", [
+  pairingClaimSchema,
+  authResumeSchema,
+  sessionStartSchema,
+  sessionListSchema,
+  sessionCreateSchema,
+  sessionRenameSchema,
+  sessionDeleteSchema,
+  sessionModeSetSchema,
+  workspaceListSchema,
+  workspaceSwitchSchema,
+  commandListSchema,
+  commandRunSchema,
+  promptSendSchema,
+  runCancelSchema,
+  approvalDecisionSchema,
+  pingSchema,
+]);
+
+export type ParsedClientMessage = z.infer<typeof clientMessageSchema>;
+
+export function parseClientMessage(raw: unknown): ParsedClientMessage {
+  return clientMessageSchema.parse(raw);
+}

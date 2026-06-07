@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/codex-lan-control.schema.json",
+  "title": "Codex LAN Control Protocol",
+  "description": "Versioned JSON-over-WebSocket protocol between the mobile controller and local host bridge.",
+  "version": 2,
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/PairingClaim" },
+    { "$ref": "#/$defs/AuthResume" },
+    { "$ref": "#/$defs/SessionStart" },
+    { "$ref": "#/$defs/SessionList" },
+    { "$ref": "#/$defs/SessionCreate" },
+    { "$ref": "#/$defs/SessionRename" },
+    { "$ref": "#/$defs/SessionDelete" },
+    { "$ref": "#/$defs/SessionModeSet" },
+    { "$ref": "#/$defs/WorkspaceList" },
+    { "$ref": "#/$defs/WorkspaceSwitch" },
+    { "$ref": "#/$defs/CommandList" },
+    { "$ref": "#/$defs/CommandRun" },
+    { "$ref": "#/$defs/PromptSend" },
+    { "$ref": "#/$defs/RunCancel" },
+    { "$ref": "#/$defs/Ping" }
+  ],
+  "$defs": {
+    "PairingClaim": {
+      "type": "object",
+      "required": ["type", "pairingToken", "deviceName"],
+      "properties": {
+        "type": { "const": "pairing.claim" },
+        "pairingToken": { "type": "string", "minLength": 16 },
+        "deviceName": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "AuthResume": {
+      "type": "object",
+      "required": ["type", "deviceToken"],
+      "properties": {
+        "type": { "const": "auth.resume" },
+        "deviceToken": { "type": "string", "minLength": 16 }
+      }
+    },
+    "SessionStart": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "session.start" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "SessionList": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "session.list" } }
+    },
+    "SessionCreate": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "session.create" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "workspaceId": { "type": "string" },
+        "mode": { "enum": ["safe", "yolo"] }
+      }
+    },
+    "SessionRename": {
+      "type": "object",
+      "required": ["type", "sessionId", "title"],
+      "properties": {
+        "type": { "const": "session.rename" },
+        "sessionId": { "type": "string" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "SessionDelete": {
+      "type": "object",
+      "required": ["type", "sessionId"],
+      "properties": {
+        "type": { "const": "session.delete" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "SessionModeSet": {
+      "type": "object",
+      "required": ["type", "sessionId", "mode"],
+      "properties": {
+        "type": { "const": "session.mode.set" },
+        "sessionId": { "type": "string" },
+        "mode": { "enum": ["safe", "yolo"] }
+      }
+    },
+    "WorkspaceList": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "workspace.list" } }
+    },
+    "WorkspaceSwitch": {
+      "type": "object",
+      "required": ["type", "sessionId", "workspaceId"],
+      "properties": {
+        "type": { "const": "workspace.switch" },
+        "sessionId": { "type": "string" },
+        "workspaceId": { "type": "string" }
+      }
+    },
+    "CommandList": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "command.list" } }
+    },
+    "CommandRun": {
+      "type": "object",
+      "required": ["type", "commandId"],
+      "properties": {
+        "type": { "const": "command.run" },
+        "commandId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "PromptSend": {
+      "type": "object",
+      "required": ["type", "sessionId", "prompt"],
+      "properties": {
+        "type": { "const": "prompt.send" },
+        "sessionId": { "type": "string" },
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 65536 }
+      }
+    },
+    "RunCancel": {
+      "type": "object",
+      "required": ["type", "sessionId", "runId"],
+      "properties": {
+        "type": { "const": "run.cancel" },
+        "sessionId": { "type": "string" },
+        "runId": { "type": "string" }
+      }
+    },
+    "Ping": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ping" },
+        "nonce": { "type": "string" }
+      }
+    }
+  }
+}
