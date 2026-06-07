@@ -91,7 +91,7 @@ function isInsideDirectory(candidate, root) {
     const relative = path.relative(root, candidate);
     return relative.length === 0 || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
-function mimeTypeFor(filePath) {
+export function mimeTypeFor(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     if (ext === ".txt" || ext === ".md" || ext === ".log")
         return "text/plain";

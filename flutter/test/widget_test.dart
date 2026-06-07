@@ -27,7 +27,7 @@ void main() {
       ..phase = ConnectionPhase.connected
       ..statusText = 'Connected to Codex Link.'
       ..hostInfo = const HostInfo(
-        version: 4,
+        version: 5,
         connectionMode: 'tunnel',
         tunnelProvider: 'cloudflared',
         publicUrl: 'wss://unit.trycloudflare.com',

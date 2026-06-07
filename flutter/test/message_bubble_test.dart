@@ -252,5 +252,13 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('image-preview-image-1')), findsOneWidget);
+    final boundedPreview = tester
+        .widgetList<ConstrainedBox>(find.byType(ConstrainedBox))
+        .where(
+          (widget) =>
+              widget.constraints.maxWidth == 520 &&
+              widget.constraints.maxHeight == 280,
+        );
+    expect(boundedPreview, hasLength(1));
   });
 }

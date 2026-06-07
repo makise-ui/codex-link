@@ -283,6 +283,84 @@ void main() {
     },
   );
 
+  test('slash send accepts @ file mention paths', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Files',
+            'updatedAt': '2026-06-07T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.sendPrompt('/send @lib/report.txt');
+
+    expect(socket.sentMessages.single, {
+      'type': 'file.offer.request',
+      'sessionId': 's1',
+      'path': 'lib/report.txt',
+    });
+  });
+
+  test('searches and stores workspace file suggestions', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Files',
+            'updatedAt': '2026-06-07T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.searchWorkspaceFiles('@main', limit: 12);
+
+    expect(socket.sentMessages.single, {
+      'type': 'workspace.file.search',
+      'sessionId': 's1',
+      'query': 'main',
+      'limit': 12,
+    });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'workspace.file.search.results',
+      'sessionId': 's1',
+      'query': 'main',
+      'files': [
+        {
+          'path': 'lib/main.dart',
+          'name': 'main.dart',
+          'sizeBytes': 14,
+          'mimeType': 'text/plain',
+        },
+      ],
+    });
+
+    expect(controller.fileSuggestionQuery, 'main');
+    expect(controller.fileSuggestions.single.path, 'lib/main.dart');
+  });
+
   test(
     'file offer replaces the pending request row and image offers auto-download',
     () {

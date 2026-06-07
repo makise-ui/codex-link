@@ -83,6 +83,13 @@ export const workspaceSwitchSchema = z.object({
   workspaceId: z.string().trim().min(1),
 });
 
+export const workspaceFileSearchSchema = z.object({
+  type: z.literal("workspace.file.search"),
+  sessionId: sessionIdSchema,
+  query: z.string().trim().max(240).optional(),
+  limit: z.number().int().min(1).max(80).optional(),
+});
+
 export const externalSessionListSchema = z.object({
   type: z.literal("external.session.list"),
 });
@@ -152,6 +159,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   workspaceListSchema,
   workspaceAddSchema,
   workspaceSwitchSchema,
+  workspaceFileSearchSchema,
   externalSessionListSchema,
   externalSessionImportSchema,
   commandListSchema,

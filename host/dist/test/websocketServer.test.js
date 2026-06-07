@@ -42,7 +42,7 @@ describe("startBridgeServer", () => {
         });
         const hostInfo = messages.find((message) => message.type === "host.info");
         expect(hostInfo).toMatchObject({
-            version: 4,
+            version: 5,
             connectionMode: "tunnel",
             tunnelProvider: "cloudflared",
             publicUrl: "wss://unit.trycloudflare.com",
@@ -90,12 +90,54 @@ describe("startBridgeServer", () => {
         });
         ws.close();
     });
+    it("forwards workspace file searches to the session manager", async () => {
+        const port = await freePort();
+        const sessionManager = fakeSessionManager();
+        server = await startBridgeServer({
+            host: "127.0.0.1",
+            port,
+            url: `ws://127.0.0.1:${port}`,
+            pairingStore: new PairingStore({ password: "secret" }),
+            sessionManager,
+            auditLog: { record() { } },
+            logger: { info() { } },
+            hostInfo: {
+                connectionMode: "tunnel",
+                tunnelProvider: "cloudflared",
+                publicUrl: "wss://unit.trycloudflare.com",
+                localUrl: `ws://127.0.0.1:${port}`,
+                hostLabel: "Codex Link",
+                yoloAllowed: false,
+            },
+        });
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        const messages = [];
+        ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+        await opened(ws);
+        ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+        });
+        ws.send(JSON.stringify({ type: "workspace.file.search", sessionId: "s1", query: "main", limit: 8 }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "workspace.file.search.results")).toBe(true);
+        });
+        expect(sessionManager.fileSearches).toEqual([{ sessionId: "s1", query: "main", limit: 8 }]);
+        expect(messages.find((message) => message.type === "workspace.file.search.results")).toMatchObject({
+            sessionId: "s1",
+            query: "main",
+            files: [{ path: "lib/main.dart", name: "main.dart" }],
+        });
+        ws.close();
+    });
 });
 function fakeSessionManager() {
     const requestedFiles = [];
+    const fileSearches = [];
     let listener;
     return {
         requestedFiles,
+        fileSearches,
         onEvent: (callback) => {
             listener = callback;
             return () => {
@@ -117,6 +159,15 @@ function fakeSessionManager() {
             };
             listener?.(offer);
             return offer;
+        },
+        searchWorkspaceFiles: async (sessionId, query, limit) => {
+            fileSearches.push({ sessionId, query, limit });
+            return {
+                type: "workspace.file.search.results",
+                sessionId,
+                query: query ?? "",
+                files: [{ path: "lib/main.dart", name: "main.dart", sizeBytes: 14, mimeType: "text/plain" }],
+            };
         },
         listSessions: () => [
             {

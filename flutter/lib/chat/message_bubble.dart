@@ -878,20 +878,24 @@ class _ImageFilePreview extends StatelessWidget {
       return const SizedBox.shrink();
     }
     if (bytes.isEmpty) return const SizedBox.shrink();
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: CodexColors.ink2,
-          border: Border.all(
-            color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520, maxHeight: 280),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: CodexColors.ink2,
+            border: Border.all(
+              color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+            ),
           ),
-        ),
-        child: Image.memory(
-          bytes,
-          key: ValueKey('image-preview-${download.fileId}'),
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          child: Image.memory(
+            bytes,
+            key: ValueKey('image-preview-${download.fileId}'),
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
         ),
       ),
     );

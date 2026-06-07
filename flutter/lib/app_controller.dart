@@ -32,7 +32,9 @@ class AppController extends ChangeNotifier {
   final List<ExternalSessionInfo> externalSessions = [];
   final List<FileOfferInfo> fileOffers = [];
   final List<DownloadedFileInfo> downloadedFiles = [];
+  final List<WorkspaceFileInfo> fileSuggestions = [];
   final Map<String, List<ChatMessage>> messagesBySession = {};
+  String fileSuggestionQuery = '';
 
   CodexSessionInfo? get activeSession {
     final id = activeSessionId;
@@ -147,6 +149,7 @@ class AppController extends ChangeNotifier {
 
   void selectSession(String sessionId) {
     activeSessionId = sessionId;
+    clearFileSuggestions();
     _send({'type': 'session.start', 'sessionId': sessionId});
     _send({'type': 'workspace.list'});
     notifyListeners();
@@ -168,6 +171,7 @@ class AppController extends ChangeNotifier {
   void switchWorkspace(String workspaceId) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
+    clearFileSuggestions();
     final workspace = workspaces
         .where((item) => item.workspaceId == workspaceId)
         .firstOrNull;
@@ -211,6 +215,30 @@ class AppController extends ChangeNotifier {
 
   void refreshWorkspaces() {
     _send({'type': 'workspace.list'});
+  }
+
+  void searchWorkspaceFiles(String query, {int limit = 40}) {
+    final sessionId = activeSession?.sessionId;
+    if (!isConnected || sessionId == null) return;
+    final normalized = query.trim().replaceFirst(RegExp(r'^@+'), '');
+    if (fileSuggestionQuery != normalized || fileSuggestions.isNotEmpty) {
+      fileSuggestionQuery = normalized;
+      fileSuggestions.clear();
+      notifyListeners();
+    }
+    _send({
+      'type': 'workspace.file.search',
+      'sessionId': sessionId,
+      'query': normalized,
+      'limit': limit,
+    });
+  }
+
+  void clearFileSuggestions() {
+    if (fileSuggestionQuery.isEmpty && fileSuggestions.isEmpty) return;
+    fileSuggestionQuery = '';
+    fileSuggestions.clear();
+    notifyListeners();
   }
 
   void importExternalSession(ExternalSessionInfo session) {
@@ -271,6 +299,7 @@ class AppController extends ChangeNotifier {
         ? _requestedFilePathFromPrompt(trimmed)
         : null;
     if (requestedFilePath != null) {
+      clearFileSuggestions();
       messagesBySession
           .putIfAbsent(sessionId, () => [])
           .add(
@@ -293,6 +322,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     final displayText = trimmed.isEmpty ? 'Uploaded attachments' : trimmed;
+    clearFileSuggestions();
     final message = ChatMessage(
       id: _uuid.v4(),
       role: ChatRole.user,
@@ -450,6 +480,9 @@ class AppController extends ChangeNotifier {
             ),
           );
         break;
+      case 'workspace.file.search.results':
+        _replaceFileSuggestions(message);
+        break;
       case 'command.list':
         commands
           ..clear()
@@ -574,6 +607,21 @@ class AppController extends ChangeNotifier {
               (item) => item.id.isNotEmpty && !_isReplayThinkingNoise(item),
             )
             .toList();
+  }
+
+  void _replaceFileSuggestions(Map<String, dynamic> message) {
+    final sessionId = message['sessionId'] as String?;
+    if (sessionId == null || sessionId != activeSession?.sessionId) return;
+    fileSuggestionQuery = message['query'] as String? ?? fileSuggestionQuery;
+    fileSuggestions
+      ..clear()
+      ..addAll(
+        ((message['files'] as List<dynamic>? ?? const [])).map(
+          (item) => WorkspaceFileInfo.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        ),
+      );
   }
 
   void _upsertSession(CodexSessionInfo session) {
@@ -843,9 +891,20 @@ String? _requestedFilePathFromPrompt(String prompt) {
   ).firstMatch(prompt.trim());
   final rawPath = match?.group(1)?.trim();
   if (rawPath == null || rawPath.isEmpty) return null;
+  var normalized = rawPath;
+  if (normalized.startsWith('@')) {
+    normalized = normalized.substring(1).trim();
+  }
   if ((rawPath.startsWith('"') && rawPath.endsWith('"')) ||
       (rawPath.startsWith("'") && rawPath.endsWith("'"))) {
-    return rawPath.substring(1, rawPath.length - 1).trim();
+    normalized = rawPath.substring(1, rawPath.length - 1).trim();
   }
-  return rawPath;
+  if (normalized.startsWith('@')) {
+    normalized = normalized.substring(1).trim();
+  }
+  if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'"))) {
+    normalized = normalized.substring(1, normalized.length - 1).trim();
+  }
+  return normalized;
 }

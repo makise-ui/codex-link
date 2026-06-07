@@ -233,6 +233,38 @@ describe("CodexSessionManager", () => {
         expect(manager.getSessionHistory(session.sessionId).some((message) => message.kind === "files" && message.text.includes("requested report.txt"))).toBe(true);
         await manager.close();
     });
+    it("searches active workspace files for mobile mentions", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        await mkdir(path.join(workspace, "lib"), { recursive: true });
+        await mkdir(path.join(workspace, "node_modules", "pkg"), { recursive: true });
+        await writeFile(path.join(workspace, "lib", "main.dart"), "void main() {}\n");
+        await writeFile(path.join(workspace, "node_modules", "pkg", "main.dart"), "ignored\n");
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = manager.listSessions();
+        const results = await manager.searchWorkspaceFiles(session.sessionId, "@main", 10);
+        expect(results).toMatchObject({
+            type: "workspace.file.search.results",
+            sessionId: session.sessionId,
+            query: "main",
+        });
+        expect(results.files).toEqual([
+            expect.objectContaining({
+                path: "lib/main.dart",
+                name: "main.dart",
+                mimeType: "text/plain",
+            }),
+        ]);
+        expect(results.files.some((file) => file.path.includes("node_modules"))).toBe(false);
+        await manager.close();
+    });
     it("replays saved history after a manager restart", async () => {
         vi.useFakeTimers();
         const stateDir = await tempStateDir();

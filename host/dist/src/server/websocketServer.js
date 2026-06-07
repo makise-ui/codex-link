@@ -189,6 +189,10 @@ export async function startBridgeServer(options) {
                 sendSessionHistory(ws, message.sessionId);
                 return;
             }
+            case "workspace.file.search": {
+                send(ws, await options.sessionManager.searchWorkspaceFiles(message.sessionId, message.query, message.limit));
+                return;
+            }
             case "external.session.list": {
                 await sendExternalSessionList(ws);
                 return;

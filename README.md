@@ -25,7 +25,7 @@ The new Flutter UI uses a ChatGPT-mobile-inspired dark theme: pure black backgro
 ## Project layout
 
 ```text
-host/      Node.js + TypeScript bridge with pairing, protocol v4, multi-session state, tunnel metadata, file offers, and CLI Codex adapter
+host/      Node.js + TypeScript bridge with pairing, protocol v5, multi-session state, tunnel metadata, file offers, file mentions, and CLI Codex adapter
 flutter/   Flutter Android client with QR/password pairing, sessions, workspace switching, commands, model settings, file cards, and rich chat UI
 android/   Original Kotlin + Jetpack Compose prototype client kept as a fallback
 shared/    Protocol reference schema
@@ -164,6 +164,8 @@ Use `/send <workspace-relative-path>` in chat to ask the host to offer a real do
 
 The app also recognizes `send file <path>` and `send me file <path>`. Files must stay inside the active session workspace and must fit the host download size limit.
 
+Typing `@` in the composer searches files in the active workspace. Pick a suggestion to insert `@path/to/file`; `/send @path/to/file` resolves to that workspace file and sends it to the phone.
+
 ### Workspaces
 
 The host controls which workspaces the app can switch between. The default `--workdir` is always available. Add more allowed workspaces with repeated `--workspace` flags:
@@ -213,7 +215,7 @@ Install the debug APK from:
 - One-time QR/manual pairing.
 - Password login and stored device token reconnect.
 - Local/LAN mode and explicit tunnel mode.
-- Protocol v4 session list/create/delete/rename.
+- Protocol v5 session list/create/delete/rename and workspace file search.
 - Host info dashboard with local URL, public URL, provider, and yolo allowance.
 - Persistent Codex thread id per mobile session.
 - Workspace switching from the app, limited to host-configured paths.
@@ -235,3 +237,7 @@ Install the debug APK from:
 - Approval request forwarding.
 - Chunked file downloads for larger files.
 - Approval-specific risk display.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

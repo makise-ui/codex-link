@@ -202,6 +202,29 @@ class WorkspaceInfo {
   }
 }
 
+class WorkspaceFileInfo {
+  const WorkspaceFileInfo({
+    required this.path,
+    required this.name,
+    this.sizeBytes,
+    this.mimeType,
+  });
+
+  final String path;
+  final String name;
+  final int? sizeBytes;
+  final String? mimeType;
+
+  factory WorkspaceFileInfo.fromJson(Map<String, dynamic> json) {
+    return WorkspaceFileInfo(
+      path: json['path'] as String? ?? '',
+      name: json['name'] as String? ?? _baseName(json['path'] as String? ?? ''),
+      sizeBytes: json['sizeBytes'] as int?,
+      mimeType: json['mimeType'] as String?,
+    );
+  }
+}
+
 String _baseName(String path) {
   final normalized = path.replaceAll('\\', '/');
   final parts = normalized

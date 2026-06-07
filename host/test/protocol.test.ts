@@ -3,8 +3,8 @@ import { PROTOCOL_VERSION } from "../src/protocol/messages.js";
 import { parseClientMessage } from "../src/protocol/schemas.js";
 
 describe("protocol schemas", () => {
-  it("uses protocol version 4", () => {
-    expect(PROTOCOL_VERSION).toBe(4);
+  it("uses protocol version 5", () => {
+    expect(PROTOCOL_VERSION).toBe(5);
   });
 
   it("accepts a valid prompt", () => {
@@ -34,6 +34,12 @@ describe("protocol schemas", () => {
       sessionId: "s1",
       path: "/tmp/other-repo",
       create: true,
+    });
+    expect(parseClientMessage({ type: "workspace.file.search", sessionId: "s1", query: "main", limit: 12 })).toEqual({
+      type: "workspace.file.search",
+      sessionId: "s1",
+      query: "main",
+      limit: 12,
     });
     expect(parseClientMessage({ type: "session.mode.set", sessionId: "s1", mode: "yolo" })).toEqual({
       type: "session.mode.set",

@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
 export type MessageKind = "thinking" | "executing" | "response" | "system";
@@ -23,6 +23,7 @@ export type ClientMessage =
   | WorkspaceListRequestMessage
   | WorkspaceAddMessage
   | WorkspaceSwitchMessage
+  | WorkspaceFileSearchMessage
   | ExternalSessionListRequestMessage
   | ExternalSessionImportMessage
   | CommandListRequestMessage
@@ -108,6 +109,13 @@ export type WorkspaceSwitchMessage = {
   workspaceId: string;
 };
 
+export type WorkspaceFileSearchMessage = {
+  type: "workspace.file.search";
+  sessionId: string;
+  query?: string;
+  limit?: number;
+};
+
 export type ExternalSessionListRequestMessage = {
   type: "external.session.list";
 };
@@ -180,6 +188,7 @@ export type ServerMessage =
   | MessageHistoryMessage
   | WorkspaceListMessage
   | WorkspaceUpdatedMessage
+  | WorkspaceFileSearchResultsMessage
   | ExternalSessionListMessage
   | CommandListMessage
   | RunStartedMessage
@@ -228,6 +237,13 @@ export type WorkspaceRecord = {
   label: string;
   path: string;
   active: boolean;
+};
+
+export type WorkspaceFileRecord = {
+  path: string;
+  name: string;
+  sizeBytes?: number;
+  mimeType?: string;
 };
 
 export type ExternalSessionRecord = {
@@ -310,6 +326,13 @@ export type WorkspaceUpdatedMessage = {
   type: "workspace.updated";
   sessionId: string;
   workspace: WorkspaceRecord;
+};
+
+export type WorkspaceFileSearchResultsMessage = {
+  type: "workspace.file.search.results";
+  sessionId: string;
+  query: string;
+  files: WorkspaceFileRecord[];
 };
 
 export type ExternalSessionListMessage = {

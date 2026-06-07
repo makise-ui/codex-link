@@ -122,7 +122,7 @@ function isInsideDirectory(candidate: string, root: string): boolean {
   return relative.length === 0 || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function mimeTypeFor(filePath: string): string | undefined {
+export function mimeTypeFor(filePath: string): string | undefined {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".txt" || ext === ".md" || ext === ".log") return "text/plain";
   if (ext === ".json") return "application/json";

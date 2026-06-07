@@ -3,7 +3,7 @@
   "$id": "https://example.local/codex-link-control.schema.json",
   "title": "Codex Link Control Protocol",
   "description": "Versioned JSON-over-WebSocket protocol between the mobile controller and local/tunnel host bridge.",
-  "version": 4,
+  "version": 5,
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/PairingClaim" },
@@ -19,6 +19,7 @@
     { "$ref": "#/$defs/WorkspaceList" },
     { "$ref": "#/$defs/WorkspaceAdd" },
     { "$ref": "#/$defs/WorkspaceSwitch" },
+    { "$ref": "#/$defs/WorkspaceFileSearch" },
     { "$ref": "#/$defs/ExternalSessionList" },
     { "$ref": "#/$defs/ExternalSessionImport" },
     { "$ref": "#/$defs/CommandList" },
@@ -137,6 +138,16 @@
         "type": { "const": "workspace.switch" },
         "sessionId": { "type": "string" },
         "workspaceId": { "type": "string" }
+      }
+    },
+    "WorkspaceFileSearch": {
+      "type": "object",
+      "required": ["type", "sessionId"],
+      "properties": {
+        "type": { "const": "workspace.file.search" },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "query": { "type": "string", "maxLength": 240 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 80 }
       }
     },
     "ExternalSessionList": {

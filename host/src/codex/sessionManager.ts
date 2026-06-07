@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
 import type { CodexEvent, CodexSession, PreparedAttachment, SendPromptResult } from "./codexSession.js";
 import { CliCodexSession } from "./cliCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
-import { FileTransferManager } from "./fileTransferManager.js";
+import { FileTransferManager, mimeTypeFor } from "./fileTransferManager.js";
 import { MockCodexSession } from "./mockCodexSession.js";
 import { SessionStore } from "./sessionStore.js";
 
@@ -341,6 +341,19 @@ export class CodexSessionManager {
     await this.save();
     this.emit(offer);
     return offer;
+  }
+
+  async searchWorkspaceFiles(sessionId: string, query = "", limit = 40): Promise<WorkspaceFileSearchResultsMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const effectiveLimit = Math.min(Math.max(Math.trunc(limit) || 40, 1), 80);
+    const normalizedQuery = normalizeFileQuery(query);
+    return {
+      type: "workspace.file.search.results",
+      sessionId: record.sessionId,
+      query: normalizedQuery,
+      files: await scanWorkspaceFiles(record.workdir, normalizedQuery, effectiveLimit),
+    };
   }
 
   onEvent(listener: Listener): () => void {
@@ -702,4 +715,105 @@ function isImageAttachment(attachment: PromptAttachment): boolean {
 
 function isThinkingNoise(text: string): boolean {
   return text.trim().replace(/\.+$/, "").replace(/…$/, "").toLowerCase() === "thinking";
+}
+
+const SKIPPED_WORKSPACE_DIRS = new Set([
+  ".codex-lan",
+  ".dart_tool",
+  ".git",
+  ".gradle",
+  ".idea",
+  ".next",
+  ".turbo",
+  ".vscode",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
+const MAX_WORKSPACE_SEARCH_DEPTH = 8;
+const MAX_WORKSPACE_SEARCH_FILES = 5_000;
+
+type ScoredWorkspaceFile = WorkspaceFileRecord & { score: number };
+
+async function scanWorkspaceFiles(workdir: string, query: string, limit: number): Promise<WorkspaceFileRecord[]> {
+  const root = path.resolve(workdir);
+  const rootStats = await stat(root);
+  if (!rootStats.isDirectory()) {
+    throw new Error(`Workspace path is not a directory: ${workdir}`);
+  }
+
+  const candidates: ScoredWorkspaceFile[] = [];
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  let visitedFiles = 0;
+
+  while (queue.length > 0 && visitedFiles < MAX_WORKSPACE_SEARCH_FILES && (query || candidates.length < limit)) {
+    const { dir, depth } = queue.shift()!;
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (depth < MAX_WORKSPACE_SEARCH_DEPTH && !shouldSkipWorkspaceDirectory(entry.name)) {
+          queue.push({ dir: absolutePath, depth: depth + 1 });
+        }
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      visitedFiles += 1;
+      const relativePath = toPosixPath(path.relative(root, absolutePath));
+      if (!relativePath || !matchesFileQuery(relativePath, query)) continue;
+      const stats = await stat(absolutePath).catch(() => undefined);
+      candidates.push({
+        path: relativePath,
+        name: path.basename(relativePath),
+        sizeBytes: stats?.isFile() ? stats.size : undefined,
+        mimeType: mimeTypeFor(relativePath),
+        score: scoreWorkspaceFile(relativePath, query),
+      });
+      if (!query && candidates.length >= limit) break;
+    }
+  }
+
+  return candidates
+    .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+    .slice(0, limit)
+    .map(({ score: _score, ...file }) => file);
+}
+
+function normalizeFileQuery(query: string): string {
+  return query.trim().replace(/^@+/, "").replace(/\\/g, "/");
+}
+
+function shouldSkipWorkspaceDirectory(name: string): boolean {
+  return SKIPPED_WORKSPACE_DIRS.has(name);
+}
+
+function matchesFileQuery(relativePath: string, query: string): boolean {
+  if (!query) return true;
+  const lowerPath = relativePath.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  if (lowerPath.includes(lowerQuery)) return true;
+  const tokens = lowerQuery.split(/[\s/.-]+/).filter(Boolean);
+  return tokens.length > 0 && tokens.every((token) => lowerPath.includes(token));
+}
+
+function scoreWorkspaceFile(relativePath: string, query: string): number {
+  const lowerPath = relativePath.toLowerCase();
+  const lowerName = path.basename(relativePath).toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const depth = relativePath.split("/").length;
+  if (!query) return 900 - depth * 20 - relativePath.length / 100;
+  if (lowerName === lowerQuery || lowerPath === lowerQuery) return 1_000;
+  if (lowerName.startsWith(lowerQuery)) return 940 - depth;
+  if (lowerPath.startsWith(lowerQuery)) return 900 - depth;
+  if (lowerName.includes(lowerQuery)) return 820 - depth;
+  if (lowerPath.includes(lowerQuery)) return 760 - depth;
+  return 600 - depth;
+}
+
+function toPosixPath(filePath: string): string {
+  return filePath.split(path.sep).join("/");
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -312,6 +313,7 @@ class _MessageListState extends State<_MessageList> {
   bool _autoScrollQueued = false;
   bool _queuedAutoScrollAnimated = false;
   int _lastItemCount = 0;
+  String _lastTimelineSignature = '';
 
   @override
   void initState() {
@@ -385,9 +387,12 @@ class _MessageListState extends State<_MessageList> {
       isRunning: controller.isRunning,
       runId: controller.activeRunId ?? controller.activeSession?.activeRunId,
     );
+    final timelineSignature = _timelineSignature(items);
+    final timelineChanged = timelineSignature != _lastTimelineSignature;
     final itemCountChanged = items.length != _lastItemCount;
-    final shouldAutoScroll = !_showJumpToBottom;
+    final shouldAutoScroll = timelineChanged && !_showJumpToBottom;
     _lastItemCount = items.length;
+    _lastTimelineSignature = timelineSignature;
     if (shouldAutoScroll) {
       _queueAutoScroll(animated: itemCountChanged);
     }
@@ -517,6 +522,24 @@ List<_TimelineItem> _timelineItems(
   return items;
 }
 
+String _timelineSignature(List<_TimelineItem> items) {
+  return items
+      .map(
+        (item) => switch (item) {
+          _SingleTimelineItem(:final message) =>
+            '${message.id}:${message.kind.name}:${message.text.length}:${message.complete}',
+          _ActivityTimelineItem(:final messages) =>
+            messages
+                .map(
+                  (message) =>
+                      '${message.id}:${message.text.length}:${message.complete}',
+                )
+                .join(','),
+        },
+      )
+      .join('|');
+}
+
 class _EmptyChatHero extends StatelessWidget {
   const _EmptyChatHero();
 
@@ -615,11 +638,24 @@ class _PromptComposer extends StatefulWidget {
 class _PromptComposerState extends State<_PromptComposer> {
   bool _commandSheetOpen = false;
   final List<PromptAttachmentInfo> _attachments = [];
+  Timer? _fileMentionDebounce;
+
+  @override
+  void dispose() {
+    _fileMentionDebounce?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final textController = widget.textController;
+    final activeMention = _activeFileMention(textController.value);
+    final fileSuggestions =
+        activeMention == null ||
+            controller.fileSuggestionQuery != activeMention.query
+        ? const <WorkspaceFileInfo>[]
+        : controller.fileSuggestions;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -643,6 +679,13 @@ class _PromptComposerState extends State<_PromptComposer> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (activeMention != null && fileSuggestions.isNotEmpty) ...[
+                  _FileMentionSuggestions(
+                    files: fileSuggestions,
+                    onSelected: _insertFileMention,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                ],
                 if (_attachments.isNotEmpty) ...[
                   SizedBox(
                     height: 34,
@@ -712,11 +755,7 @@ class _PromptComposerState extends State<_PromptComposer> {
                           ),
                         ),
                         textInputAction: TextInputAction.newline,
-                        onChanged: (value) {
-                          if (value == '/' && !_commandSheetOpen) {
-                            _showCommandPicker(context);
-                          }
-                        },
+                        onChanged: _handleTextChanged,
                       ),
                     ),
                     const SizedBox(width: AppSpacing.xs),
@@ -744,6 +783,7 @@ class _PromptComposerState extends State<_PromptComposer> {
                                         _attachments,
                                       );
                                   textController.clear();
+                                  widget.controller.clearFileSuggestions();
                                   setState(() => _attachments.clear());
                                   controller.sendPrompt(
                                     text.isEmpty && attachments.isNotEmpty
@@ -763,6 +803,40 @@ class _PromptComposerState extends State<_PromptComposer> {
         ),
       ),
     );
+  }
+
+  void _handleTextChanged(String value) {
+    if (value == '/' && !_commandSheetOpen) {
+      _showCommandPicker(context);
+    }
+    final mention = _activeFileMention(widget.textController.value);
+    if (mention == null ||
+        !widget.controller.isConnected ||
+        widget.controller.isRunning) {
+      _fileMentionDebounce?.cancel();
+      widget.controller.clearFileSuggestions();
+      return;
+    }
+    _fileMentionDebounce?.cancel();
+    _fileMentionDebounce = Timer(const Duration(milliseconds: 130), () {
+      if (!mounted) return;
+      widget.controller.searchWorkspaceFiles(mention.query);
+    });
+  }
+
+  void _insertFileMention(WorkspaceFileInfo file) {
+    final value = widget.textController.value;
+    final mention = _activeFileMention(value);
+    if (mention == null || file.path.trim().isEmpty) return;
+    final insertion = '@${file.path} ';
+    final text = value.text.replaceRange(mention.start, mention.end, insertion);
+    final offset = mention.start + insertion.length;
+    widget.textController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: offset),
+    );
+    widget.controller.clearFileSuggestions();
+    setState(() {});
   }
 
   Future<void> _showAttachmentPicker(BuildContext context) async {
@@ -893,6 +967,142 @@ class _PromptComposerState extends State<_PromptComposer> {
 }
 
 enum _AttachmentPickMode { image, file }
+
+class _FileMentionSuggestions extends StatelessWidget {
+  const _FileMentionSuggestions({
+    required this.files,
+    required this.onSelected,
+  });
+
+  final List<WorkspaceFileInfo> files;
+  final ValueChanged<WorkspaceFileInfo> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      key: const ValueKey('file-mention-suggestions'),
+      constraints: const BoxConstraints(maxHeight: 216),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: CodexColors.ink2.withValues(alpha: 0.88),
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          border: Border.all(
+            color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+          ),
+        ),
+        child: ListView.separated(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+          itemCount: files.length > 8 ? 8 : files.length,
+          separatorBuilder: (_, _) => Divider(
+            height: 1,
+            color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+          ),
+          itemBuilder: (context, index) {
+            final file = files[index];
+            return InkWell(
+              key: ValueKey('file-mention-${file.path}'),
+              onTap: () => onSelected(file),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _isImageName(file.name)
+                          ? Icons.image_rounded
+                          : Icons.insert_drive_file_outlined,
+                      size: 17,
+                      color: CodexColors.muted,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            file.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                          const SizedBox(height: AppSpacing.xxs),
+                          Text(
+                            file.path,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: CodexColors.dim,
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (file.sizeBytes case final size?)
+                      Padding(
+                        padding: const EdgeInsets.only(left: AppSpacing.sm),
+                        child: Text(
+                          _formatBytes(size),
+                          style: const TextStyle(
+                            color: CodexColors.dim,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _FileMention {
+  const _FileMention({
+    required this.start,
+    required this.end,
+    required this.query,
+  });
+
+  final int start;
+  final int end;
+  final String query;
+}
+
+_FileMention? _activeFileMention(TextEditingValue value) {
+  final text = value.text;
+  final selection = value.selection;
+  final cursor = selection.isValid ? selection.baseOffset : text.length;
+  if (cursor < 0 || cursor > text.length) return null;
+  final beforeCursor = text.substring(0, cursor);
+  final atIndex = beforeCursor.lastIndexOf('@');
+  if (atIndex < 0) return null;
+  if (atIndex > 0) {
+    final previous = beforeCursor[atIndex - 1];
+    if (!RegExp(r'[\s([{]').hasMatch(previous)) return null;
+  }
+  final query = beforeCursor.substring(atIndex + 1);
+  if (query.contains(RegExp(r'\s'))) return null;
+  return _FileMention(start: atIndex, end: cursor, query: query);
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '${bytes}B';
+  final kib = bytes / 1024;
+  if (kib < 1024) return '${kib.toStringAsFixed(kib < 10 ? 1 : 0)}KB';
+  final mib = kib / 1024;
+  return '${mib.toStringAsFixed(mib < 10 ? 1 : 0)}MB';
+}
 
 bool _isImageName(String name) =>
     _mimeTypeForName(name)?.startsWith('image/') == true;
