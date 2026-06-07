@@ -44,6 +44,10 @@ class SessionSidebar extends StatelessWidget {
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: _ConnectionSummary(controller: controller),
+            ),
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Text(
@@ -110,6 +114,67 @@ class SessionSidebar extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ConnectionSummary extends StatelessWidget {
+  const _ConnectionSummary({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final hostInfo = controller.hostInfo;
+    final label = controller.isOffline
+        ? 'Offline'
+        : hostInfo?.connectionMode == 'tunnel'
+        ? _tunnelLabel(hostInfo)
+        : 'Local bridge';
+    final icon = controller.isOffline
+        ? Icons.cloud_off_rounded
+        : hostInfo?.connectionMode == 'tunnel'
+        ? Icons.cloud_done_rounded
+        : Icons.lan_rounded;
+    final color = controller.isOffline
+        ? CodexColors.amber
+        : hostInfo?.connectionMode == 'tunnel'
+        ? CodexColors.greenSoft
+        : CodexColors.muted;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: CodexColors.panelHigh.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(
+          color: CodexColors.text.withValues(alpha: AppOpacity.border),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(color: CodexColors.text),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _tunnelLabel(HostInfo? hostInfo) {
+  final provider = hostInfo?.tunnelProvider;
+  if (provider == null || provider.trim().isEmpty) return 'Tunnel';
+  return 'Tunnel via $provider';
 }
 
 class _SessionRow extends StatelessWidget {

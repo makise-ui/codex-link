@@ -247,37 +247,85 @@ void main() {
     expect(controller.downloadedFiles.single.dataBase64, 'aGVsbG8=');
   });
 
-  test('slash send requests a host file offer instead of asking the agent to paste contents', () {
-    final socket = FakeBridgeSocketClient();
-    final controller = AppController(socket: socket)
-      ..phase = ConnectionPhase.connected
-      ..handleBridgeMessageForTest({
-        'type': 'session.list',
-        'activeSessionId': 's1',
-        'sessions': [
-          {
-            'sessionId': 's1',
-            'title': 'Files',
-            'updatedAt': '2026-06-07T00:00:00.000Z',
-            'workspaceId': 'default',
-            'workdir': '/tmp/repo',
-            'lastStatus': 'idle',
-            'mode': 'safe',
-            'sandbox': 'workspace-write',
-          },
-        ],
+  test(
+    'slash send requests a host file offer instead of asking the agent to paste contents',
+    () {
+      final socket = FakeBridgeSocketClient();
+      final controller = AppController(socket: socket)
+        ..phase = ConnectionPhase.connected
+        ..handleBridgeMessageForTest({
+          'type': 'session.list',
+          'activeSessionId': 's1',
+          'sessions': [
+            {
+              'sessionId': 's1',
+              'title': 'Files',
+              'updatedAt': '2026-06-07T00:00:00.000Z',
+              'workspaceId': 'default',
+              'workdir': '/tmp/repo',
+              'lastStatus': 'idle',
+              'mode': 'safe',
+              'sandbox': 'workspace-write',
+            },
+          ],
+        });
+
+      controller.sendPrompt('/send lib/report.txt');
+
+      expect(socket.sentMessages.single, {
+        'type': 'file.offer.request',
+        'sessionId': 's1',
+        'path': 'lib/report.txt',
+      });
+      expect(controller.activeMessages.single.kind, AgentMessageKind.executing);
+      expect(controller.activeMessages.single.title, 'Requesting file');
+      expect(controller.activeMessages.single.text, contains('lib/report.txt'));
+    },
+  );
+
+  test(
+    'file offer replaces the pending request row and image offers auto-download',
+    () {
+      final socket = FakeBridgeSocketClient();
+      final controller = AppController(socket: socket)
+        ..phase = ConnectionPhase.connected
+        ..handleBridgeMessageForTest({
+          'type': 'session.list',
+          'activeSessionId': 's1',
+          'sessions': [
+            {
+              'sessionId': 's1',
+              'title': 'Images',
+              'updatedAt': '2026-06-07T00:00:00.000Z',
+              'workspaceId': 'default',
+              'workdir': '/tmp/repo',
+              'lastStatus': 'idle',
+              'mode': 'safe',
+              'sandbox': 'workspace-write',
+            },
+          ],
+        });
+
+      controller.sendPrompt('/send assets/result.png');
+      controller.handleBridgeMessageForTest({
+        'type': 'file.offer',
+        'fileId': 'image-1',
+        'sessionId': 's1',
+        'path': 'assets/result.png',
+        'name': 'result.png',
+        'mimeType': 'image/png',
+        'sizeBytes': 68,
+        'reason': 'requested',
       });
 
-    controller.sendPrompt('/send lib/report.txt');
-
-    expect(socket.sentMessages.single, {
-      'type': 'file.offer.request',
-      'sessionId': 's1',
-      'path': 'lib/report.txt',
-    });
-    expect(controller.activeMessages.single.kind, AgentMessageKind.files);
-    expect(controller.activeMessages.single.text, contains('requested lib/report.txt'));
-  });
+      expect(controller.activeMessages, hasLength(1));
+      expect(controller.activeMessages.single.title, 'File available');
+      expect(socket.sentMessages.last, {
+        'type': 'file.request',
+        'fileId': 'image-1',
+      });
+    },
+  );
 }
 
 class FakeBridgeSocketClient extends BridgeSocketClient {

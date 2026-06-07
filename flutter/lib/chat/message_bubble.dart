@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -727,6 +729,16 @@ class _FileChangeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final files = _parseFileChanges(message.text);
+    final controller = Provider.of<AppController?>(context);
+    if (files.isEmpty) {
+      return _ActivityCard(
+        text: message.text.trim(),
+        title: message.title ?? 'File activity',
+        icon: Icons.description_outlined,
+        active: false,
+        complete: false,
+      );
+    }
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -760,15 +772,17 @@ class _FileChangeCard extends StatelessWidget {
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${files.length}',
-                    style: const TextStyle(
-                      color: CodexColors.dim,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                  if (files.length > 1) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      '${files.length}',
+                      style: const TextStyle(
+                        color: CodexColors.dim,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
               const SizedBox(height: 8),
@@ -778,54 +792,12 @@ class _FileChangeCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          _StatusBadge(status: file.status),
-                          const SizedBox(width: AppSpacing.sm),
-                          Expanded(
-                            child: Text(
-                              file.path,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: CodexColors.text,
-                                fontSize: 13,
-                                fontFamily: 'monospace',
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Copy file path',
-                            visualDensity: VisualDensity.compact,
-                            iconSize: 16,
-                            onPressed: () => _copyMessage(context, file.path),
-                            icon: const Icon(
-                              Icons.copy_rounded,
-                              color: CodexColors.muted,
-                            ),
-                          ),
-                          if (file.fileId != null)
-                            TextButton.icon(
-                              onPressed: () {
-                                final controller = context
-                                    .read<AppController>();
-                                final offer = controller.fileOffers
-                                    .where(
-                                      (offer) => offer.fileId == file.fileId,
-                                    )
-                                    .firstOrNull;
-                                if (offer != null) {
-                                  controller.requestFileDownload(offer);
-                                }
-                              },
-                              icon: const Icon(
-                                Icons.download_rounded,
-                                size: 16,
-                              ),
-                              label: const Text('Download'),
-                            ),
-                        ],
-                      ),
+                      _FileRow(file: file, controller: controller),
+                      if (_imageDownloadFor(controller, file) case final image?)
+                        Padding(
+                          padding: const EdgeInsets.only(top: AppSpacing.sm),
+                          child: _ImageFilePreview(download: image),
+                        ),
                       if (file.patchLines.isNotEmpty) ...[
                         const SizedBox(height: AppSpacing.xs),
                         _PatchPreview(lines: file.patchLines),
@@ -839,6 +811,123 @@ class _FileChangeCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _FileRow extends StatelessWidget {
+  const _FileRow({required this.file, required this.controller});
+
+  final _FileChange file;
+  final AppController? controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _StatusBadge(status: file.status),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Text(
+            file.path,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: CodexColors.text,
+              fontSize: 13,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Copy file path',
+          visualDensity: VisualDensity.compact,
+          iconSize: 16,
+          onPressed: () => _copyMessage(context, file.path),
+          icon: const Icon(Icons.copy_rounded, color: CodexColors.muted),
+        ),
+        if (file.fileId != null)
+          TextButton.icon(
+            onPressed: controller == null
+                ? null
+                : () {
+                    final offer = controller!.fileOffers
+                        .where((offer) => offer.fileId == file.fileId)
+                        .firstOrNull;
+                    if (offer != null) {
+                      controller!.requestFileDownload(offer);
+                    }
+                  },
+            icon: const Icon(Icons.download_rounded, size: 16),
+            label: const Text('Download'),
+          ),
+      ],
+    );
+  }
+}
+
+class _ImageFilePreview extends StatelessWidget {
+  const _ImageFilePreview({required this.download});
+
+  final DownloadedFileInfo download;
+
+  @override
+  Widget build(BuildContext context) {
+    late final Uint8List bytes;
+    try {
+      bytes = base64Decode(download.dataBase64);
+    } catch (_) {
+      return const SizedBox.shrink();
+    }
+    if (bytes.isEmpty) return const SizedBox.shrink();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: CodexColors.ink2,
+          border: Border.all(
+            color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+          ),
+        ),
+        child: Image.memory(
+          bytes,
+          key: ValueKey('image-preview-${download.fileId}'),
+          fit: BoxFit.contain,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        ),
+      ),
+    );
+  }
+}
+
+DownloadedFileInfo? _imageDownloadFor(
+  AppController? controller,
+  _FileChange file,
+) {
+  final fileId = file.fileId;
+  if (controller == null || fileId == null) return null;
+  final download = controller.downloadedFiles
+      .where((candidate) => candidate.fileId == fileId)
+      .firstOrNull;
+  if (download == null) return null;
+  final offer = controller.fileOffers
+      .where((candidate) => candidate.fileId == fileId)
+      .firstOrNull;
+  final mimeType = download.mimeType ?? offer?.mimeType;
+  if (_isImageFile(file.path, mimeType) ||
+      _isImageFile(download.name, download.mimeType)) {
+    return download;
+  }
+  return null;
+}
+
+bool _isImageFile(String path, String? mimeType) {
+  final lowerMime = mimeType?.toLowerCase();
+  if (lowerMime?.startsWith('image/') == true) return true;
+  final lowerPath = path.toLowerCase();
+  return lowerPath.endsWith('.png') ||
+      lowerPath.endsWith('.jpg') ||
+      lowerPath.endsWith('.jpeg') ||
+      lowerPath.endsWith('.webp') ||
+      lowerPath.endsWith('.gif');
 }
 
 class _PatchPreview extends StatelessWidget {
@@ -905,12 +994,13 @@ class _StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (status) {
       'added' => CodexColors.greenSoft,
+      'requested' => CodexColors.greenSoft,
       'deleted' => CodexColors.danger,
       'renamed' => CodexColors.blue,
       _ => CodexColors.amber,
     };
     return Container(
-      width: 64,
+      constraints: const BoxConstraints(minWidth: 64, maxWidth: 92),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.10),
@@ -978,7 +1068,7 @@ List<_FileChange> _parseFileChanges(String text) {
     final line = rawLine.trimRight();
     if (line.trim().isEmpty) continue;
     final match = RegExp(
-      r"^(added|modified|deleted|renamed|generated|attachment|downloaded)\s+(.+)$",
+      r"^(added|modified|deleted|renamed|generated|attachment|requested|downloaded)\s+(.+)$",
     ).firstMatch(line.trim());
     if (match != null) {
       flush();

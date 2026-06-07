@@ -267,8 +267,9 @@ class AppController extends ChangeNotifier {
     final trimmed = prompt.trim();
     final sessionId = activeSession?.sessionId;
     if ((trimmed.isEmpty && attachments.isEmpty) || sessionId == null) return;
-    final requestedFilePath =
-        attachments.isEmpty ? _requestedFilePathFromPrompt(trimmed) : null;
+    final requestedFilePath = attachments.isEmpty
+        ? _requestedFilePathFromPrompt(trimmed)
+        : null;
     if (requestedFilePath != null) {
       messagesBySession
           .putIfAbsent(sessionId, () => [])
@@ -276,10 +277,11 @@ class AppController extends ChangeNotifier {
             ChatMessage(
               id: _uuid.v4(),
               role: ChatRole.system,
-              kind: AgentMessageKind.files,
-              title: 'File requested',
-              text: 'requested $requestedFilePath',
+              kind: AgentMessageKind.executing,
+              title: 'Requesting file',
+              text: requestedFilePath,
               createdAt: DateTime.now(),
+              complete: false,
             ),
           );
       notifyListeners();
@@ -724,25 +726,40 @@ class AppController extends ChangeNotifier {
     fileOffers.add(offer);
     final sessionId = offer.sessionId ?? activeSession?.sessionId;
     if (sessionId == null) return;
-    messagesBySession
-        .putIfAbsent(sessionId, () => [])
-        .add(
-          ChatMessage(
-            id: 'file-offer-${offer.fileId}',
-            role: ChatRole.system,
-            kind: AgentMessageKind.files,
-            title: 'File available',
-            text:
-                '${offer.reason} ${offer.path}\nsize ${offer.sizeBytes}\nfileId ${offer.fileId}',
-            createdAt: DateTime.now(),
-          ),
-        );
+    final list = messagesBySession.putIfAbsent(sessionId, () => []);
+    list.removeWhere(
+      (message) =>
+          message.kind == AgentMessageKind.executing &&
+          message.title == 'Requesting file' &&
+          message.text.trim() == offer.path,
+    );
+    list.add(
+      ChatMessage(
+        id: 'file-offer-${offer.fileId}',
+        role: ChatRole.system,
+        kind: AgentMessageKind.files,
+        title: 'File available',
+        text:
+            '${offer.reason} ${offer.path}\nsize ${offer.sizeBytes}\nfileId ${offer.fileId}',
+        createdAt: DateTime.now(),
+      ),
+    );
+    if (_isImageOffer(offer)) {
+      requestFileDownload(offer);
+    }
   }
 
   void _appendFileDownloadEvent(Map<String, dynamic> message) {
     final file = DownloadedFileInfo.fromJson(message);
     if (file.fileId.isEmpty) return;
     downloadedFiles.add(file);
+    final matchingOffer = fileOffers
+        .where((offer) => offer.fileId == file.fileId)
+        .firstOrNull;
+    if (_isImageDownload(file, matchingOffer)) {
+      notifyListeners();
+      return;
+    }
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
     messagesBySession
@@ -787,6 +804,28 @@ class AppController extends ChangeNotifier {
           ),
         );
   }
+}
+
+bool _isImageOffer(FileOfferInfo offer) {
+  final mimeType = offer.mimeType?.toLowerCase();
+  return mimeType?.startsWith('image/') == true || _looksLikeImage(offer.path);
+}
+
+bool _isImageDownload(DownloadedFileInfo file, FileOfferInfo? offer) {
+  final mimeType =
+      file.mimeType?.toLowerCase() ?? offer?.mimeType?.toLowerCase();
+  return mimeType?.startsWith('image/') == true ||
+      _looksLikeImage(file.name) ||
+      (offer != null && _looksLikeImage(offer.path));
+}
+
+bool _looksLikeImage(String path) {
+  final lower = path.toLowerCase();
+  return lower.endsWith('.png') ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.webp') ||
+      lower.endsWith('.gif');
 }
 
 bool _isReplayThinkingNoise(ChatMessage message) {

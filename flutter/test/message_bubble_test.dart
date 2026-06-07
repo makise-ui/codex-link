@@ -1,8 +1,10 @@
+import 'package:codex_lan_flutter/app_controller.dart';
 import 'package:codex_lan_flutter/chat/message_bubble.dart';
 import 'package:codex_lan_flutter/protocol/bridge_messages.dart';
 import 'package:codex_lan_flutter/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 
 void main() {
   testWidgets('renders active thinking as an inline translucent row', (
@@ -173,5 +175,82 @@ void main() {
 
     expect(find.text('Download'), findsOneWidget);
     expect(find.byTooltip('Copy file path'), findsOneWidget);
+  });
+
+  testWidgets('requested file offers render as downloadable cards', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'file-offer-requested',
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              text: 'requested lib/report.txt\nsize 12\nfileId file-1',
+              createdAt: DateTime(2026),
+              title: 'File available',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('lib/report.txt'), findsOneWidget);
+    expect(find.text('requested'), findsOneWidget);
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+  });
+
+  testWidgets('downloaded image offers render inline image previews', (
+    tester,
+  ) async {
+    const imageBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+    final controller = AppController()
+      ..fileOffers.add(
+        const FileOfferInfo(
+          fileId: 'image-1',
+          path: 'assets/result.png',
+          name: 'result.png',
+          mimeType: 'image/png',
+          sizeBytes: 68,
+          reason: 'requested',
+        ),
+      )
+      ..downloadedFiles.add(
+        const DownloadedFileInfo(
+          fileId: 'image-1',
+          name: 'result.png',
+          mimeType: 'image/png',
+          sizeBytes: 68,
+          dataBase64: imageBase64,
+        ),
+      );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildCodexTheme(),
+          home: Scaffold(
+            body: MessageBubble(
+              message: ChatMessage(
+                id: 'file-offer-image',
+                role: ChatRole.system,
+                kind: AgentMessageKind.files,
+                text: 'requested assets/result.png\nsize 68\nfileId image-1',
+                createdAt: DateTime(2026),
+                title: 'File available',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('image-preview-image-1')), findsOneWidget);
   });
 }

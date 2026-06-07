@@ -257,12 +257,8 @@ _ConnectionBadge _connectionLabel(AppController controller) {
   }
   final info = controller.hostInfo;
   if (info?.connectionMode == 'tunnel') {
-    final provider = info?.tunnelProvider;
-    final label = provider == null || provider.isEmpty
-        ? 'Tunnel'
-        : 'Tunnel: $provider';
-    return _ConnectionBadge(
-      label: label,
+    return const _ConnectionBadge(
+      label: 'Tunnel',
       icon: Icons.cloud_done_rounded,
       color: CodexColors.greenSoft,
     );
