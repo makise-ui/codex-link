@@ -11,3 +11,12 @@ build/
 
 .DS_Store
 *.log
+
+.agents/
+.codex/
+.codex-lan/
+host/.codex-lan/
+__pycache__/
+worked.html
+example.txt
+hello
