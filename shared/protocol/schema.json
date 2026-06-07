@@ -3,7 +3,7 @@
   "$id": "https://example.local/codex-link-control.schema.json",
   "title": "Codex Link Control Protocol",
   "description": "Versioned JSON-over-WebSocket protocol between the mobile controller and local/tunnel host bridge.",
-  "version": 3,
+  "version": 4,
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/PairingClaim" },
@@ -24,6 +24,7 @@
     { "$ref": "#/$defs/CommandList" },
     { "$ref": "#/$defs/CommandRun" },
     { "$ref": "#/$defs/PromptSend" },
+    { "$ref": "#/$defs/FileOfferRequest" },
     { "$ref": "#/$defs/FileRequest" },
     { "$ref": "#/$defs/RunCancel" },
     { "$ref": "#/$defs/Ping" }
@@ -202,6 +203,15 @@
       "properties": {
         "type": { "const": "file.request" },
         "fileId": { "type": "string", "minLength": 1, "maxLength": 160 }
+      }
+    },
+    "FileOfferRequest": {
+      "type": "object",
+      "required": ["type", "sessionId", "path"],
+      "properties": {
+        "type": { "const": "file.offer.request" },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 }
       }
     },
     "Ping": {

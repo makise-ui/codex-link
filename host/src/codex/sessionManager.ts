@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceRecord } from "../protocol/messages.js";
 import type { CodexEvent, CodexSession, PreparedAttachment, SendPromptResult } from "./codexSession.js";
 import { CliCodexSession } from "./cliCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
@@ -318,6 +318,29 @@ export class CodexSessionManager {
 
   async downloadFile(fileId: string): Promise<FileDownloadMessage> {
     return this.fileTransfers.download(fileId);
+  }
+
+  async offerRequestedFile(sessionId: string, filePath: string): Promise<FileOfferMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const offer = await this.fileTransfers.offerWorkspaceFile({
+      sessionId: record.sessionId,
+      workspaceRoot: record.workdir,
+      relativePath: filePath.trim(),
+      reason: "requested",
+    });
+    this.appendHistory(record.sessionId, {
+      messageId: randomUUID(),
+      role: "system",
+      kind: "files",
+      title: "File ready",
+      text: `requested ${offer.path}\nsize ${offer.sizeBytes}\nfileId ${offer.fileId}`,
+      createdAt: new Date().toISOString(),
+      complete: true,
+    });
+    await this.save();
+    this.emit(offer);
+    return offer;
   }
 
   onEvent(listener: Listener): () => void {

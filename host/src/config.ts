@@ -27,6 +27,8 @@ export type HostConfig = {
   remoteMode: RemoteMode;
   publicUrl?: string;
   tunnelProvider: TunnelProvider;
+  cloudflaredAuto: boolean;
+  cloudflaredCommand: string;
   localUrl: string;
   workspaces: WorkspaceConfig[];
   password?: string;
@@ -51,6 +53,8 @@ export function resolveConfig(argv = process.argv): HostConfig {
     .option("--remote-mode <mode>", "remote access mode: lan or tunnel", parseRemoteMode, "lan")
     .option("--public-url <url>", "public tunnel WebSocket URL, for example wss://name.trycloudflare.com")
     .option("--tunnel-provider <provider>", "tunnel provider: ngrok, cloudflared, tailscale, or other", parseTunnelProvider, "other")
+    .option("--cloudflared-auto", "start a free cloudflared quick tunnel and use its generated public URL", false)
+    .option("--cloudflared-command <command>", "cloudflared executable for --cloudflared-auto", "cloudflared")
     .option("--password <password>", "optional host password for app login; can also use CODEX_LINK_PASSWORD or CODEX_LAN_PASSWORD");
 
   program.parse(stripPnpmSeparator(argv));
@@ -69,6 +73,8 @@ export function resolveConfig(argv = process.argv): HostConfig {
     remoteMode: RemoteMode;
     publicUrl?: string;
     tunnelProvider: TunnelProvider;
+    cloudflaredAuto: boolean;
+    cloudflaredCommand: string;
     password?: string;
   }>();
 
@@ -76,7 +82,9 @@ export function resolveConfig(argv = process.argv): HostConfig {
     throw new Error("This prototype currently supports cleartext ws:// only. Re-run with --insecure-ws-dev for trusted LAN testing.");
   }
 
-  const host = opts.host ?? (opts.pair ? findLanAddress() ?? "127.0.0.1" : "127.0.0.1");
+  const remoteMode = opts.cloudflaredAuto ? "tunnel" : opts.remoteMode;
+  const tunnelProvider = opts.cloudflaredAuto ? "cloudflared" : opts.tunnelProvider;
+  const host = opts.host ?? (remoteMode === "tunnel" ? "127.0.0.1" : opts.pair ? findLanAddress() ?? "127.0.0.1" : "127.0.0.1");
   const workdir = path.resolve(opts.workdir);
   const stateDir = path.resolve(workdir, opts.stateDir);
   const workspacePaths = uniquePaths([workdir, ...opts.workspace.map((workspace) => path.resolve(workspace))]);
@@ -84,14 +92,16 @@ export function resolveConfig(argv = process.argv): HostConfig {
   const password = opts.password ?? process.env.CODEX_LINK_PASSWORD ?? process.env.CODEX_LAN_PASSWORD;
   const publicUrl = opts.publicUrl?.trim();
 
-  if (opts.remoteMode === "tunnel") {
+  if (remoteMode === "tunnel") {
     if (!password) {
       throw new Error("--password or CODEX_LINK_PASSWORD is required when --remote-mode tunnel is used.");
     }
-    if (!publicUrl) {
-      throw new Error("--public-url is required when --remote-mode tunnel is used.");
+    if (!publicUrl && !opts.cloudflaredAuto) {
+      throw new Error("--public-url is required when --remote-mode tunnel is used, unless --cloudflared-auto is enabled.");
     }
-    validatePublicUrl(publicUrl);
+    if (publicUrl) {
+      validatePublicUrl(publicUrl);
+    }
   }
 
   return {
@@ -105,9 +115,11 @@ export function resolveConfig(argv = process.argv): HostConfig {
     stateDir,
     sandbox: opts.sandbox,
     allowYolo: opts.allowYolo || opts.sandbox === "danger-full-access",
-    remoteMode: opts.remoteMode,
+    remoteMode,
     publicUrl,
-    tunnelProvider: opts.tunnelProvider,
+    tunnelProvider,
+    cloudflaredAuto: opts.cloudflaredAuto,
+    cloudflaredCommand: opts.cloudflaredCommand,
     localUrl,
     password,
     workspaces: workspacePaths.map((workspacePath, index) => ({

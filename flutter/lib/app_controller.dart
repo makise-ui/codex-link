@@ -267,6 +267,29 @@ class AppController extends ChangeNotifier {
     final trimmed = prompt.trim();
     final sessionId = activeSession?.sessionId;
     if ((trimmed.isEmpty && attachments.isEmpty) || sessionId == null) return;
+    final requestedFilePath =
+        attachments.isEmpty ? _requestedFilePathFromPrompt(trimmed) : null;
+    if (requestedFilePath != null) {
+      messagesBySession
+          .putIfAbsent(sessionId, () => [])
+          .add(
+            ChatMessage(
+              id: _uuid.v4(),
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              title: 'File requested',
+              text: 'requested $requestedFilePath',
+              createdAt: DateTime.now(),
+            ),
+          );
+      notifyListeners();
+      _send({
+        'type': 'file.offer.request',
+        'sessionId': sessionId,
+        'path': requestedFilePath,
+      });
+      return;
+    }
     final displayText = trimmed.isEmpty ? 'Uploaded attachments' : trimmed;
     final message = ChatMessage(
       id: _uuid.v4(),
@@ -772,4 +795,18 @@ bool _isReplayThinkingNoise(ChatMessage message) {
       (message.kind == AgentMessageKind.system ||
           message.kind == AgentMessageKind.thinking) &&
       text.toLowerCase() == 'thinking';
+}
+
+String? _requestedFilePathFromPrompt(String prompt) {
+  final match = RegExp(
+    r'^(?:/send|/download|send\s+file|send\s+me\s+file)\s+(.+)$',
+    caseSensitive: false,
+  ).firstMatch(prompt.trim());
+  final rawPath = match?.group(1)?.trim();
+  if (rawPath == null || rawPath.isEmpty) return null;
+  if ((rawPath.startsWith('"') && rawPath.endsWith('"')) ||
+      (rawPath.startsWith("'") && rawPath.endsWith("'"))) {
+    return rawPath.substring(1, rawPath.length - 1).trim();
+  }
+  return rawPath;
 }

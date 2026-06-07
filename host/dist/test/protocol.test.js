@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "../src/protocol/messages.js";
 import { parseClientMessage } from "../src/protocol/schemas.js";
 describe("protocol schemas", () => {
-    it("uses protocol version 3", () => {
-        expect(PROTOCOL_VERSION).toBe(3);
+    it("uses protocol version 4", () => {
+        expect(PROTOCOL_VERSION).toBe(4);
     });
     it("accepts a valid prompt", () => {
         expect(parseClientMessage({
@@ -88,6 +88,11 @@ describe("protocol schemas", () => {
         expect(parseClientMessage({ type: "file.request", fileId: "file-1" })).toEqual({
             type: "file.request",
             fileId: "file-1",
+        });
+        expect(parseClientMessage({ type: "file.offer.request", sessionId: "default", path: "notes.txt" })).toEqual({
+            type: "file.offer.request",
+            sessionId: "default",
+            path: "notes.txt",
         });
     });
     it("rejects empty prompts", () => {

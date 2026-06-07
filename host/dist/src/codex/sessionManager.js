@@ -274,6 +274,28 @@ export class CodexSessionManager {
     async downloadFile(fileId) {
         return this.fileTransfers.download(fileId);
     }
+    async offerRequestedFile(sessionId, filePath) {
+        const record = this.requireSession(sessionId);
+        this.activeSessionId = sessionId;
+        const offer = await this.fileTransfers.offerWorkspaceFile({
+            sessionId: record.sessionId,
+            workspaceRoot: record.workdir,
+            relativePath: filePath.trim(),
+            reason: "requested",
+        });
+        this.appendHistory(record.sessionId, {
+            messageId: randomUUID(),
+            role: "system",
+            kind: "files",
+            title: "File ready",
+            text: `requested ${offer.path}\nsize ${offer.sizeBytes}\nfileId ${offer.fileId}`,
+            createdAt: new Date().toISOString(),
+            complete: true,
+        });
+        await this.save();
+        this.emit(offer);
+        return offer;
+    }
     onEvent(listener) {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);

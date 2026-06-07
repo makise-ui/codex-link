@@ -114,6 +114,12 @@ export const fileRequestSchema = z.object({
   fileId: z.string().trim().min(1).max(160),
 });
 
+export const fileOfferRequestSchema = z.object({
+  type: z.literal("file.offer.request"),
+  sessionId: sessionIdSchema,
+  path: z.string().trim().min(1).max(4096),
+});
+
 export const runCancelSchema = z.object({
   type: z.literal("run.cancel"),
   sessionId: sessionIdSchema,
@@ -151,6 +157,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   commandListSchema,
   commandRunSchema,
   promptSendSchema,
+  fileOfferRequestSchema,
   fileRequestSchema,
   runCancelSchema,
   approvalDecisionSchema,

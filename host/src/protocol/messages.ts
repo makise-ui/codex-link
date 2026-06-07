@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
 export type MessageKind = "thinking" | "executing" | "response" | "system";
@@ -28,6 +28,7 @@ export type ClientMessage =
   | CommandListRequestMessage
   | CommandRunMessage
   | PromptSendMessage
+  | FileOfferRequestMessage
   | FileRequestMessage
   | RunCancelMessage
   | ApprovalDecisionMessage
@@ -142,6 +143,12 @@ export type PromptAttachment = {
 export type FileRequestMessage = {
   type: "file.request";
   fileId: string;
+};
+
+export type FileOfferRequestMessage = {
+  type: "file.offer.request";
+  sessionId: string;
+  path: string;
 };
 
 export type RunCancelMessage = {

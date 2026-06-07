@@ -53,7 +53,7 @@ describe("startBridgeServer", () => {
     });
     const hostInfo = messages.find((message) => message.type === "host.info");
     expect(hostInfo).toMatchObject({
-      version: 3,
+      version: 4,
       connectionMode: "tunnel",
       tunnelProvider: "cloudflared",
       publicUrl: "wss://unit.trycloudflare.com",
@@ -63,13 +63,79 @@ describe("startBridgeServer", () => {
 
     ws.close();
   });
+
+  it("forwards file offer requests to the session manager", async () => {
+    const port = await freePort();
+    const sessionManager = fakeSessionManager();
+    server = await startBridgeServer({
+      host: "127.0.0.1",
+      port,
+      url: `ws://127.0.0.1:${port}`,
+      pairingStore: new PairingStore({ password: "secret" }),
+      sessionManager,
+      auditLog: { record() {} } as unknown as AuditLog,
+      logger: { info() {} } as unknown as pino.Logger,
+      hostInfo: {
+        connectionMode: "tunnel",
+        tunnelProvider: "cloudflared",
+        publicUrl: "wss://unit.trycloudflare.com",
+        localUrl: `ws://127.0.0.1:${port}`,
+        hostLabel: "Codex Link",
+        yoloAllowed: false,
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+    });
+    ws.send(JSON.stringify({ type: "file.offer.request", sessionId: "s1", path: "notes.txt" }));
+
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "file.offer")).toBe(true);
+    });
+    expect(sessionManager.requestedFiles).toEqual([{ sessionId: "s1", path: "notes.txt" }]);
+    expect(messages.find((message) => message.type === "file.offer")).toMatchObject({
+      name: "notes.txt",
+      reason: "requested",
+    });
+
+    ws.close();
+  });
 });
 
-function fakeSessionManager(): CodexSessionManager {
+function fakeSessionManager(): CodexSessionManager & { requestedFiles: Array<{ sessionId: string; path: string }> } {
+  const requestedFiles: Array<{ sessionId: string; path: string }> = [];
+  let listener: ((event: unknown) => void) | undefined;
   return {
-    onEvent: () => () => {},
+    requestedFiles,
+    onEvent: (callback: (event: unknown) => void) => {
+      listener = callback;
+      return () => {
+        listener = undefined;
+      };
+    },
     close: async () => {},
     getActiveSessionId: () => "s1",
+    offerRequestedFile: async (sessionId: string, filePath: string) => {
+      requestedFiles.push({ sessionId, path: filePath });
+      const offer = {
+        type: "file.offer",
+        fileId: "file-1",
+        sessionId,
+        path: filePath,
+        name: "notes.txt",
+        sizeBytes: 12,
+        reason: "requested",
+      };
+      listener?.(offer);
+      return offer;
+    },
     listSessions: () => [
       {
         sessionId: "s1",
@@ -86,7 +152,7 @@ function fakeSessionManager(): CodexSessionManager {
     getWorkspaces: () => [],
     getSessionHistory: () => [],
     listExternalSessions: async () => [],
-  } as unknown as CodexSessionManager;
+  } as unknown as CodexSessionManager & { requestedFiles: Array<{ sessionId: string; path: string }> };
 }
 
 async function freePort(): Promise<number> {

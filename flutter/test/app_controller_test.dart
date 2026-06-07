@@ -1,5 +1,6 @@
 import 'package:codex_lan_flutter/app_controller.dart';
 import 'package:codex_lan_flutter/protocol/bridge_messages.dart';
+import 'package:codex_lan_flutter/services/bridge_socket_client.dart';
 import 'package:codex_lan_flutter/services/pairing_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -245,4 +246,45 @@ void main() {
 
     expect(controller.downloadedFiles.single.dataBase64, 'aGVsbG8=');
   });
+
+  test('slash send requests a host file offer instead of asking the agent to paste contents', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Files',
+            'updatedAt': '2026-06-07T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.sendPrompt('/send lib/report.txt');
+
+    expect(socket.sentMessages.single, {
+      'type': 'file.offer.request',
+      'sessionId': 's1',
+      'path': 'lib/report.txt',
+    });
+    expect(controller.activeMessages.single.kind, AgentMessageKind.files);
+    expect(controller.activeMessages.single.text, contains('requested lib/report.txt'));
+  });
+}
+
+class FakeBridgeSocketClient extends BridgeSocketClient {
+  final sentMessages = <Map<String, dynamic>>[];
+
+  @override
+  void send(Map<String, dynamic> message) {
+    sentMessages.add(Map<String, dynamic>.from(message));
+  }
 }

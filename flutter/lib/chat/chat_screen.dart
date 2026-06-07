@@ -849,7 +849,7 @@ class _PromptComposerState extends State<_PromptComposer> {
     final commands = widget.controller.commands
         .where((command) => command.category != 'mode')
         .toList();
-    if (commands.isEmpty || !widget.controller.isConnected) return;
+    if (!widget.controller.isConnected) return;
     _commandSheetOpen = true;
     final picked = await showModalBottomSheet<CodexCommandInfo>(
       context: context,
@@ -863,10 +863,23 @@ class _PromptComposerState extends State<_PromptComposer> {
           AppSpacing.lg,
           AppSpacing.xl,
         ),
-        itemCount: commands.length,
+        itemCount: commands.length + 1,
         separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, index) {
-          final command = commands[index];
+          if (index == 0) {
+            return ListTile(
+              leading: const Icon(Icons.file_download_outlined),
+              title: const Text('/send <path>'),
+              subtitle: const Text('Offer a workspace file to this phone'),
+              onTap: () {
+                widget.textController
+                  ..text = '/send '
+                  ..selection = const TextSelection.collapsed(offset: 6);
+                Navigator.of(context).pop();
+              },
+            );
+          }
+          final command = commands[index - 1];
           return ListTile(
             leading: const Icon(Icons.keyboard_command_key_rounded),
             title: Text('/${command.title}'),

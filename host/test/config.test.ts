@@ -56,6 +56,24 @@ describe("resolveConfig", () => {
     expect(config.tunnelProvider).toBe("cloudflared");
   });
 
+  it("allows cloudflared auto tunnel mode without a manual public url", () => {
+    const config = resolveConfig([
+      "node",
+      "src/index.ts",
+      "--insecure-ws-dev",
+      "--remote-mode",
+      "tunnel",
+      "--cloudflared-auto",
+      "--password",
+      "secret",
+    ]);
+
+    expect(config.remoteMode).toBe("tunnel");
+    expect(config.tunnelProvider).toBe("cloudflared");
+    expect(config.cloudflaredAuto).toBe(true);
+    expect(config.publicUrl).toBeUndefined();
+  });
+
   it("requires password in tunnel mode", () => {
     expect(() =>
       resolveConfig([
@@ -82,6 +100,21 @@ describe("resolveConfig", () => {
         "secret",
       ]),
     ).toThrow(/--public-url/);
+  });
+
+  it("does not require a public url when cloudflared auto mode is enabled", () => {
+    expect(() =>
+      resolveConfig([
+        "node",
+        "src/index.ts",
+        "--insecure-ws-dev",
+        "--remote-mode",
+        "tunnel",
+        "--cloudflared-auto",
+        "--password",
+        "secret",
+      ]),
+    ).not.toThrow();
   });
 
   it("still requires explicit insecure dev mode", () => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -204,6 +204,33 @@ describe("CodexSessionManager", () => {
         expect(offer).toMatchObject({ name: "notes.txt" });
         const download = await manager.downloadFile(offer.fileId);
         expect(download.dataBase64).toBe(Buffer.from("hello from phone").toString("base64"));
+        await manager.close();
+    });
+    it("offers requested workspace files without asking the agent to paste contents", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        await writeFile(path.join(workspace, "report.txt"), "download me from host");
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const events = [];
+        manager.onEvent((event) => {
+            if (event.type === "file.offer") {
+                events.push(event);
+            }
+        });
+        const [session] = manager.listSessions();
+        const offer = await manager.offerRequestedFile(session.sessionId, "report.txt");
+        expect(offer).toMatchObject({ name: "report.txt", reason: "requested" });
+        expect(events).toHaveLength(1);
+        const download = await manager.downloadFile(offer.fileId);
+        expect(Buffer.from(download.dataBase64, "base64").toString("utf8")).toBe("download me from host");
+        expect(manager.getSessionHistory(session.sessionId).some((message) => message.kind === "files" && message.text.includes("requested report.txt"))).toBe(true);
         await manager.close();
     });
     it("replays saved history after a manager restart", async () => {

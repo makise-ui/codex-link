@@ -260,6 +260,10 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
         await options.sessionManager.sendPrompt(message.sessionId, message.prompt, message.attachments);
         return;
       }
+      case "file.offer.request": {
+        await options.sessionManager.offerRequestedFile(message.sessionId, message.path);
+        return;
+      }
       case "file.request": {
         send(ws, await options.sessionManager.downloadFile(message.fileId));
         return;
