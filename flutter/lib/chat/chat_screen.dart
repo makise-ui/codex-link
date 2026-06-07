@@ -565,7 +565,7 @@ class _PromptComposerState extends State<_PromptComposer> {
   }
 
   Future<void> _pickFiles(_AttachmentPickMode mode) async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       allowMultiple: true,
       withData: true,
       type: mode == _AttachmentPickMode.image ? FileType.image : FileType.any,
