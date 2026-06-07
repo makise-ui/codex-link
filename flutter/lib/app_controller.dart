@@ -13,6 +13,10 @@ class AppController extends ChangeNotifier {
     : _socket = socket ?? BridgeSocketClient(),
       _store = store ?? SecureCredentialsStore();
 
+  static const _responseStreamFrame = Duration(milliseconds: 16);
+  static const _responseStreamChunk = 5;
+  static const _responseStreamLargeChunk = 8;
+
   final BridgeSocketClient _socket;
   final SecureCredentialsStore _store;
   final _uuid = const Uuid();
@@ -644,27 +648,26 @@ class AppController extends ChangeNotifier {
     _responseStreamPending[messageId] =
         (_responseStreamPending[messageId] ?? '') + text;
     if (_responseStreamTimers.containsKey(messageId)) return;
-    _responseStreamTimers[messageId] = Timer.periodic(
-      const Duration(milliseconds: 12),
-      (timer) {
-        final pending = _responseStreamPending[messageId] ?? '';
-        if (pending.isEmpty) {
-          timer.cancel();
-          _responseStreamTimers.remove(messageId);
-          _responseStreamPending.remove(messageId);
-          if (_responseCompleteWhenStreamed.remove(messageId)) {
-            _markMessageComplete(sessionId, messageId);
-          }
-          notifyListeners();
-          return;
+    _responseStreamTimers[messageId] = Timer.periodic(_responseStreamFrame, (
+      timer,
+    ) {
+      final pending = _responseStreamPending[messageId] ?? '';
+      if (pending.isEmpty) {
+        timer.cancel();
+        _responseStreamTimers.remove(messageId);
+        _responseStreamPending.remove(messageId);
+        if (_responseCompleteWhenStreamed.remove(messageId)) {
+          _markMessageComplete(sessionId, messageId);
         }
-        final take = _streamChunkLength(pending);
-        final chunk = pending.substring(0, take);
-        _responseStreamPending[messageId] = pending.substring(take);
-        _appendTextToMessage(sessionId, messageId, chunk);
         notifyListeners();
-      },
-    );
+        return;
+      }
+      final take = _streamChunkLength(pending);
+      final chunk = pending.substring(0, take);
+      _responseStreamPending[messageId] = pending.substring(take);
+      _appendTextToMessage(sessionId, messageId, chunk);
+      notifyListeners();
+    });
   }
 
   void _appendTextToMessage(String sessionId, String messageId, String text) {
@@ -686,7 +689,9 @@ class AppController extends ChangeNotifier {
 
   int _streamChunkLength(String pending) {
     if (pending.length <= 4) return pending.length;
-    final preferred = pending.length > 600 ? 6 : 4;
+    final preferred = pending.length > 600
+        ? _responseStreamLargeChunk
+        : _responseStreamChunk;
     final limit = pending.length < preferred ? pending.length : preferred;
     final newline = pending.indexOf('\n');
     if (newline >= 0 && newline < limit) return newline + 1;

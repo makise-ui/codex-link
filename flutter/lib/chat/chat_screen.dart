@@ -274,6 +274,8 @@ class _MessageList extends StatefulWidget {
 
 class _MessageListState extends State<_MessageList> {
   bool _showJumpToBottom = false;
+  bool _autoScrollQueued = false;
+  bool _queuedAutoScrollAnimated = false;
   int _lastItemCount = 0;
 
   @override
@@ -307,17 +309,33 @@ class _MessageListState extends State<_MessageList> {
 
   void _scrollToBottom({bool animated = true}) {
     if (!widget.scrollController.hasClients) return;
+    final target = widget.scrollController.position.maxScrollExtent;
     if (!animated) {
-      widget.scrollController.jumpTo(
-        widget.scrollController.position.maxScrollExtent,
-      );
+      widget.scrollController.jumpTo(target);
       return;
     }
     widget.scrollController.animateTo(
-      widget.scrollController.position.maxScrollExtent,
+      target,
       duration: AppMotion.scroll,
-      curve: Curves.easeOutCubic,
+      curve: Curves.easeInOutCubic,
     );
+  }
+
+  void _queueAutoScroll({required bool animated}) {
+    _queuedAutoScrollAnimated = _queuedAutoScrollAnimated || animated;
+    if (_autoScrollQueued) return;
+    _autoScrollQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final shouldAnimate = _queuedAutoScrollAnimated;
+      _autoScrollQueued = false;
+      _queuedAutoScrollAnimated = false;
+      if (!mounted ||
+          _showJumpToBottom ||
+          !widget.scrollController.hasClients) {
+        return;
+      }
+      _scrollToBottom(animated: shouldAnimate);
+    });
   }
 
   @override
@@ -335,11 +353,9 @@ class _MessageListState extends State<_MessageList> {
     final itemCountChanged = items.length != _lastItemCount;
     final shouldAutoScroll = !_showJumpToBottom;
     _lastItemCount = items.length;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (shouldAutoScroll && widget.scrollController.hasClients) {
-        _scrollToBottom(animated: itemCountChanged);
-      }
-    });
+    if (shouldAutoScroll) {
+      _queueAutoScroll(animated: itemCountChanged);
+    }
     return Stack(
       children: [
         Center(
@@ -348,15 +364,23 @@ class _MessageListState extends State<_MessageList> {
             child: ListView.separated(
               controller: widget.scrollController,
               padding: const EdgeInsets.fromLTRB(16, 112, 16, 176),
+              cacheExtent: 900,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               itemCount: items.length,
               separatorBuilder: (_, _) => const SizedBox(height: 14),
               itemBuilder: (context, index) {
                 final item = items[index];
+                final shouldAnimateItem = index >= items.length - 6;
                 return switch (item) {
                   _SingleTimelineItem(:final message) => MessageBubble(
+                    key: ValueKey('message-${message.id}-${message.kind.name}'),
                     message: message,
+                    animate: shouldAnimateItem,
                   ),
                   _ActivityTimelineItem(:final messages) => ActivityStackBubble(
+                    key: ValueKey(
+                      'activity-${messages.map((item) => item.id).join('-')}',
+                    ),
                     messages: messages,
                   ),
                 };

@@ -5,13 +5,18 @@ import '../theme/app_theme.dart';
 import 'markdown_code_renderer.dart';
 
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.message});
+  const MessageBubble({super.key, required this.message, this.animate = true});
 
   final ChatMessage message;
+  final bool animate;
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == ChatRole.user;
+    final child = isUser
+        ? _UserMessage(message: message)
+        : _AssistantMessage(message: message);
+    if (!animate) return child;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: AppMotion.messageEnter,
@@ -27,9 +32,7 @@ class MessageBubble extends StatelessWidget {
           ),
         ),
       ),
-      child: isUser
-          ? _UserMessage(message: message)
-          : _AssistantMessage(message: message),
+      child: child,
     );
   }
 }
