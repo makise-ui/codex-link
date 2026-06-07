@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -372,6 +375,7 @@ class _PromptComposer extends StatefulWidget {
 
 class _PromptComposerState extends State<_PromptComposer> {
   bool _commandSheetOpen = false;
+  final List<PromptAttachmentInfo> _attachments = [];
 
   @override
   Widget build(BuildContext context) {
@@ -396,77 +400,122 @@ class _PromptComposerState extends State<_PromptComposer> {
             ),
             radius: AppRadius.xl,
             color: CodexColors.composer,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  tooltip: 'New chat',
-                  onPressed: controller.isConnected && !controller.isRunning
-                      ? controller.createSession
-                      : null,
-                  icon: const Icon(
-                    Icons.add_rounded,
-                    size: 22,
-                    color: CodexColors.text,
-                  ),
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: textController,
-                    minLines: 1,
-                    maxLines: 5,
-                    enabled: controller.isConnected && !controller.isRunning,
-                    cursorColor: CodexColors.text,
-                    style: const TextStyle(
-                      color: CodexColors.text,
-                      height: 1.35,
+                if (_attachments.isNotEmpty) ...[
+                  SizedBox(
+                    height: 34,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _attachments.length,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(width: AppSpacing.xs),
+                      itemBuilder: (context, index) {
+                        final attachment = _attachments[index];
+                        return InputChip(
+                          avatar: Icon(
+                            _isImageName(attachment.name)
+                                ? Icons.image_rounded
+                                : Icons.attach_file_rounded,
+                            size: 16,
+                          ),
+                          label: Text(attachment.name),
+                          onDeleted: () =>
+                              setState(() => _attachments.removeAt(index)),
+                          visualDensity: VisualDensity.compact,
+                          backgroundColor: CodexColors.panelHigh,
+                          side: const BorderSide(color: CodexColors.borderSoft),
+                        );
+                      },
                     ),
-                    decoration: InputDecoration(
-                      hintText: controller.isOffline
-                          ? 'Offline - cached chat'
-                          : 'Message Codex',
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      disabledBorder: InputBorder.none,
-                      filled: false,
-                      contentPadding: const EdgeInsets.symmetric(
-                        vertical: AppSpacing.md,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                ],
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      tooltip: 'Attach',
+                      onPressed: controller.isConnected && !controller.isRunning
+                          ? () => _showAttachmentPicker(context)
+                          : null,
+                      icon: const Icon(
+                        Icons.add_rounded,
+                        size: 22,
+                        color: CodexColors.text,
                       ),
                     ),
-                    textInputAction: TextInputAction.newline,
-                    onChanged: (value) {
-                      if (value == '/' && !_commandSheetOpen) {
-                        _showCommandPicker(context);
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                SizedBox.square(
-                  dimension: 38,
-                  child: Material(
-                    color: CodexColors.text,
-                    shape: const CircleBorder(),
-                    clipBehavior: Clip.antiAlias,
-                    child: IconButton(
-                      tooltip: controller.isRunning ? 'Stop' : 'Send',
-                      color: CodexColors.ink,
-                      iconSize: 18,
-                      icon: Icon(
-                        controller.isRunning
-                            ? Icons.stop_rounded
-                            : Icons.arrow_upward_rounded,
+                    Expanded(
+                      child: TextField(
+                        controller: textController,
+                        minLines: 1,
+                        maxLines: 5,
+                        enabled:
+                            controller.isConnected && !controller.isRunning,
+                        cursorColor: CodexColors.text,
+                        style: const TextStyle(
+                          color: CodexColors.text,
+                          height: 1.35,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: controller.isOffline
+                              ? 'Offline - cached chat'
+                              : 'Message Codex',
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.md,
+                          ),
+                        ),
+                        textInputAction: TextInputAction.newline,
+                        onChanged: (value) {
+                          if (value == '/' && !_commandSheetOpen) {
+                            _showCommandPicker(context);
+                          }
+                        },
                       ),
-                      onPressed: controller.isRunning
-                          ? controller.cancelRun
-                          : () {
-                              final text = textController.text;
-                              textController.clear();
-                              controller.sendPrompt(text);
-                            },
                     ),
-                  ),
+                    const SizedBox(width: AppSpacing.xs),
+                    SizedBox.square(
+                      dimension: 38,
+                      child: Material(
+                        color: CodexColors.text,
+                        shape: const CircleBorder(),
+                        clipBehavior: Clip.antiAlias,
+                        child: IconButton(
+                          tooltip: controller.isRunning ? 'Stop' : 'Send',
+                          color: CodexColors.ink,
+                          iconSize: 18,
+                          icon: Icon(
+                            controller.isRunning
+                                ? Icons.stop_rounded
+                                : Icons.arrow_upward_rounded,
+                          ),
+                          onPressed: controller.isRunning
+                              ? controller.cancelRun
+                              : () {
+                                  final text = textController.text.trim();
+                                  final attachments =
+                                      List<PromptAttachmentInfo>.from(
+                                        _attachments,
+                                      );
+                                  textController.clear();
+                                  setState(() => _attachments.clear());
+                                  controller.sendPrompt(
+                                    text.isEmpty && attachments.isNotEmpty
+                                        ? 'Please inspect the uploaded attachments.'
+                                        : text,
+                                    attachments: attachments,
+                                  );
+                                },
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -474,6 +523,82 @@ class _PromptComposerState extends State<_PromptComposer> {
         ),
       ),
     );
+  }
+
+  Future<void> _showAttachmentPicker(BuildContext context) async {
+    final picked = await showModalBottomSheet<_AttachmentPickMode>(
+      context: context,
+      backgroundColor: CodexColors.panel,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.sm,
+            AppSpacing.lg,
+            AppSpacing.xl,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.image_rounded),
+                title: const Text('Upload image'),
+                subtitle: const Text('Attach a screenshot or visual reference'),
+                onTap: () =>
+                    Navigator.of(context).pop(_AttachmentPickMode.image),
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file_rounded),
+                title: const Text('Upload file'),
+                subtitle: const Text('Save a file into the active workspace'),
+                onTap: () =>
+                    Navigator.of(context).pop(_AttachmentPickMode.file),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+    await _pickFiles(picked);
+  }
+
+  Future<void> _pickFiles(_AttachmentPickMode mode) async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true,
+      type: mode == _AttachmentPickMode.image ? FileType.image : FileType.any,
+    );
+    if (!mounted || result == null) return;
+    final selected = <PromptAttachmentInfo>[];
+    for (final file in result.files) {
+      final bytes = file.bytes;
+      if (bytes == null || bytes.isEmpty) continue;
+      if (bytes.length > 6 * 1024 * 1024) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${file.name} is too large to upload.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        continue;
+      }
+      selected.add(
+        PromptAttachmentInfo(
+          name: file.name,
+          mimeType: _mimeTypeForName(file.name),
+          dataBase64: base64Encode(bytes),
+        ),
+      );
+    }
+    if (selected.isEmpty) return;
+    setState(() {
+      _attachments.addAll(selected);
+      if (_attachments.length > 4) {
+        _attachments.removeRange(4, _attachments.length);
+      }
+    });
   }
 
   Future<void> _showCommandPicker(BuildContext context) async {
@@ -512,6 +637,23 @@ class _PromptComposerState extends State<_PromptComposer> {
     widget.textController.clear();
     widget.controller.runCommand(picked);
   }
+}
+
+enum _AttachmentPickMode { image, file }
+
+bool _isImageName(String name) =>
+    _mimeTypeForName(name)?.startsWith('image/') == true;
+
+String? _mimeTypeForName(String name) {
+  final lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.txt')) return 'text/plain';
+  if (lower.endsWith('.json')) return 'application/json';
+  if (lower.endsWith('.md')) return 'text/markdown';
+  return null;
 }
 
 class _RunningIndicator extends StatefulWidget {

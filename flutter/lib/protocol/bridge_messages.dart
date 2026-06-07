@@ -159,6 +159,56 @@ class CodexCommandInfo {
   }
 }
 
+class PromptAttachmentInfo {
+  const PromptAttachmentInfo({
+    required this.name,
+    required this.dataBase64,
+    this.mimeType,
+  });
+
+  final String name;
+  final String dataBase64;
+  final String? mimeType;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'dataBase64': dataBase64,
+    if (mimeType != null) 'mimeType': mimeType,
+  };
+}
+
+class ExternalSessionInfo {
+  const ExternalSessionInfo({
+    required this.externalSessionId,
+    required this.title,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.workdir,
+    required this.codexThreadId,
+    required this.path,
+  });
+
+  final String externalSessionId;
+  final String title;
+  final String createdAt;
+  final String updatedAt;
+  final String workdir;
+  final String codexThreadId;
+  final String path;
+
+  factory ExternalSessionInfo.fromJson(Map<String, dynamic> json) {
+    return ExternalSessionInfo(
+      externalSessionId: json['externalSessionId'] as String? ?? '',
+      title: json['title'] as String? ?? 'Codex session',
+      createdAt: json['createdAt'] as String? ?? '',
+      updatedAt: json['updatedAt'] as String? ?? '',
+      workdir: json['workdir'] as String? ?? '',
+      codexThreadId: json['codexThreadId'] as String? ?? '',
+      path: json['path'] as String? ?? '',
+    );
+  }
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
@@ -192,6 +242,26 @@ class ChatMessage {
       complete: complete ?? this.complete,
     );
   }
+
+  factory ChatMessage.fromHistory(Map<String, dynamic> json) {
+    final role = switch (json['role'] as String?) {
+      'user' => ChatRole.user,
+      'assistant' => ChatRole.assistant,
+      _ => ChatRole.system,
+    };
+    return ChatMessage(
+      id: json['messageId'] as String? ?? '',
+      role: role,
+      kind: kindFromWire(json['kind'] as String?),
+      text: json['text'] as String? ?? '',
+      title: json['title'] as String?,
+      runId: json['runId'] as String?,
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+      complete: json['complete'] as bool? ?? true,
+    );
+  }
 }
 
 AgentMessageKind kindFromWire(String? value) {
@@ -206,6 +276,8 @@ AgentMessageKind kindFromWire(String? value) {
       return AgentMessageKind.system;
     case 'files':
       return AgentMessageKind.files;
+    case 'error':
+      return AgentMessageKind.error;
     default:
       return AgentMessageKind.system;
   }

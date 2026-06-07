@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CodexEvent, CodexSession, SendPromptResult } from "./codexSession.js";
+import type { CodexEvent, CodexSession, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 
 type Listener = (event: CodexEvent) => void;
 
@@ -28,7 +28,7 @@ export class MockCodexSession implements CodexSession {
     this.emit({ type: "status", status: "connected", sessionId: this.sessionId });
   }
 
-  async sendPrompt(prompt: string): Promise<SendPromptResult> {
+  async sendPrompt(prompt: string, options: SendPromptOptions = {}): Promise<SendPromptResult> {
     if (this.activeRun) {
       throw new Error("A run is already active; cancel or wait for it to finish.");
     }
@@ -65,6 +65,7 @@ export class MockCodexSession implements CodexSession {
             "Connected to the local Codex LAN bridge.",
             "",
             `Prompt received: ${prompt.trim()}`,
+            ifAttachments(options.attachments),
             "",
             "```ts",
             "const mode = 'mock-ui-verification';",
@@ -131,4 +132,9 @@ export class MockCodexSession implements CodexSession {
       listener(event);
     }
   }
+}
+
+function ifAttachments(attachments: SendPromptOptions["attachments"]): string {
+  if (!attachments || attachments.length === 0) return "";
+  return `Attachments: ${attachments.map((attachment) => `${attachment.kind}:${attachment.name}`).join(", ")}`;
 }

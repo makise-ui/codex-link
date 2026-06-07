@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionStore } from "../src/codex/sessionStore.js";
-import type { SessionRecord } from "../src/protocol/messages.js";
+import type { SessionRecord, StoredChatMessage, WorkspaceRecord } from "../src/protocol/messages.js";
 
 const tempDirs: string[] = [];
 
@@ -28,6 +28,45 @@ describe("SessionStore", () => {
     const parsed = JSON.parse(raw) as { sessions: SessionRecord[] };
     expect(parsed.sessions).toHaveLength(1);
     expect(parsed.sessions[0]?.sessionId).toBe("session-24");
+  });
+
+  it("persists message history and dynamic workspaces", async () => {
+    const stateDir = await tempStateDir();
+    const store = new SessionStore(stateDir);
+    const messages: Record<string, StoredChatMessage[]> = {
+      "session-1": [
+        {
+          messageId: "user-1",
+          role: "user",
+          kind: "response",
+          text: "hello",
+          createdAt: "2026-06-07T00:00:00.000Z",
+          complete: true,
+        },
+        {
+          messageId: "cmd-1",
+          role: "system",
+          kind: "executing",
+          title: "Running command",
+          text: "pnpm test\n2 tests passed\n",
+          createdAt: "2026-06-07T00:00:01.000Z",
+          runId: "run-1",
+          complete: true,
+        },
+      ],
+    };
+    const workspaces: WorkspaceRecord[] = [
+      { workspaceId: "default", label: "repo", path: "/tmp/repo", active: false },
+      { workspaceId: "workspace-2", label: "other", path: "/tmp/other", active: false },
+    ];
+
+    await store.save({ sessions: [sessionRecord("session-1", "Session 1")], messages, workspaces });
+
+    await expect(store.load()).resolves.toEqual({
+      sessions: [sessionRecord("session-1", "Session 1")],
+      messages,
+      workspaces,
+    });
   });
 });
 

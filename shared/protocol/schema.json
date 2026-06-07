@@ -16,7 +16,10 @@
     { "$ref": "#/$defs/SessionDelete" },
     { "$ref": "#/$defs/SessionModeSet" },
     { "$ref": "#/$defs/WorkspaceList" },
+    { "$ref": "#/$defs/WorkspaceAdd" },
     { "$ref": "#/$defs/WorkspaceSwitch" },
+    { "$ref": "#/$defs/ExternalSessionList" },
+    { "$ref": "#/$defs/ExternalSessionImport" },
     { "$ref": "#/$defs/CommandList" },
     { "$ref": "#/$defs/CommandRun" },
     { "$ref": "#/$defs/PromptSend" },
@@ -104,6 +107,15 @@
       "required": ["type"],
       "properties": { "type": { "const": "workspace.list" } }
     },
+    "WorkspaceAdd": {
+      "type": "object",
+      "required": ["type", "path"],
+      "properties": {
+        "type": { "const": "workspace.add" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "sessionId": { "type": "string" }
+      }
+    },
     "WorkspaceSwitch": {
       "type": "object",
       "required": ["type", "sessionId", "workspaceId"],
@@ -111,6 +123,19 @@
         "type": { "const": "workspace.switch" },
         "sessionId": { "type": "string" },
         "workspaceId": { "type": "string" }
+      }
+    },
+    "ExternalSessionList": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "external.session.list" } }
+    },
+    "ExternalSessionImport": {
+      "type": "object",
+      "required": ["type", "externalSessionId"],
+      "properties": {
+        "type": { "const": "external.session.import" },
+        "externalSessionId": { "type": "string", "minLength": 1, "maxLength": 128 }
       }
     },
     "CommandList": {
@@ -133,7 +158,20 @@
       "properties": {
         "type": { "const": "prompt.send" },
         "sessionId": { "type": "string" },
-        "prompt": { "type": "string", "minLength": 1, "maxLength": 65536 }
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 65536 },
+        "attachments": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["name", "dataBase64"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "mimeType": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dataBase64": { "type": "string", "minLength": 1, "maxLength": 8388608 }
+            }
+          }
+        }
       }
     },
     "RunCancel": {

@@ -28,6 +28,7 @@ class AppController extends ChangeNotifier {
   final List<CodexSessionInfo> sessions = [];
   final List<WorkspaceInfo> workspaces = [];
   final List<CodexCommandInfo> commands = [];
+  final List<ExternalSessionInfo> externalSessions = [];
   final Map<String, List<ChatMessage>> messagesBySession = {};
 
   CodexSessionInfo? get activeSession {
@@ -170,6 +171,25 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  void addWorkspacePath(String path) {
+    final trimmed = path.trim();
+    if (trimmed.isEmpty) return;
+    _send({
+      'type': 'workspace.add',
+      'path': trimmed,
+      if (activeSession?.sessionId != null)
+        'sessionId': activeSession!.sessionId,
+    });
+  }
+
+  void importExternalSession(ExternalSessionInfo session) {
+    if (session.externalSessionId.isEmpty) return;
+    _send({
+      'type': 'external.session.import',
+      'externalSessionId': session.externalSessionId,
+    });
+  }
+
   void setYolo(bool enabled) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
@@ -192,20 +212,48 @@ class AppController extends ChangeNotifier {
     _send(message);
   }
 
-  void sendPrompt(String prompt) {
+  void sendPrompt(
+    String prompt, {
+    List<PromptAttachmentInfo> attachments = const [],
+  }) {
     final trimmed = prompt.trim();
     final sessionId = activeSession?.sessionId;
-    if (trimmed.isEmpty || sessionId == null) return;
+    if ((trimmed.isEmpty && attachments.isEmpty) || sessionId == null) return;
+    final displayText = trimmed.isEmpty ? 'Uploaded attachments' : trimmed;
     final message = ChatMessage(
       id: _uuid.v4(),
       role: ChatRole.user,
       kind: AgentMessageKind.response,
-      text: trimmed,
+      text: displayText,
       createdAt: DateTime.now(),
     );
     messagesBySession.putIfAbsent(sessionId, () => []).add(message);
+    if (attachments.isNotEmpty) {
+      messagesBySession
+          .putIfAbsent(sessionId, () => [])
+          .add(
+            ChatMessage(
+              id: _uuid.v4(),
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              title: 'Attachments queued',
+              text: attachments
+                  .map((attachment) => 'added ${attachment.name}')
+                  .join('\n'),
+              createdAt: DateTime.now(),
+            ),
+          );
+    }
     notifyListeners();
-    _send({'type': 'prompt.send', 'sessionId': sessionId, 'prompt': trimmed});
+    _send({
+      'type': 'prompt.send',
+      'sessionId': sessionId,
+      'prompt': displayText,
+      if (attachments.isNotEmpty)
+        'attachments': attachments
+            .map((attachment) => attachment.toJson())
+            .toList(growable: false),
+    });
   }
 
   void cancelRun() {
@@ -217,6 +265,11 @@ class AppController extends ChangeNotifier {
 
   Future<void> disposeController() async {
     await _socket.close();
+  }
+
+  @visibleForTesting
+  void handleBridgeMessageForTest(Map<String, dynamic> message) {
+    _handleMessage(message);
   }
 
   void _connect(String url, Map<String, dynamic> firstMessage) {
@@ -327,6 +380,17 @@ class AppController extends ChangeNotifier {
             ),
           );
         break;
+      case 'external.session.list':
+        externalSessions
+          ..clear()
+          ..addAll(
+            ((message['sessions'] as List<dynamic>? ?? const [])).map(
+              (item) => ExternalSessionInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        break;
       case 'run.started':
         activeRunId = message['runId'] as String?;
         break;
@@ -341,6 +405,9 @@ class AppController extends ChangeNotifier {
         break;
       case 'message.completed':
         _completeAgentMessage(message);
+        break;
+      case 'message.history':
+        _replaceMessageHistory(message);
         break;
       case 'output.delta':
         _handleLegacyOutput(message);
@@ -404,6 +471,20 @@ class AppController extends ChangeNotifier {
     for (final session in sessions) {
       messagesBySession.putIfAbsent(session.sessionId, () => []);
     }
+  }
+
+  void _replaceMessageHistory(Map<String, dynamic> message) {
+    final sessionId = message['sessionId'] as String?;
+    if (sessionId == null || sessionId.isEmpty) return;
+    messagesBySession[sessionId] =
+        ((message['messages'] as List<dynamic>? ?? const []))
+            .map(
+              (item) => ChatMessage.fromHistory(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            )
+            .where((item) => item.id.isNotEmpty)
+            .toList();
   }
 
   void _upsertSession(CodexSessionInfo session) {

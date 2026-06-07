@@ -16,7 +16,7 @@ export async function startBridgeServer(options) {
         res.writeHead(404);
         res.end("not found");
     });
-    const wss = new WebSocketServer({ server, maxPayload: 128 * 1024 });
+    const wss = new WebSocketServer({ server, maxPayload: 16 * 1024 * 1024 });
     const unsubscribe = options.sessionManager.onEvent((event) => {
         broadcast(event);
         if (event.type === "run.completed") {
@@ -136,6 +136,8 @@ export async function startBridgeServer(options) {
                 const record = await options.sessionManager.startSession(message.sessionId);
                 options.auditLog.record({ type: "session.started", deviceId: state.device?.id, sessionId: record.sessionId });
                 sendSessionList(ws);
+                sendWorkspaceList(ws, record.sessionId);
+                sendSessionHistory(ws, record.sessionId);
                 return;
             }
             case "session.list": {
@@ -166,10 +168,28 @@ export async function startBridgeServer(options) {
                 sendWorkspaceList(ws);
                 return;
             }
+            case "workspace.add": {
+                await options.sessionManager.addWorkspace(message.path, message.sessionId);
+                sendWorkspaceList(ws, message.sessionId);
+                sendSessionList(ws);
+                return;
+            }
             case "workspace.switch": {
                 await options.sessionManager.switchWorkspace(message.sessionId, message.workspaceId);
                 sendWorkspaceList(ws, message.sessionId);
                 sendSessionList(ws);
+                sendSessionHistory(ws, message.sessionId);
+                return;
+            }
+            case "external.session.list": {
+                await sendExternalSessionList(ws);
+                return;
+            }
+            case "external.session.import": {
+                const record = await options.sessionManager.importExternalSession(message.externalSessionId);
+                sendSessionList(ws);
+                sendWorkspaceList(ws, record.sessionId);
+                sendSessionHistory(ws, record.sessionId);
                 return;
             }
             case "command.list": {
@@ -182,7 +202,7 @@ export async function startBridgeServer(options) {
             }
             case "prompt.send": {
                 options.auditLog.record({ type: "prompt.submitted", deviceId: state.device?.id, sessionId: message.sessionId });
-                await options.sessionManager.sendPrompt(message.sessionId, message.prompt);
+                await options.sessionManager.sendPrompt(message.sessionId, message.prompt, message.attachments);
                 return;
             }
             case "run.cancel": {
@@ -229,12 +249,24 @@ export async function startBridgeServer(options) {
         sendSessionList(ws);
         sendWorkspaceList(ws);
         sendCommandList(ws);
+        const activeSessionId = options.sessionManager.getActiveSessionId();
+        if (activeSessionId)
+            sendSessionHistory(ws, activeSessionId);
+        void sendExternalSessionList(ws).catch((error) => {
+            send(ws, { type: "error", code: "external_sessions.failed", message: error instanceof Error ? error.message : String(error) });
+        });
     }
     function sendSessionList(ws) {
         send(ws, { type: "session.list", sessions: options.sessionManager.listSessions(), activeSessionId: options.sessionManager.getActiveSessionId() });
     }
     function sendWorkspaceList(ws, activeSessionId = options.sessionManager.getActiveSessionId()) {
         send(ws, { type: "workspace.list", workspaces: options.sessionManager.getWorkspaces(activeSessionId) });
+    }
+    function sendSessionHistory(ws, sessionId) {
+        send(ws, { type: "message.history", sessionId, messages: options.sessionManager.getSessionHistory(sessionId) });
+    }
+    async function sendExternalSessionList(ws) {
+        send(ws, { type: "external.session.list", sessions: await options.sessionManager.listExternalSessions() });
     }
     function sendCommandList(ws) {
         send(ws, { type: "command.list", commands: COMMAND_CATALOG });

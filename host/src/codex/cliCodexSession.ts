@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import type { SandboxMode } from "../protocol/messages.js";
-import type { CodexEvent, CodexSession, SendPromptResult } from "./codexSession.js";
+import type { CodexEvent, CodexSession, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 import { JsonLineBuffer, mapCodexJsonEvent, parseCodexJsonLine } from "./codexJsonEvents.js";
 
 type Listener = (event: CodexEvent) => void;
@@ -25,6 +25,7 @@ type ActiveProcess = {
   jsonBuffer: JsonLineBuffer;
   messageCounter: number;
   itemMessageIds: Map<string, string>;
+  messageKinds: Map<string, "thinking" | "executing" | "response" | "system">;
   thinkingMessageId?: string;
 };
 
@@ -47,7 +48,7 @@ export class CliCodexSession implements CodexSession {
     this.emit({ type: "status", status: "connected", sessionId: this.sessionId, detail: `workdir=${resolvedWorkdir}` });
   }
 
-  async sendPrompt(prompt: string): Promise<SendPromptResult> {
+  async sendPrompt(prompt: string, options: SendPromptOptions = {}): Promise<SendPromptResult> {
     if (this.active) {
       throw new Error("A Codex CLI run is already active.");
     }
@@ -57,6 +58,7 @@ export class CliCodexSession implements CodexSession {
       argsPrefix: this.options.argsPrefix,
       codexThreadId: this.codexThreadId,
       sandbox: this.options.sandbox ?? "workspace-write",
+      imagePaths: options.attachments?.filter((attachment) => attachment.kind === "image").map((attachment) => attachment.path),
     });
     const stdinMode = process.stdin.isTTY ? "inherit" : "ignore";
     const child = spawn(this.options.command, args, {
@@ -66,7 +68,7 @@ export class CliCodexSession implements CodexSession {
       stdio: [stdinMode, "pipe", "pipe"],
     });
 
-    this.active = { runId, child, finished: false, jsonBuffer: new JsonLineBuffer(), messageCounter: 0, itemMessageIds: new Map() };
+    this.active = { runId, child, finished: false, jsonBuffer: new JsonLineBuffer(), messageCounter: 0, itemMessageIds: new Map(), messageKinds: new Map() };
     this.emit({ type: "run.started", sessionId: this.sessionId, runId });
     this.emit({ type: "status", status: "running", sessionId: this.sessionId, runId });
 
@@ -96,6 +98,7 @@ export class CliCodexSession implements CodexSession {
       for (const line of active.jsonBuffer.flush()) {
         this.handleJsonLine(runId, line);
       }
+      this.completeOpenMessages(runId);
       active.finished = true;
       this.emit({ type: "status", status: code === 0 ? "completed" : "failed", sessionId: this.sessionId, runId, detail: `exit=${code ?? "signal"}` });
       this.emit({ type: "run.completed", sessionId: this.sessionId, runId, exitCode: code ?? undefined });
@@ -153,9 +156,10 @@ export class CliCodexSession implements CodexSession {
           void this.options.onThreadStarted?.(mapped.threadId);
           return;
         case "turn_started":
-          this.emitStartedMessage(runId, "thinking", "Thinking", "Thinking…\n");
+          this.ensureThinking(runId);
           return;
         case "message_started":
+          this.completeThinking(runId);
           this.emitStartedMessage(runId, mapped.messageKind, mapped.title, mapped.text?.endsWith("\n") ? mapped.text : mapped.text ? `${mapped.text}\n` : undefined, mapped.itemId);
           return;
         case "message":
@@ -184,6 +188,7 @@ export class CliCodexSession implements CodexSession {
     if (active && itemId) {
       active.itemMessageIds.set(itemId, messageId);
     }
+    active?.messageKinds.set(messageId, kind);
     if (active && kind === "thinking") {
       active.thinkingMessageId = messageId;
     }
@@ -196,19 +201,23 @@ export class CliCodexSession implements CodexSession {
 
   private emitCompleteMessage(runId: string, kind: "thinking" | "executing" | "response" | "system", title: string | undefined, text: string, itemId?: string): void {
     const active = this.active;
-    if (kind === "response") {
+    if (kind !== "thinking") {
       this.completeThinking(runId);
     }
     const existingMessageId = itemId ? active?.itemMessageIds.get(itemId) : undefined;
     const messageId = existingMessageId ?? this.emitStartedMessage(runId, kind, title, undefined, itemId);
     this.emit({ type: "message.delta", sessionId: this.sessionId, runId, messageId, text });
     this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId });
+    active?.messageKinds.set(messageId, kind);
 
     if (kind === "response") {
       this.emit({ type: "output.delta", sessionId: this.sessionId, runId, stream: "assistant", text });
     }
     if (active && itemId) {
       active.itemMessageIds.delete(itemId);
+    }
+    if (kind !== "thinking") {
+      this.ensureThinking(runId);
     }
   }
 
@@ -218,7 +227,12 @@ export class CliCodexSession implements CodexSession {
     const messageId = active.itemMessageIds.get(itemId);
     if (!messageId) return;
     this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId });
+    const kind = active.messageKinds.get(messageId);
+    active.messageKinds.delete(messageId);
     active.itemMessageIds.delete(itemId);
+    if (kind && kind !== "thinking") {
+      this.ensureThinking(runId);
+    }
   }
 
   private completeOpenMessages(runId: string): void {
@@ -227,6 +241,7 @@ export class CliCodexSession implements CodexSession {
     this.completeThinking(runId);
     for (const messageId of active.itemMessageIds.values()) {
       this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId });
+      active.messageKinds.delete(messageId);
     }
     active.itemMessageIds.clear();
   }
@@ -235,7 +250,14 @@ export class CliCodexSession implements CodexSession {
     const active = this.active;
     if (!active?.thinkingMessageId) return;
     this.emit({ type: "message.completed", sessionId: this.sessionId, runId, messageId: active.thinkingMessageId });
+    active.messageKinds.delete(active.thinkingMessageId);
     active.thinkingMessageId = undefined;
+  }
+
+  private ensureThinking(runId: string): void {
+    const active = this.active;
+    if (!active || active.finished || active.thinkingMessageId) return;
+    this.emitStartedMessage(runId, "thinking", "Thinking", "Thinking…\n");
   }
 
   private emitSystemMessage(runId: string, text: string, title?: string): void {
@@ -253,21 +275,27 @@ export type BuildCodexArgsOptions = {
   argsPrefix?: string[];
   codexThreadId?: string;
   sandbox?: SandboxMode;
+  imagePaths?: string[];
 };
 
 export function buildCodexArgs(prompt: string, options: BuildCodexArgsOptions = {}): string[] {
   if (options.argsPrefix) {
-    return [...options.argsPrefix, "--", prompt];
+    return [...options.argsPrefix, ...imageArgs(options.imagePaths), "--", prompt];
   }
 
   const sandbox = options.sandbox ?? "workspace-write";
   const globalArgs = sandbox === "danger-full-access"
     ? ["--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
     : ["--json", "--skip-git-repo-check", "--sandbox", sandbox];
+  const images = imageArgs(options.imagePaths);
   if (options.codexThreadId) {
-    return ["exec", ...globalArgs, "resume", options.codexThreadId, "--", prompt];
+    return ["exec", ...globalArgs, ...images, "resume", options.codexThreadId, "--", prompt];
   }
-  return ["exec", ...globalArgs, "--", prompt];
+  return ["exec", ...globalArgs, ...images, "--", prompt];
+}
+
+function imageArgs(imagePaths: string[] | undefined): string[] {
+  return imagePaths?.flatMap((imagePath) => ["--image", imagePath]) ?? [];
 }
 
 function removeCodexStdinNotice(text: string): string {

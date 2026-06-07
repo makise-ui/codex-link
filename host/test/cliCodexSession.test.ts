@@ -21,8 +21,10 @@ process.stdout.write(JSON.stringify({ type: 'turn.started' }) + '\\n');
 process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: 'read-1', type: 'read_file', path: 'notes.txt' } }) + '\\n');
 setTimeout(() => {
   process.stdout.write(JSON.stringify({ type: 'item.completed', item: { id: 'read-1', type: 'read_file', output: 'notes content' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: 'edit-1', type: 'file_change', changes: [{ path: process.cwd() + '/notes.txt', kind: 'add' }], status: 'in_progress' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { id: 'edit-1', type: 'file_change', changes: [{ path: process.cwd() + '/notes.txt', kind: 'add' }], status: 'completed' } }) + '\\n');
   process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: 'cmd-1', type: 'exec_command', command: 'pnpm test' } }) + '\\n');
-  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { id: 'cmd-1', type: 'exec_command', output: '2 tests passed' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { id: 'cmd-1', type: 'command_execution', aggregated_output: '2 tests passed' } }) + '\\n');
   process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done.' } }) + '\\n');
   process.stdout.write(JSON.stringify({ type: 'turn.completed' }) + '\\n');
 }, 20);
@@ -55,6 +57,20 @@ describe("buildCodexArgs", () => {
       "--dangerously-bypass-approvals-and-sandbox",
       "--",
       "go",
+    ]);
+  });
+
+  it("passes images to codex exec before the prompt separator", () => {
+    expect(buildCodexArgs("see image", { imagePaths: ["/tmp/screen.png"] })).toEqual([
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "workspace-write",
+      "--image",
+      "/tmp/screen.png",
+      "--",
+      "see image",
     ]);
   });
 });
@@ -125,15 +141,18 @@ describe("CliCodexSession", () => {
       ? events.find((event) => event.type === "message.completed" && event.messageId === readStarted.messageId)
       : undefined;
     const commandStarted = events.find((event) => event.type === "message.started" && event.title === "Running command");
-    const thinkingStarted = events.find((event): event is Extract<CodexEvent, { type: "message.started" }> => event.type === "message.started" && event.kind === "thinking");
+    const editStarted = events.find((event) => event.type === "message.started" && event.title === "Editing files");
+    const thinkingStarted = events.filter((event): event is Extract<CodexEvent, { type: "message.started" }> => event.type === "message.started" && event.kind === "thinking");
     const duplicatedSystemThinking = events.some((event) => event.type === "output.delta" && event.stream === "system" && event.text.includes("Thinking"));
 
     expect(readStarted).toBeDefined();
     expect(readCompleted).toBeDefined();
     expect(commandStarted).toBeDefined();
-    expect(thinkingStarted).toBeDefined();
-    expect(thinkingStarted && events.some((event) => event.type === "message.completed" && event.messageId === thinkingStarted.messageId)).toBe(true);
+    expect(editStarted).toBeDefined();
+    expect(thinkingStarted.length).toBeGreaterThan(1);
+    expect(thinkingStarted.every((message) => events.some((event) => event.type === "message.completed" && event.messageId === message.messageId))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("notes.txt"))).toBe(true);
+    expect(events.some((event) => event.type === "message.delta" && event.text.includes("added") && event.text.includes("notes.txt"))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("2 tests passed"))).toBe(true);
     expect(duplicatedSystemThinking).toBe(false);
   });

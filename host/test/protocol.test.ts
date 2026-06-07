@@ -24,6 +24,11 @@ describe("protocol schemas", () => {
       sessionId: "s1",
       workspaceId: "workspace-2",
     });
+    expect(parseClientMessage({ type: "workspace.add", sessionId: "s1", path: "/tmp/other-repo" })).toEqual({
+      type: "workspace.add",
+      sessionId: "s1",
+      path: "/tmp/other-repo",
+    });
     expect(parseClientMessage({ type: "session.mode.set", sessionId: "s1", mode: "yolo" })).toEqual({
       type: "session.mode.set",
       sessionId: "s1",
@@ -41,6 +46,39 @@ describe("protocol schemas", () => {
       type: "auth.password",
       password: "local-pass",
       deviceName: "Pixel",
+    });
+  });
+
+  it("accepts prompt attachments and external session controls", () => {
+    expect(
+      parseClientMessage({
+        type: "prompt.send",
+        sessionId: "default",
+        prompt: "use this screenshot",
+        attachments: [
+          {
+            name: "screen.png",
+            mimeType: "image/png",
+            dataBase64: Buffer.from("fake-image").toString("base64"),
+          },
+        ],
+      }),
+    ).toEqual({
+      type: "prompt.send",
+      sessionId: "default",
+      prompt: "use this screenshot",
+      attachments: [
+        {
+          name: "screen.png",
+          mimeType: "image/png",
+          dataBase64: Buffer.from("fake-image").toString("base64"),
+        },
+      ],
+    });
+    expect(parseClientMessage({ type: "external.session.list" })).toEqual({ type: "external.session.list" });
+    expect(parseClientMessage({ type: "external.session.import", externalSessionId: "019ea1ae-ac01-7123-8247-f3f94f79383d" })).toEqual({
+      type: "external.session.import",
+      externalSessionId: "019ea1ae-ac01-7123-8247-f3f94f79383d",
     });
   });
 

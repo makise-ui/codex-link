@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { CliCodexSession } from "./cliCodexSession.js";
+import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
 import { MockCodexSession } from "./mockCodexSession.js";
 import { SessionStore } from "./sessionStore.js";
 export class CodexSessionManager {
@@ -8,6 +11,9 @@ export class CodexSessionManager {
     listeners = new Set();
     adapters = new Map();
     sessions = new Map();
+    messageHistory = new Map();
+    workspaces = [];
+    pendingPersistence = Promise.resolve();
     activeSessionId;
     constructor(options) {
         this.options = options;
@@ -24,17 +30,87 @@ export class CodexSessionManager {
     getActiveSessionId() {
         return this.activeSessionId;
     }
+    getSessionHistory(sessionId) {
+        return [...(this.messageHistory.get(sessionId) ?? [])].map((message) => ({ ...message }));
+    }
+    async listExternalSessions() {
+        return listExternalSessions();
+    }
     getWorkspaces(activeSessionId = this.activeSessionId) {
         const activeWorkspaceId = activeSessionId ? this.sessions.get(activeSessionId)?.workspaceId : undefined;
-        return this.options.workspaces.map((workspace) => ({
+        return this.workspaces.map((workspace) => ({
             workspaceId: workspace.id,
             label: workspace.label,
             path: workspace.path,
             active: workspace.id === activeWorkspaceId,
         }));
     }
+    async addWorkspace(workspacePath, sessionId) {
+        const resolvedPath = path.resolve(workspacePath);
+        const stats = await stat(resolvedPath);
+        if (!stats.isDirectory()) {
+            throw new Error(`Workspace path is not a directory: ${resolvedPath}`);
+        }
+        let workspace = this.workspaces.find((candidate) => path.resolve(candidate.path) === resolvedPath);
+        if (!workspace) {
+            workspace = {
+                id: nextWorkspaceId(this.workspaces),
+                label: path.basename(resolvedPath) || resolvedPath,
+                path: resolvedPath,
+            };
+            this.workspaces.push(workspace);
+        }
+        if (sessionId) {
+            await this.switchWorkspace(sessionId, workspace.id);
+        }
+        else {
+            await this.save();
+        }
+        return {
+            workspaceId: workspace.id,
+            label: workspace.label,
+            path: workspace.path,
+            active: sessionId ? this.sessions.get(sessionId)?.workspaceId === workspace.id : false,
+        };
+    }
+    async importExternalSession(externalSessionId) {
+        const external = await findExternalSession(externalSessionId);
+        if (!external) {
+            throw new Error(`Unknown external Codex session: ${externalSessionId}`);
+        }
+        const workspace = await this.addWorkspace(external.workdir);
+        const now = new Date().toISOString();
+        const record = {
+            sessionId: randomUUID(),
+            codexThreadId: external.codexThreadId,
+            title: external.title,
+            createdAt: now,
+            updatedAt: now,
+            workspaceId: workspace.workspaceId,
+            workdir: workspace.path,
+            lastStatus: "idle",
+            mode: this.defaultMode(),
+            sandbox: this.sandboxForMode(this.defaultMode()),
+        };
+        this.sessions.set(record.sessionId, record);
+        const importedHistory = await readExternalSessionHistory(external);
+        this.messageHistory.set(record.sessionId, importedHistory.length > 0 ? importedHistory : [
+            {
+                messageId: randomUUID(),
+                role: "system",
+                kind: "system",
+                title: "Imported Codex session",
+                text: `Imported external session from ${external.path}\nResume thread: ${external.codexThreadId}`,
+                createdAt: now,
+                complete: true,
+            },
+        ]);
+        this.activeSessionId = record.sessionId;
+        await this.saveAndEmit(record);
+        return record;
+    }
     async createSession(input = {}) {
-        const workspace = this.workspaceById(input.workspaceId ?? this.options.workspaces[0]?.id);
+        const workspace = this.workspaceById(input.workspaceId ?? this.workspaces[0]?.id);
         const mode = input.mode ?? this.defaultMode();
         this.assertModeAllowed(mode);
         const now = new Date().toISOString();
@@ -117,7 +193,7 @@ export class CodexSessionManager {
         await this.saveAndEmit(record);
         return record;
     }
-    async sendPrompt(sessionId, prompt) {
+    async sendPrompt(sessionId, prompt, attachments = []) {
         const record = this.requireSession(sessionId);
         this.activeSessionId = sessionId;
         if (!record.codexThreadId && record.title === "New session") {
@@ -125,8 +201,37 @@ export class CodexSessionManager {
             record.updatedAt = new Date().toISOString();
             await this.saveAndEmit(record);
         }
+        const preparedAttachments = await this.prepareAttachments(record, attachments);
+        this.appendHistory(record.sessionId, {
+            messageId: randomUUID(),
+            role: "user",
+            kind: "response",
+            text: prompt.trim(),
+            createdAt: new Date().toISOString(),
+            complete: true,
+        });
+        if (preparedAttachments.length > 0) {
+            this.appendHistory(record.sessionId, {
+                messageId: randomUUID(),
+                role: "system",
+                kind: "files",
+                title: "Attachments uploaded",
+                text: preparedAttachments.map((attachment) => `added ${path.relative(record.workdir, attachment.path) || attachment.name}`).join("\n"),
+                createdAt: new Date().toISOString(),
+                complete: true,
+            });
+            this.emit({
+                type: "diff.available",
+                sessionId: record.sessionId,
+                files: preparedAttachments.map((attachment) => ({
+                    path: path.relative(record.workdir, attachment.path) || attachment.path,
+                    status: "added",
+                })),
+            });
+        }
+        await this.save();
         const adapter = this.adapterFor(record);
-        return adapter.sendPrompt(prompt);
+        return adapter.sendPrompt(augmentPromptWithAttachments(prompt, preparedAttachments), { attachments: preparedAttachments });
     }
     async cancel(sessionId, runId) {
         const adapter = this.adapters.get(sessionId)?.session;
@@ -143,12 +248,15 @@ export class CodexSessionManager {
         for (const sessionId of [...this.adapters.keys()]) {
             await this.closeAdapter(sessionId);
         }
+        await this.pendingPersistence;
         this.listeners.clear();
     }
     async init() {
         const snapshot = await this.store.load();
+        this.workspaces = mergeWorkspaces(this.options.workspaces, snapshot.workspaces ?? []);
+        this.messageHistory = new Map(Object.entries(snapshot.messages ?? {}).map(([sessionId, messages]) => [sessionId, messages.map((message) => ({ ...message, complete: message.kind === "thinking" ? true : message.complete }))]));
         for (const persisted of snapshot.sessions) {
-            const workspace = this.options.workspaces.find((candidate) => candidate.id === persisted.workspaceId) ?? this.options.workspaces.find((candidate) => candidate.path === persisted.workdir) ?? this.options.workspaces[0];
+            const workspace = this.workspaces.find((candidate) => candidate.id === persisted.workspaceId) ?? this.workspaces.find((candidate) => candidate.path === persisted.workdir) ?? this.workspaces[0];
             if (!workspace)
                 continue;
             const mode = persisted.mode === "yolo" && !this.options.allowYolo ? "safe" : persisted.mode;
@@ -189,7 +297,9 @@ export class CodexSessionManager {
                 },
             });
         const unsubscribe = session.onEvent((event) => {
-            void this.handleAdapterEvent(event).catch((error) => {
+            this.pendingPersistence = this.pendingPersistence
+                .then(() => this.handleAdapterEvent(event))
+                .catch((error) => {
                 this.emit({ type: "error", code: "session.persist_failed", message: error instanceof Error ? error.message : String(error) });
             });
             this.emit(event);
@@ -204,6 +314,19 @@ export class CodexSessionManager {
         if (!record)
             return;
         let changed = false;
+        let historyChanged = false;
+        if (event.type === "message.started") {
+            historyChanged = this.recordMessageStarted(event);
+        }
+        if (event.type === "message.delta") {
+            historyChanged = this.recordMessageDelta(event) || historyChanged;
+        }
+        if (event.type === "message.completed") {
+            historyChanged = this.recordMessageCompleted(event) || historyChanged;
+        }
+        if (event.type === "diff.available") {
+            historyChanged = this.recordDiffAvailable(event) || historyChanged;
+        }
         if (event.type === "run.started") {
             record.activeRunId = event.runId;
             record.lastStatus = "running";
@@ -225,6 +348,9 @@ export class CodexSessionManager {
             record.updatedAt = new Date().toISOString();
             await this.saveAndEmit(record);
         }
+        else if (historyChanged) {
+            await this.save();
+        }
     }
     async updateThreadId(sessionId, threadId) {
         const record = this.sessions.get(sessionId);
@@ -234,6 +360,94 @@ export class CodexSessionManager {
         record.updatedAt = new Date().toISOString();
         await this.saveAndEmit(record);
     }
+    recordMessageStarted(event) {
+        if (event.kind === "thinking")
+            return false;
+        this.appendHistory(event.sessionId, {
+            messageId: event.messageId,
+            role: event.role,
+            kind: event.kind,
+            title: event.title,
+            text: "",
+            runId: event.runId,
+            createdAt: new Date().toISOString(),
+            complete: false,
+        });
+        return true;
+    }
+    recordMessageDelta(event) {
+        const history = this.messageHistory.get(event.sessionId);
+        const existing = history?.find((message) => message.messageId === event.messageId);
+        if (existing) {
+            existing.text += event.text;
+            return true;
+        }
+        if (event.text.trim().length === 0)
+            return false;
+        this.appendHistory(event.sessionId, {
+            messageId: event.messageId,
+            role: "system",
+            kind: "system",
+            text: event.text,
+            runId: event.runId,
+            createdAt: new Date().toISOString(),
+            complete: false,
+        });
+        return true;
+    }
+    recordMessageCompleted(event) {
+        const existing = this.messageHistory.get(event.sessionId)?.find((message) => message.messageId === event.messageId);
+        if (!existing)
+            return false;
+        existing.complete = true;
+        return true;
+    }
+    recordDiffAvailable(event) {
+        if (event.files.length === 0)
+            return false;
+        this.appendHistory(event.sessionId, {
+            messageId: randomUUID(),
+            role: "system",
+            kind: "files",
+            title: "Files changed",
+            text: event.files.map((file) => `${file.status} ${file.path}`).join("\n"),
+            createdAt: new Date().toISOString(),
+            complete: true,
+        });
+        return true;
+    }
+    appendHistory(sessionId, message) {
+        if (message.kind === "thinking")
+            return;
+        const history = this.messageHistory.get(sessionId) ?? [];
+        const existingIndex = history.findIndex((candidate) => candidate.messageId === message.messageId);
+        if (existingIndex >= 0) {
+            history[existingIndex] = message;
+        }
+        else {
+            history.push(message);
+        }
+        this.messageHistory.set(sessionId, history.slice(-500));
+    }
+    async prepareAttachments(record, attachments) {
+        if (attachments.length === 0)
+            return [];
+        const uploadDir = path.join(record.workdir, ".codex-lan", "uploads", new Date().toISOString().replace(/[:.]/g, "-"));
+        await mkdir(uploadDir, { recursive: true });
+        const prepared = [];
+        for (const [index, attachment] of attachments.entries()) {
+            const safeFileName = safeAttachmentName(attachment.name, index);
+            const targetPath = path.join(uploadDir, safeFileName);
+            const bytes = Buffer.from(attachment.dataBase64, "base64");
+            await writeFile(targetPath, bytes);
+            prepared.push({
+                path: targetPath,
+                name: safeFileName,
+                kind: isImageAttachment(attachment) ? "image" : "file",
+            });
+        }
+        return prepared;
+    }
     async closeAdapter(sessionId) {
         const adapter = this.adapters.get(sessionId);
         if (!adapter)
@@ -241,6 +455,7 @@ export class CodexSessionManager {
         adapter.unsubscribe();
         await adapter.session.close();
         this.adapters.delete(sessionId);
+        await this.pendingPersistence;
     }
     requireSession(sessionId) {
         if (!sessionId)
@@ -251,7 +466,7 @@ export class CodexSessionManager {
         return record;
     }
     workspaceById(workspaceId) {
-        const workspace = this.options.workspaces.find((candidate) => candidate.id === workspaceId) ?? this.options.workspaces[0];
+        const workspace = this.workspaces.find((candidate) => candidate.id === workspaceId) ?? this.workspaces[0];
         if (!workspace)
             throw new Error("No host workspaces are configured.");
         if (workspaceId && workspace.id !== workspaceId)
@@ -276,7 +491,16 @@ export class CodexSessionManager {
         this.emit({ type: "session.updated", session: { ...record } });
     }
     async save() {
-        await this.store.save({ sessions: this.listSessions() });
+        await this.store.save({
+            sessions: this.listSessions(),
+            messages: Object.fromEntries([...this.messageHistory.entries()].map(([sessionId, messages]) => [sessionId, messages.map((message) => ({ ...message }))])),
+            workspaces: this.workspaces.map((workspace) => ({
+                workspaceId: workspace.id,
+                label: workspace.label,
+                path: workspace.path,
+                active: false,
+            })),
+        });
     }
     emit(event) {
         for (const listener of this.listeners) {
@@ -289,4 +513,51 @@ function titleFromPrompt(prompt) {
     if (!compact)
         return "New session";
     return compact.length > 50 ? `${compact.slice(0, 47)}…` : compact;
+}
+function mergeWorkspaces(configured, stored) {
+    const merged = [];
+    const seenPaths = new Set();
+    for (const workspace of configured) {
+        const resolved = path.resolve(workspace.path);
+        if (seenPaths.has(resolved))
+            continue;
+        seenPaths.add(resolved);
+        merged.push({ ...workspace, path: resolved });
+    }
+    for (const workspace of stored) {
+        const resolved = path.resolve(workspace.path);
+        if (seenPaths.has(resolved))
+            continue;
+        seenPaths.add(resolved);
+        merged.push({
+            id: workspace.workspaceId || nextWorkspaceId(merged),
+            label: workspace.label || path.basename(resolved) || resolved,
+            path: resolved,
+        });
+    }
+    return merged;
+}
+function nextWorkspaceId(workspaces) {
+    let index = workspaces.length + 1;
+    const used = new Set(workspaces.map((workspace) => workspace.id));
+    while (used.has(`workspace-${index}`)) {
+        index += 1;
+    }
+    return index === 1 ? "default" : `workspace-${index}`;
+}
+function augmentPromptWithAttachments(prompt, attachments) {
+    if (attachments.length === 0)
+        return prompt;
+    const lines = attachments.map((attachment) => `- ${attachment.kind}: ${attachment.name} at ${attachment.path}`);
+    return `${prompt.trim()}\n\nUploaded files available in the workspace:\n${lines.join("\n")}`;
+}
+function safeAttachmentName(name, index) {
+    const base = path.basename(name).replace(/[^A-Za-z0-9._-]/g, "_").replace(/^_+/, "");
+    return base || `upload-${index + 1}`;
+}
+function isImageAttachment(attachment) {
+    const mimeType = attachment.mimeType?.toLowerCase() ?? "";
+    if (mimeType.startsWith("image/"))
+        return true;
+    return /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(attachment.name);
 }

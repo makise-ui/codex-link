@@ -2,6 +2,11 @@ import { z } from "zod";
 
 const sessionIdSchema = z.string().trim().min(1);
 const runModeSchema = z.enum(["safe", "yolo"]);
+const attachmentSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  mimeType: z.string().trim().min(1).max(120).optional(),
+  dataBase64: z.string().min(1).max(8 * 1024 * 1024),
+});
 
 export const pairingClaimSchema = z.object({
   type: z.literal("pairing.claim"),
@@ -57,10 +62,25 @@ export const workspaceListSchema = z.object({
   type: z.literal("workspace.list"),
 });
 
+export const workspaceAddSchema = z.object({
+  type: z.literal("workspace.add"),
+  path: z.string().trim().min(1).max(4096),
+  sessionId: sessionIdSchema.optional(),
+});
+
 export const workspaceSwitchSchema = z.object({
   type: z.literal("workspace.switch"),
   sessionId: sessionIdSchema,
   workspaceId: z.string().trim().min(1),
+});
+
+export const externalSessionListSchema = z.object({
+  type: z.literal("external.session.list"),
+});
+
+export const externalSessionImportSchema = z.object({
+  type: z.literal("external.session.import"),
+  externalSessionId: z.string().trim().min(1).max(128),
 });
 
 export const commandListSchema = z.object({
@@ -77,6 +97,7 @@ export const promptSendSchema = z.object({
   type: z.literal("prompt.send"),
   sessionId: sessionIdSchema,
   prompt: z.string().min(1).max(64 * 1024),
+  attachments: z.array(attachmentSchema).max(4).optional(),
 });
 
 export const runCancelSchema = z.object({
@@ -108,7 +129,10 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   sessionDeleteSchema,
   sessionModeSetSchema,
   workspaceListSchema,
+  workspaceAddSchema,
   workspaceSwitchSchema,
+  externalSessionListSchema,
+  externalSessionImportSchema,
   commandListSchema,
   commandRunSchema,
   promptSendSchema,

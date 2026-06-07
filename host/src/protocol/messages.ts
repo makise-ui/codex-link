@@ -2,6 +2,7 @@ export const PROTOCOL_VERSION = 2;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
 export type MessageKind = "thinking" | "executing" | "response" | "system";
+export type StoredMessageKind = MessageKind | "files" | "error";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type RunMode = "safe" | "yolo";
 
@@ -16,7 +17,10 @@ export type ClientMessage =
   | SessionDeleteMessage
   | SessionModeSetMessage
   | WorkspaceListRequestMessage
+  | WorkspaceAddMessage
   | WorkspaceSwitchMessage
+  | ExternalSessionListRequestMessage
+  | ExternalSessionImportMessage
   | CommandListRequestMessage
   | CommandRunMessage
   | PromptSendMessage
@@ -78,10 +82,25 @@ export type WorkspaceListRequestMessage = {
   type: "workspace.list";
 };
 
+export type WorkspaceAddMessage = {
+  type: "workspace.add";
+  path: string;
+  sessionId?: string;
+};
+
 export type WorkspaceSwitchMessage = {
   type: "workspace.switch";
   sessionId: string;
   workspaceId: string;
+};
+
+export type ExternalSessionListRequestMessage = {
+  type: "external.session.list";
+};
+
+export type ExternalSessionImportMessage = {
+  type: "external.session.import";
+  externalSessionId: string;
 };
 
 export type CommandListRequestMessage = {
@@ -98,6 +117,13 @@ export type PromptSendMessage = {
   type: "prompt.send";
   sessionId: string;
   prompt: string;
+  attachments?: PromptAttachment[];
+};
+
+export type PromptAttachment = {
+  name: string;
+  mimeType?: string;
+  dataBase64: string;
 };
 
 export type RunCancelMessage = {
@@ -125,8 +151,10 @@ export type ServerMessage =
   | SessionListMessage
   | SessionUpdatedMessage
   | SessionDeletedMessage
+  | MessageHistoryMessage
   | WorkspaceListMessage
   | WorkspaceUpdatedMessage
+  | ExternalSessionListMessage
   | CommandListMessage
   | RunStartedMessage
   | OutputDeltaMessage
@@ -154,11 +182,32 @@ export type SessionRecord = {
   sandbox: SandboxMode;
 };
 
+export type StoredChatMessage = {
+  messageId: string;
+  role: "user" | "assistant" | "system";
+  kind: StoredMessageKind;
+  text: string;
+  createdAt: string;
+  title?: string;
+  runId?: string;
+  complete: boolean;
+};
+
 export type WorkspaceRecord = {
   workspaceId: string;
   label: string;
   path: string;
   active: boolean;
+};
+
+export type ExternalSessionRecord = {
+  externalSessionId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  workdir: string;
+  codexThreadId: string;
+  path: string;
 };
 
 export type CommandRecord = {
@@ -205,6 +254,12 @@ export type SessionDeletedMessage = {
   sessionId: string;
 };
 
+export type MessageHistoryMessage = {
+  type: "message.history";
+  sessionId: string;
+  messages: StoredChatMessage[];
+};
+
 export type WorkspaceListMessage = {
   type: "workspace.list";
   workspaces: WorkspaceRecord[];
@@ -214,6 +269,11 @@ export type WorkspaceUpdatedMessage = {
   type: "workspace.updated";
   sessionId: string;
   workspace: WorkspaceRecord;
+};
+
+export type ExternalSessionListMessage = {
+  type: "external.session.list";
+  sessions: ExternalSessionRecord[];
 };
 
 export type CommandListMessage = {

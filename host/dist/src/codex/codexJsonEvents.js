@@ -44,19 +44,23 @@ function mapStartedItem(event) {
     if (action.messageKind !== "executing") {
         return { kind: "ignored" };
     }
+    const fileChangeText = itemType === "file_change" ? formatFileChanges(item) : undefined;
     return {
         kind: "message_started",
         messageKind: action.messageKind,
         title: action.title,
-        text: extractActionText(item) ?? action.fallbackText,
+        text: fileChangeText ?? extractActionText(item) ?? action.fallbackText,
         itemId: readString(item, "id") ?? readString(event, "item_id"),
     };
 }
 function mapCompletedItem(event) {
     const item = readObject(event, "item") ?? event;
     const itemType = readString(item, "type") ?? readString(event, "item_type") ?? "system";
-    const text = extractText(item) ?? extractText(event);
     const itemId = readString(item, "id") ?? readString(event, "item_id");
+    if (itemType === "file_change" && itemId) {
+        return { kind: "message_completed", itemId };
+    }
+    const text = extractText(item) ?? extractText(event);
     if (!text || text.trim().length === 0) {
         return itemId ? { kind: "message_completed", itemId } : { kind: "ignored" };
     }
@@ -70,13 +74,58 @@ function mapCompletedItem(event) {
     return { kind: "message", messageKind: "system", title: readableTitle(itemType), text, itemId };
 }
 function extractText(value) {
-    for (const key of ["text", "message", "content", "output", "summary", "result"]) {
+    for (const key of ["text", "message", "content", "aggregated_output", "output", "summary", "result"]) {
         const direct = value[key];
         const text = stringifyContent(direct);
         if (text)
             return text;
     }
     return undefined;
+}
+function formatFileChanges(value) {
+    const changes = value.changes;
+    if (!Array.isArray(changes))
+        return undefined;
+    const lines = changes.flatMap((change) => {
+        if (!change || typeof change !== "object" || Array.isArray(change))
+            return [];
+        const record = change;
+        const rawPath = readString(record, "path") ?? readString(record, "file") ?? readString(record, "filename");
+        if (!rawPath)
+            return [];
+        const status = normalizeFileChangeKind(readString(record, "kind") ?? readString(record, "status"));
+        return [`${status} ${shortPath(rawPath)}`];
+    });
+    return lines.length > 0 ? lines.join("\n") : undefined;
+}
+function normalizeFileChangeKind(kind) {
+    switch (kind) {
+        case "add":
+        case "added":
+        case "create":
+        case "created":
+            return "added";
+        case "delete":
+        case "deleted":
+        case "remove":
+        case "removed":
+            return "deleted";
+        case "rename":
+        case "renamed":
+            return "renamed";
+        default:
+            return "modified";
+    }
+}
+function shortPath(value) {
+    const normalized = value.replace(/\\/g, "/");
+    const marker = normalized.match(/(?:^|\/)(?:lib|src|test|host|flutter|shared|notes\.txt)(?:\/|$)/);
+    if (!marker?.index) {
+        const parts = normalized.split("/").filter(Boolean);
+        return parts.slice(-2).join("/") || normalized;
+    }
+    const start = marker[0].startsWith("/") ? marker.index + 1 : marker.index;
+    return normalized.slice(start);
 }
 function extractActionText(value) {
     for (const key of ["command", "cmd", "path", "file", "filename", "name", "input", "arguments", "args"]) {
@@ -137,6 +186,9 @@ function readableTitle(value) {
 }
 function classifyItem(itemType, item) {
     const haystack = `${itemType} ${readString(item, "name") ?? ""} ${readString(item, "tool_name") ?? ""}`.toLowerCase();
+    if (itemType === "file_change") {
+        return { messageKind: "executing", title: "Editing files", fallbackText: "Applying file changes..." };
+    }
     if (haystack.includes("read") || haystack.includes("open") || haystack.includes("cat")) {
         return { messageKind: "executing", title: "Reading file", fallbackText: "Reading file..." };
     }

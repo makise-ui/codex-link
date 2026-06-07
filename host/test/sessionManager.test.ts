@@ -1,7 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexSessionManager } from "../src/codex/sessionManager.js";
 
 const tempDirs: string[] = [];
@@ -70,10 +70,69 @@ describe("CodexSessionManager", () => {
     expect(updated.sandbox).toBe("danger-full-access");
     await manager.close();
   });
+
+  it("adds a host workspace path and persists it", async () => {
+    const stateDir = await tempStateDir();
+    const extraWorkspace = await tempStateDir();
+    const manager = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+    });
+    const [session] = manager.listSessions();
+
+    const workspace = await manager.addWorkspace(extraWorkspace, session.sessionId);
+
+    expect(workspace.path).toBe(extraWorkspace);
+    expect(manager.getWorkspaces(session.sessionId).some((item) => item.path === extraWorkspace && item.active)).toBe(true);
+
+    await manager.close();
+    const restored = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+    });
+
+    expect(restored.getWorkspaces().some((item) => item.path === extraWorkspace)).toBe(true);
+    await restored.close();
+  });
+
+  it("stores user prompts and streamed agent messages as replayable history", async () => {
+    vi.useFakeTimers();
+    const stateDir = await tempStateDir();
+    const workspace = await tempStateDir();
+    const manager = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [{ id: "default", label: "repo", path: workspace }],
+    });
+    const [session] = manager.listSessions();
+
+    await manager.sendPrompt(session.sessionId, "hello history");
+    await vi.advanceTimersByTimeAsync(2_000);
+    await manager.close();
+
+    const history = manager.getSessionHistory(session.sessionId);
+    expect(history.some((message) => message.role === "user" && message.text === "hello history")).toBe(true);
+    expect(history.some((message) => message.kind === "executing" && message.text.includes("Checking the LAN bridge"))).toBe(true);
+    expect(history.every((message) => message.kind !== "thinking")).toBe(true);
+
+    vi.useRealTimers();
+  });
 });
 
 async function tempStateDir(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "codex-lan-host-"));
+  await mkdir(dir, { recursive: true });
   tempDirs.push(dir);
   return dir;
 }

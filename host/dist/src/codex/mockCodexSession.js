@@ -10,7 +10,7 @@ export class MockCodexSession {
         this.emit({ type: "session.started", sessionId: this.sessionId });
         this.emit({ type: "status", status: "connected", sessionId: this.sessionId });
     }
-    async sendPrompt(prompt) {
+    async sendPrompt(prompt, options = {}) {
         if (this.activeRun) {
             throw new Error("A run is already active; cancel or wait for it to finish.");
         }
@@ -36,6 +36,7 @@ export class MockCodexSession {
                 "Connected to the local Codex LAN bridge.",
                 "",
                 `Prompt received: ${prompt.trim()}`,
+                ifAttachments(options.attachments),
                 "",
                 "```ts",
                 "const mode = 'mock-ui-verification';",
@@ -91,4 +92,9 @@ export class MockCodexSession {
             listener(event);
         }
     }
+}
+function ifAttachments(attachments) {
+    if (!attachments || attachments.length === 0)
+        return "";
+    return `Attachments: ${attachments.map((attachment) => `${attachment.kind}:${attachment.name}`).join(", ")}`;
 }

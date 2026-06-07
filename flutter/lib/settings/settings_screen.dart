@@ -62,21 +62,9 @@ class SettingsScreen extends StatelessWidget {
               _Section(
                 title: 'Workspace',
                 children: [
+                  _AddWorkspaceRow(controller: controller),
                   for (final workspace in controller.workspaces)
                     _WorkspaceRow(controller: controller, workspace: workspace),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                title: 'Session mode',
-                children: [
-                  SwitchListTile(
-                    value: controller.activeSession?.mode == RunMode.yolo,
-                    onChanged: controller.isRunning ? null : controller.setYolo,
-                    secondary: const Icon(Icons.bolt_rounded),
-                    title: const Text('YOLO mode'),
-                    subtitle: const Text('Danger full access for this session'),
-                  ),
                 ],
               ),
               const SizedBox(height: AppSpacing.lg),
@@ -99,11 +87,93 @@ class SettingsScreen extends StatelessWidget {
                     ),
                 ],
               ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                title: 'External Codex sessions',
+                children: [
+                  if (controller.externalSessions.isEmpty)
+                    const ListTile(
+                      leading: Icon(Icons.history_toggle_off_rounded),
+                      title: Text('No external sessions found'),
+                      subtitle: Text(
+                        'Run Codex CLI once to create ~/.codex sessions',
+                      ),
+                    )
+                  else
+                    for (final session in controller.externalSessions.take(40))
+                      _ExternalSessionRow(
+                        session: session,
+                        onImport: () {
+                          controller.importExternalSession(session);
+                          Navigator.maybePop(context);
+                        },
+                      ),
+                ],
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+}
+
+class _AddWorkspaceRow extends StatefulWidget {
+  const _AddWorkspaceRow({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_AddWorkspaceRow> createState() => _AddWorkspaceRowState();
+}
+
+class _AddWorkspaceRowState extends State<_AddWorkspaceRow> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              enabled: !widget.controller.isRunning,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.create_new_folder_rounded),
+                hintText: '/home/kurisu/project',
+                labelText: 'Add host folder',
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          IconButton.filledTonal(
+            tooltip: 'Add workspace',
+            onPressed: widget.controller.isRunning ? null : _submit,
+            icon: const Icon(Icons.add_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _submit() {
+    widget.controller.addWorkspacePath(_controller.text);
+    _controller.clear();
   }
 }
 
@@ -237,6 +307,30 @@ class _WorkspaceSessionGroup extends StatelessWidget {
               onTap: () => onPick(session),
             ),
       ],
+    );
+  }
+}
+
+class _ExternalSessionRow extends StatelessWidget {
+  const _ExternalSessionRow({required this.session, required this.onImport});
+
+  final ExternalSessionInfo session;
+  final VoidCallback onImport;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      leading: const Icon(Icons.history_rounded),
+      title: Text(session.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        session.workdir,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontFamily: 'monospace'),
+      ),
+      trailing: const Icon(Icons.call_made_rounded, size: 17),
+      onTap: onImport,
     );
   }
 }
