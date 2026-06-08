@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionRecord, StoredChatMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
-import type { CodexEvent, CodexSession, PreparedAttachment, SendPromptResult } from "./codexSession.js";
-import { CliCodexSession } from "./cliCodexSession.js";
+import type { AppFileSearchResultsMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppModelListMessage, AppModelRecord, AppProviderCapabilitiesRecord, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, StoredChatMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptResult } from "./codexSession.js";
+import { AppServerCodexSession } from "./appServerCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
 import { FileTransferManager, mimeTypeFor } from "./fileTransferManager.js";
 import { MockCodexSession } from "./mockCodexSession.js";
@@ -65,6 +65,143 @@ export class CodexSessionManager {
 
   async listExternalSessions(): Promise<ExternalSessionRecord[]> {
     return listExternalSessions();
+  }
+
+  async listAppModels(sessionId?: string, includeHidden = false): Promise<AppModelListMessage> {
+    const adapter = this.optionalAdapter(sessionId);
+    if (adapter?.listModels) {
+      const result = await adapter.listModels(includeHidden);
+      return { type: "app.model.list", ...result };
+    }
+    return {
+      type: "app.model.list",
+      models: DEFAULT_APP_MODELS.filter((model) => includeHidden || !model.hidden),
+      capabilities: DEFAULT_APP_CAPABILITIES,
+    };
+  }
+
+  async listAppThreads(sessionId?: string, input: { query?: string; cwd?: string; limit?: number } = {}): Promise<AppThreadListMessage> {
+    const adapter = this.optionalAdapter(sessionId);
+    if (adapter?.listThreads) {
+      return { type: "app.thread.list", threads: await adapter.listThreads(input) };
+    }
+    const query = input.query?.trim().toLowerCase() ?? "";
+    const limit = Math.min(Math.max(Math.trunc(input.limit ?? 40), 1), 80);
+    const sessions = await this.listExternalSessions();
+    const threads = sessions
+      .filter((session) => !query || `${session.title} ${session.workdir}`.toLowerCase().includes(query))
+      .slice(0, limit)
+      .map(appThreadFromExternalSession);
+    return { type: "app.thread.list", threads };
+  }
+
+  async importAppThread(threadId: string): Promise<SessionRecord> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.readThread) {
+      throw new Error("The active Codex adapter does not support native app-server thread import.");
+    }
+    const thread = await adapter.readThread(threadId, true);
+    const workspace = await this.addWorkspace(thread.workdir);
+    const now = new Date().toISOString();
+    const record: SessionRecord = {
+      sessionId: randomUUID(),
+      codexThreadId: thread.threadId,
+      title: thread.title || "Imported app-server session",
+      createdAt: now,
+      updatedAt: now,
+      workspaceId: workspace.workspaceId,
+      workdir: workspace.path,
+      lastStatus: "idle",
+      mode: this.defaultMode(),
+      sandbox: this.sandboxForMode(this.defaultMode()),
+    };
+    this.sessions.set(record.sessionId, record);
+    this.messageHistory.set(record.sessionId, thread.messages.length > 0 ? thread.messages : [
+      {
+        messageId: randomUUID(),
+        role: "system",
+        kind: "system",
+        title: "Imported app-server session",
+        text: `Imported native thread: ${thread.threadId}`,
+        createdAt: now,
+        complete: true,
+      },
+    ]);
+    this.activeSessionId = record.sessionId;
+    await this.saveAndEmit(record);
+    return record;
+  }
+
+  async listAppSkills(sessionId: string | undefined, forceReload = false): Promise<AppSkillListMessage> {
+    const record = this.requireSession(sessionId ?? this.activeSessionId);
+    const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    if (adapter.listSkills) {
+      const result = await adapter.listSkills({ cwds: [record.workdir], forceReload });
+      return { type: "app.skill.list", groups: result.groups };
+    }
+    return { type: "app.skill.list", groups: [{ cwd: record.workdir, skills: [], errors: [] }] };
+  }
+
+  async listAppDirectory(sessionId: string, requestedPath = ""): Promise<AppFsListMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const absolutePath = this.resolveWorkspacePath(record, requestedPath || ".");
+    const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    const entries = adapter.listDirectory
+      ? await adapter.listDirectory(absolutePath)
+      : await this.listDirectoryFallback(record, absolutePath);
+    return {
+      type: "app.fs.list",
+      sessionId: record.sessionId,
+      path: toPosixPath(path.relative(record.workdir, absolutePath)),
+      entries,
+    };
+  }
+
+  async readAppFile(sessionId: string, requestedPath: string): Promise<AppFsFileMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const absolutePath = this.resolveWorkspacePath(record, requestedPath);
+    const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    const file = adapter.readFile
+      ? await adapter.readFile(absolutePath)
+      : await this.readFileFallback(record, absolutePath);
+    return { type: "app.fs.file", sessionId: record.sessionId, file };
+  }
+
+  async searchAppFiles(sessionId: string, query: string, limit = 40): Promise<AppFileSearchResultsMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    const normalizedQuery = normalizeFileQuery(query);
+    const files = adapter.searchFiles
+      ? await adapter.searchFiles({ query: normalizedQuery, roots: [record.workdir], limit })
+      : (await this.searchWorkspaceFiles(sessionId, normalizedQuery, limit)).files;
+    return {
+      type: "app.file.search.results",
+      sessionId: record.sessionId,
+      query: normalizedQuery,
+      files,
+    };
+  }
+
+  async startReview(sessionId: string, input: { target?: "uncommittedChanges" | "custom"; instructions?: string; delivery?: "inline" | "detached" }): Promise<AppReviewStartedMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    if (adapter.startReview) {
+      const target = input.target === "custom"
+        ? { type: "custom" as const, instructions: input.instructions?.trim() || "Review the current workspace." }
+        : { type: "uncommittedChanges" as const };
+      const result = await adapter.startReview({ target, delivery: input.delivery });
+      return { type: "app.review.started", sessionId: record.sessionId, ...result };
+    }
+    return {
+      type: "app.review.started",
+      sessionId: record.sessionId,
+      runId: `mock-review-${Date.now()}`,
+      reviewThreadId: record.codexThreadId ?? record.sessionId,
+    };
   }
 
   getWorkspaces(activeSessionId = this.activeSessionId): WorkspaceRecord[] {
@@ -316,6 +453,55 @@ export class CodexSessionManager {
     await adapter.cancel(runId);
   }
 
+  async setGoal(sessionId: string, input: GoalSetInput): Promise<SessionGoalRecord> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const adapter = this.adapterFor(record);
+    if (!adapter.setGoal) {
+      throw new Error("The active Codex adapter does not support goals.");
+    }
+    const goal = await adapter.setGoal(input);
+    record.goal = goal;
+    record.updatedAt = new Date().toISOString();
+    await this.saveAndEmit(record);
+    return goal;
+  }
+
+  async getGoal(sessionId: string): Promise<SessionGoalRecord | null> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const adapter = this.adapters.get(sessionId)?.session ?? this.adapterFor(record);
+    const goal = adapter.getGoal ? await adapter.getGoal() : record.goal ?? null;
+    if (goal) {
+      record.goal = goal;
+      record.updatedAt = new Date().toISOString();
+      await this.saveAndEmit(record);
+    }
+    return goal;
+  }
+
+  async clearGoal(sessionId: string): Promise<boolean> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const adapter = this.adapters.get(sessionId)?.session ?? this.adapterFor(record);
+    const hadPersistedGoal = record.goal !== undefined;
+    const cleared = adapter.clearGoal ? await adapter.clearGoal() || hadPersistedGoal : hadPersistedGoal;
+    record.goal = undefined;
+    record.updatedAt = new Date().toISOString();
+    await this.saveAndEmit(record);
+    return cleared;
+  }
+
+  async decideApproval(sessionId: string, approvalId: string, decision: "approve" | "reject"): Promise<void> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const adapter = this.adapters.get(sessionId)?.session ?? this.adapterFor(record);
+    if (!adapter.decideApproval) {
+      throw new Error("The active Codex adapter does not support approval decisions.");
+    }
+    await adapter.decideApproval(approvalId, decision);
+  }
+
   async downloadFile(fileId: string): Promise<FileDownloadMessage> {
     return this.fileTransfers.download(fileId);
   }
@@ -405,7 +591,7 @@ export class CodexSessionManager {
 
     const session = this.options.sessionMode === "mock"
       ? new MockCodexSession({ sessionId: record.sessionId })
-      : new CliCodexSession({
+      : new AppServerCodexSession({
           sessionId: record.sessionId,
           command: this.options.codexCommand,
           workdir: record.workdir,
@@ -451,6 +637,14 @@ export class CodexSessionManager {
     if (event.type === "diff.available") {
       historyChanged = this.recordDiffAvailable(event) || historyChanged;
       await this.emitFileOffersForDiff(record, event);
+    }
+    if (event.type === "session.goal.updated") {
+      record.goal = event.goal;
+      changed = true;
+    }
+    if (event.type === "session.goal.cleared") {
+      record.goal = undefined;
+      changed = true;
     }
     if (event.type === "run.started") {
       record.activeRunId = event.runId;
@@ -596,6 +790,59 @@ export class CodexSessionManager {
     return prepared;
   }
 
+  private optionalAdapter(sessionId?: string): CodexSession | undefined {
+    const record = sessionId
+      ? this.requireSession(sessionId)
+      : this.activeSessionId
+        ? this.sessions.get(this.activeSessionId)
+        : this.listSessions()[0];
+    if (!record) return undefined;
+    this.activeSessionId = record.sessionId;
+    return this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+  }
+
+  private resolveWorkspacePath(record: SessionRecord, requestedPath: string): string {
+    const root = path.resolve(record.workdir);
+    const target = path.resolve(root, requestedPath || ".");
+    if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`Path is outside the active workspace: ${requestedPath}`);
+    }
+    return target;
+  }
+
+  private async listDirectoryFallback(record: SessionRecord, absolutePath: string): Promise<AppFsEntryRecord[]> {
+    const entries = await readdir(absolutePath, { withFileTypes: true });
+    const output: AppFsEntryRecord[] = [];
+    for (const entry of entries.sort((left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name))) {
+      if (entry.isSymbolicLink()) continue;
+      const fullPath = path.join(absolutePath, entry.name);
+      const stats = await stat(fullPath).catch(() => undefined);
+      output.push({
+        path: toPosixPath(path.relative(record.workdir, fullPath)),
+        name: entry.name,
+        isDirectory: entry.isDirectory(),
+        isFile: entry.isFile(),
+        sizeBytes: stats?.isFile() ? stats.size : undefined,
+        mimeType: entry.isFile() ? mimeTypeFor(entry.name) : undefined,
+      });
+    }
+    return output;
+  }
+
+  private async readFileFallback(record: SessionRecord, absolutePath: string): Promise<AppFsFileMessage["file"]> {
+    const bytes = await readFile(absolutePath);
+    const relativePath = toPosixPath(path.relative(record.workdir, absolutePath));
+    const mimeType = mimeTypeFor(relativePath);
+    return {
+      path: relativePath,
+      name: path.basename(absolutePath),
+      sizeBytes: bytes.byteLength,
+      mimeType,
+      text: isLikelyTextFile(bytes, relativePath) ? bytes.toString("utf8") : undefined,
+      dataBase64: isLikelyTextFile(bytes, relativePath) ? undefined : bytes.toString("base64"),
+    };
+  }
+
   private async closeAdapter(sessionId: string): Promise<void> {
     const adapter = this.adapters.get(sessionId);
     if (!adapter) return;
@@ -715,6 +962,60 @@ function isImageAttachment(attachment: PromptAttachment): boolean {
 
 function isThinkingNoise(text: string): boolean {
   return text.trim().replace(/\.+$/, "").replace(/…$/, "").toLowerCase() === "thinking";
+}
+
+const DEFAULT_APP_CAPABILITIES: AppProviderCapabilitiesRecord = {
+  namespaceTools: true,
+  imageGeneration: true,
+  webSearch: true,
+};
+
+const DEFAULT_APP_MODELS: AppModelRecord[] = [
+  {
+    id: "gpt-5.5",
+    model: "gpt-5.5",
+    displayName: "GPT-5.5",
+    description: "Default Codex app-server model.",
+    hidden: false,
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+    defaultReasoningEffort: "medium",
+    inputModalities: ["text", "image"],
+    supportsPersonality: true,
+    isDefault: true,
+  },
+  {
+    id: "gpt-5.4-mini",
+    model: "gpt-5.4-mini",
+    displayName: "GPT-5.4 Mini",
+    description: "Fast model for smaller tasks.",
+    hidden: false,
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+    defaultReasoningEffort: "medium",
+    inputModalities: ["text", "image"],
+    supportsPersonality: true,
+    isDefault: false,
+  },
+];
+
+function appThreadFromExternalSession(session: ExternalSessionRecord): AppThreadRecord {
+  return {
+    threadId: session.codexThreadId,
+    codexSessionId: session.externalSessionId,
+    title: session.title,
+    preview: session.title,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    workdir: session.workdir,
+    path: session.path,
+    source: "cli",
+  };
+}
+
+function isLikelyTextFile(bytes: Buffer, filePath: string): boolean {
+  const mimeType = mimeTypeFor(filePath) ?? "";
+  if (mimeType.startsWith("text/") || /json|xml|yaml|javascript|typescript|dart|markdown/.test(mimeType)) return true;
+  if (bytes.includes(0)) return false;
+  return bytes.byteLength < 512 * 1024;
 }
 
 const SKIPPED_WORKSPACE_DIRS = new Set([

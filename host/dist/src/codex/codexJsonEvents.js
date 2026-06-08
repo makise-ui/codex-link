@@ -86,6 +86,12 @@ function formatActionStartText(value, action) {
     const command = extractActionText(value);
     if (!command)
         return undefined;
+    if (action.title === "Using skill") {
+        const skill = skillUsageFromCommand(command);
+        return skill
+            ? [`Using skill: ${skill.name}`, `Path: ${skill.path}`, `Command: ${command}`].join("\n")
+            : command;
+    }
     if (action.title !== "Reading file")
         return command;
     const metadata = readCommandMetadata(command);
@@ -222,6 +228,9 @@ function classifyItem(itemType, item) {
     if (itemType === "file_change") {
         return { messageKind: "executing", title: "Editing files", fallbackText: "Applying file changes..." };
     }
+    if (skillUsageFromCommand(actionText)) {
+        return { messageKind: "executing", title: "Using skill", fallbackText: "Using skill..." };
+    }
     if (isReadCommand(actionText)) {
         return { messageKind: "executing", title: "Reading file", fallbackText: "Reading file..." };
     }
@@ -273,6 +282,33 @@ function readCommandMetadata(command) {
         }
     }
     return undefined;
+}
+function skillUsageFromCommand(command) {
+    const metadata = readCommandMetadata(command);
+    if (metadata) {
+        const skill = skillUsageFromPath(metadata.filePath);
+        if (skill)
+            return skill;
+    }
+    const payload = shellPayload(command);
+    const match = payload.match(/(?:^|\s|["'])([^"'\s]*\/skills?\.md)(?=$|\s|["'])/i);
+    return match?.[1] ? skillUsageFromPath(stripShellQuotes(match[1])) : undefined;
+}
+function skillUsageFromPath(filePath) {
+    const normalized = stripShellQuotes(filePath).replace(/\\/g, "/");
+    const parts = normalized.split("/").filter(Boolean);
+    const filename = parts.at(-1)?.toLowerCase();
+    if (filename !== "skill.md" && filename !== "skills.md")
+        return undefined;
+    if (parts.length < 2)
+        return undefined;
+    let name = parts[parts.length - 2];
+    if (!name || name.toLowerCase() === "skills") {
+        name = parts[parts.length - 3] ?? "";
+    }
+    if (!name || name.startsWith("."))
+        return undefined;
+    return { name, path: normalized };
 }
 function shellPayload(command) {
     const trimmed = command.trim();

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { CodexEvent, CodexSession, SendPromptOptions, SendPromptResult } from "./codexSession.js";
+import type { SessionGoalRecord } from "../protocol/messages.js";
+import type { CodexEvent, CodexSession, GoalSetInput, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 
 type Listener = (event: CodexEvent) => void;
 
@@ -18,6 +19,7 @@ export class MockCodexSession implements CodexSession {
   readonly sessionId: string;
   private readonly listeners = new Set<Listener>();
   private activeRun: ActiveRun | null = null;
+  private goal: SessionGoalRecord | null = null;
 
   constructor(options: MockCodexSessionOptions = {}) {
     this.sessionId = options.sessionId ?? "default";
@@ -102,6 +104,33 @@ export class MockCodexSession implements CodexSession {
     this.emit({ type: "status", status: "cancelled", sessionId: this.sessionId, runId });
     this.emit({ type: "run.completed", sessionId: this.sessionId, runId });
     this.activeRun = null;
+  }
+
+  async setGoal(input: GoalSetInput): Promise<SessionGoalRecord> {
+    const now = Date.now();
+    this.goal = {
+      threadId: this.sessionId,
+      objective: input.objective ?? this.goal?.objective ?? "",
+      status: input.status ?? this.goal?.status ?? "active",
+      tokenBudget: Object.prototype.hasOwnProperty.call(input, "tokenBudget") ? input.tokenBudget ?? null : this.goal?.tokenBudget ?? null,
+      tokensUsed: this.goal?.tokensUsed ?? 0,
+      timeUsedSeconds: this.goal?.timeUsedSeconds ?? 0,
+      createdAt: this.goal?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.emit({ type: "session.goal.updated", sessionId: this.sessionId, goal: this.goal });
+    return this.goal;
+  }
+
+  async getGoal(): Promise<SessionGoalRecord | null> {
+    return this.goal;
+  }
+
+  async clearGoal(): Promise<boolean> {
+    const cleared = this.goal !== null;
+    this.goal = null;
+    this.emit({ type: "session.goal.cleared", sessionId: this.sessionId });
+    return cleared;
   }
 
   onEvent(listener: Listener): () => void {

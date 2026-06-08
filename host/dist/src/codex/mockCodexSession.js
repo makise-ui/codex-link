@@ -3,6 +3,7 @@ export class MockCodexSession {
     sessionId;
     listeners = new Set();
     activeRun = null;
+    goal = null;
     constructor(options = {}) {
         this.sessionId = options.sessionId ?? "default";
     }
@@ -66,6 +67,30 @@ export class MockCodexSession {
         this.emit({ type: "status", status: "cancelled", sessionId: this.sessionId, runId });
         this.emit({ type: "run.completed", sessionId: this.sessionId, runId });
         this.activeRun = null;
+    }
+    async setGoal(input) {
+        const now = Date.now();
+        this.goal = {
+            threadId: this.sessionId,
+            objective: input.objective ?? this.goal?.objective ?? "",
+            status: input.status ?? this.goal?.status ?? "active",
+            tokenBudget: Object.prototype.hasOwnProperty.call(input, "tokenBudget") ? input.tokenBudget ?? null : this.goal?.tokenBudget ?? null,
+            tokensUsed: this.goal?.tokensUsed ?? 0,
+            timeUsedSeconds: this.goal?.timeUsedSeconds ?? 0,
+            createdAt: this.goal?.createdAt ?? now,
+            updatedAt: now,
+        };
+        this.emit({ type: "session.goal.updated", sessionId: this.sessionId, goal: this.goal });
+        return this.goal;
+    }
+    async getGoal() {
+        return this.goal;
+    }
+    async clearGoal() {
+        const cleared = this.goal !== null;
+        this.goal = null;
+        this.emit({ type: "session.goal.cleared", sessionId: this.sessionId });
+        return cleared;
     }
     onEvent(listener) {
         this.listeners.add(listener);

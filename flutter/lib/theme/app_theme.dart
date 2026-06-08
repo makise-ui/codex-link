@@ -52,9 +52,31 @@ class AppOpacity {
   static const glow = 0.22;
 }
 
-ThemeData buildCodexTheme() {
+const accentColorOptions = <String, Color>{
+  'neutral': CodexColors.muted,
+  'blue': CodexColors.blue,
+  'green': CodexColors.greenSoft,
+  'violet': Color(0xFF9B8CFF),
+  'amber': CodexColors.amber,
+};
+
+Color accentColorForName(String name) {
+  return accentColorOptions[name] ?? accentColorOptions['neutral']!;
+}
+
+String accentLabelForName(String name) {
+  return switch (name) {
+    'blue' => 'Blue',
+    'green' => 'Green',
+    'violet' => 'Violet',
+    'amber' => 'Amber',
+    _ => 'Neutral',
+  };
+}
+
+ThemeData buildCodexTheme({Color accentColor = CodexColors.muted}) {
   final scheme = ColorScheme.fromSeed(
-    seedColor: CodexColors.green,
+    seedColor: accentColor,
     brightness: Brightness.dark,
     surface: CodexColors.ink,
   );
@@ -64,7 +86,7 @@ ThemeData buildCodexTheme() {
     brightness: Brightness.dark,
     colorScheme: scheme.copyWith(
       primary: CodexColors.text,
-      secondary: CodexColors.green,
+      secondary: accentColor,
       surface: CodexColors.ink,
       error: CodexColors.danger,
     ),

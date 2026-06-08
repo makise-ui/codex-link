@@ -172,6 +172,31 @@ export async function startBridgeServer(options) {
                 sendSessionList(ws);
                 return;
             }
+            case "session.goal.set": {
+                await options.sessionManager.setGoal(message.sessionId, {
+                    objective: message.objective,
+                    status: message.status,
+                    tokenBudget: message.tokenBudget,
+                });
+                sendSessionList(ws);
+                return;
+            }
+            case "session.goal.get": {
+                const goal = await options.sessionManager.getGoal(message.sessionId);
+                if (goal) {
+                    send(ws, { type: "session.goal.updated", sessionId: message.sessionId, goal });
+                }
+                else {
+                    send(ws, { type: "session.goal.cleared", sessionId: message.sessionId });
+                }
+                sendSessionList(ws);
+                return;
+            }
+            case "session.goal.clear": {
+                await options.sessionManager.clearGoal(message.sessionId);
+                sendSessionList(ws);
+                return;
+            }
             case "workspace.list": {
                 sendWorkspaceList(ws);
                 return;
@@ -204,6 +229,49 @@ export async function startBridgeServer(options) {
                 sendSessionHistory(ws, record.sessionId);
                 return;
             }
+            case "app.model.list": {
+                send(ws, await options.sessionManager.listAppModels(message.sessionId, message.includeHidden));
+                return;
+            }
+            case "app.thread.list": {
+                send(ws, await options.sessionManager.listAppThreads(message.sessionId, {
+                    query: message.query,
+                    cwd: message.cwd,
+                    limit: message.limit,
+                }));
+                return;
+            }
+            case "app.thread.import": {
+                const record = await options.sessionManager.importAppThread(message.threadId);
+                sendSessionList(ws);
+                sendWorkspaceList(ws, record.sessionId);
+                sendSessionHistory(ws, record.sessionId);
+                return;
+            }
+            case "app.skill.list": {
+                send(ws, await options.sessionManager.listAppSkills(message.sessionId, message.forceReload));
+                return;
+            }
+            case "app.fs.list": {
+                send(ws, await options.sessionManager.listAppDirectory(message.sessionId, message.path));
+                return;
+            }
+            case "app.fs.read": {
+                send(ws, await options.sessionManager.readAppFile(message.sessionId, message.path));
+                return;
+            }
+            case "app.file.search": {
+                send(ws, await options.sessionManager.searchAppFiles(message.sessionId, message.query, message.limit));
+                return;
+            }
+            case "app.review.start": {
+                send(ws, await options.sessionManager.startReview(message.sessionId, {
+                    target: message.target,
+                    instructions: message.instructions,
+                    delivery: message.delivery,
+                }));
+                return;
+            }
             case "command.list": {
                 sendCommandList(ws);
                 return;
@@ -231,7 +299,8 @@ export async function startBridgeServer(options) {
                 return;
             }
             case "approval.decision": {
-                send(ws, { type: "error", code: "approval.not_implemented", message: "Approval forwarding is reserved for a later Codex adapter milestone." });
+                await options.sessionManager.decideApproval(message.sessionId, message.approvalId, message.decision);
+                options.auditLog.record({ type: "approval.decided", deviceId: state.device?.id, sessionId: message.sessionId, detail: `${message.approvalId}:${message.decision}` });
                 return;
             }
             case "pairing.claim":

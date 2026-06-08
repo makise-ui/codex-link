@@ -21,6 +21,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final controller = context.read<AppController>();
       controller.refreshWorkspaces();
       controller.refreshExternalSessions();
+      controller.refreshAppModels();
+      controller.refreshAppThreads();
+      controller.refreshAppSkills();
+      controller.listAppDirectory();
     });
   }
 
@@ -109,6 +113,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
+                title: 'App-server sessions',
+                children: [_AppThreadSection(controller: controller)],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                title: 'Skills',
+                children: [_SkillSection(controller: controller)],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                title: 'Files',
+                children: [_AppFileSection(controller: controller)],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                title: 'Review',
+                children: [_ReviewSection(controller: controller)],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                title: 'Appearance',
+                children: [_AccentPicker(controller: controller)],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
                 title: 'Workspace',
                 children: [
                   _AddWorkspaceRow(controller: controller),
@@ -193,6 +222,330 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+class _AccentPicker extends StatelessWidget {
+  const _AccentPicker({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.md,
+      ),
+      child: Wrap(
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.sm,
+        children: [
+          for (final entry in accentColorOptions.entries)
+            ChoiceChip(
+              label: Text(accentLabelForName(entry.key)),
+              selected: controller.accentName == entry.key,
+              avatar: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: entry.value,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.18),
+                  ),
+                ),
+                child: const SizedBox.square(dimension: 13),
+              ),
+              onSelected: (_) => controller.setAccentName(entry.key),
+              visualDensity: VisualDensity.compact,
+              backgroundColor: CodexColors.panelHigh,
+              selectedColor: entry.value.withValues(alpha: 0.16),
+              side: BorderSide(
+                color: controller.accentName == entry.key
+                    ? entry.value.withValues(alpha: 0.46)
+                    : CodexColors.borderSoft,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppThreadSection extends StatelessWidget {
+  const _AppThreadSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            0,
+            AppSpacing.md,
+            AppSpacing.xs,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${controller.appThreads.length} native sessions',
+                  style: const TextStyle(
+                    color: CodexColors.muted,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => controller.refreshAppThreads(),
+                icon: const Icon(Icons.refresh_rounded, size: 17),
+                label: const Text('Refresh'),
+              ),
+            ],
+          ),
+        ),
+        if (controller.appThreads.isEmpty)
+          const ListTile(
+            leading: Icon(Icons.history_toggle_off_rounded),
+            title: Text('No app-server sessions loaded'),
+          )
+        else
+          for (final thread in controller.appThreads.take(30))
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.forum_outlined),
+              title: Text(
+                thread.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                thread.workdir,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+              trailing: const Icon(Icons.call_made_rounded, size: 17),
+              onTap: () {
+                controller.importAppThread(thread);
+                Navigator.maybePop(context);
+              },
+            ),
+      ],
+    );
+  }
+}
+
+class _SkillSection extends StatelessWidget {
+  const _SkillSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final skills = controller.appSkillGroups
+        .expand((group) => group.skills)
+        .where((skill) => skill.enabled)
+        .toList(growable: false);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            0,
+            AppSpacing.md,
+            AppSpacing.xs,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${skills.length} enabled',
+                  style: const TextStyle(
+                    color: CodexColors.muted,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => controller.refreshAppSkills(forceReload: true),
+                icon: const Icon(Icons.refresh_rounded, size: 17),
+                label: const Text('Reload'),
+              ),
+            ],
+          ),
+        ),
+        if (skills.isEmpty)
+          const ListTile(
+            leading: Icon(Icons.extension_off_rounded),
+            title: Text('No skills reported'),
+          )
+        else
+          for (final skill in skills.take(24))
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.extension_rounded),
+              title: Text(
+                skill.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                skill.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+class _AppFileSection extends StatelessWidget {
+  const _AppFileSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = controller.appPreviewFile;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            0,
+            AppSpacing.md,
+            AppSpacing.xs,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  controller.appFilePath.isEmpty ? '/' : controller.appFilePath,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: CodexColors.muted,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Parent folder',
+                onPressed: controller.appFilePath.isEmpty
+                    ? null
+                    : () => controller.listAppDirectory(
+                        _parentPath(controller.appFilePath),
+                      ),
+                icon: const Icon(Icons.arrow_upward_rounded),
+              ),
+              IconButton(
+                tooltip: 'Refresh files',
+                onPressed: () =>
+                    controller.listAppDirectory(controller.appFilePath),
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
+          ),
+        ),
+        for (final entry in controller.appFileEntries.take(32))
+          ListTile(
+            dense: true,
+            leading: Icon(
+              entry.isDirectory
+                  ? Icons.folder_rounded
+                  : Icons.insert_drive_file_outlined,
+            ),
+            title: Text(
+              entry.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              entry.path,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () => entry.isDirectory
+                ? controller.listAppDirectory(entry.path)
+                : controller.readAppFile(entry.path),
+          ),
+        if (preview != null)
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Container(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: CodexColors.ink2.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: CodexColors.borderSoft),
+              ),
+              child: Text(
+                preview.text?.trim().isNotEmpty == true
+                    ? preview.text!.trim()
+                    : '${preview.name}\n${preview.sizeBytes} bytes',
+                maxLines: 8,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: CodexColors.muted,
+                  fontFamily: 'monospace',
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ReviewSection extends StatelessWidget {
+  const _ReviewSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.md,
+      ),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Run native app-server review for current workspace changes.',
+              style: TextStyle(color: CodexColors.muted, fontSize: 12),
+            ),
+          ),
+          FilledButton.icon(
+            onPressed: controller.isRunning
+                ? null
+                : () => controller.startReview(),
+            icon: const Icon(Icons.rate_review_outlined, size: 17),
+            label: const Text('Start'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _parentPath(String path) {
+  final normalized = path.replaceAll('\\', '/');
+  final parts = normalized.split('/')..removeWhere((part) => part.isEmpty);
+  if (parts.isEmpty) return '';
+  parts.removeLast();
+  return parts.join('/');
+}
+
 class _ModelConfigSection extends StatefulWidget {
   const _ModelConfigSection({required this.controller});
 
@@ -233,7 +586,20 @@ class _ModelConfigSectionState extends State<_ModelConfigSection> {
   @override
   Widget build(BuildContext context) {
     final session = widget.controller.activeSession;
-    final effort = session?.reasoningEffort ?? 'medium';
+    final selectedModel = widget.controller.appModels
+        .where(
+          (model) =>
+              model.id == session?.model || model.model == session?.model,
+        )
+        .firstOrNull;
+    final effort =
+        session?.reasoningEffort ??
+        selectedModel?.defaultReasoningEffort ??
+        'medium';
+    final effortOptions =
+        selectedModel?.supportedReasoningEfforts.isNotEmpty == true
+        ? selectedModel!.supportedReasoningEfforts
+        : const ['low', 'medium', 'high', 'xhigh'];
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -244,6 +610,38 @@ class _ModelConfigSectionState extends State<_ModelConfigSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.controller.appModels.isNotEmpty) ...[
+            DropdownButtonFormField<String>(
+              initialValue:
+                  widget.controller.appModels.any(
+                    (model) => model.id == _modelController.text,
+                  )
+                  ? _modelController.text
+                  : null,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.auto_awesome_rounded),
+                labelText: 'Available models',
+              ),
+              items: [
+                for (final model in widget.controller.appModels)
+                  DropdownMenuItem(
+                    value: model.id,
+                    child: Text(model.displayName),
+                  ),
+              ],
+              onChanged: widget.controller.isRunning
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      final model = widget.controller.appModels
+                          .where((item) => item.id == value)
+                          .firstOrNull;
+                      _modelController.text = value;
+                      _save(model?.defaultReasoningEffort ?? effort);
+                    },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
           TextField(
             controller: _modelController,
             enabled: !widget.controller.isRunning,
@@ -260,7 +658,7 @@ class _ModelConfigSectionState extends State<_ModelConfigSection> {
             spacing: AppSpacing.xs,
             runSpacing: AppSpacing.xs,
             children: [
-              for (final value in const ['low', 'medium', 'high', 'xhigh'])
+              for (final value in effortOptions)
                 ChoiceChip(
                   label: Text(value),
                   selected: effort == value,

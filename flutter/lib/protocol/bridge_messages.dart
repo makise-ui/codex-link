@@ -2,7 +2,16 @@ enum ConnectionPhase { idle, connecting, paired, connected, offline, failed }
 
 enum ChatRole { user, assistant, system }
 
-enum AgentMessageKind { thinking, executing, response, system, files, error }
+enum AgentMessageKind {
+  thinking,
+  reasoning,
+  executing,
+  response,
+  system,
+  files,
+  approval,
+  error,
+}
 
 enum RunMode { safe, yolo }
 
@@ -100,6 +109,7 @@ class CodexSessionInfo {
     this.codexThreadId,
     this.model,
     this.reasoningEffort,
+    this.goal,
   });
 
   final String sessionId;
@@ -114,6 +124,7 @@ class CodexSessionInfo {
   final String? codexThreadId;
   final String? model;
   final String? reasoningEffort;
+  final CodexGoalInfo? goal;
 
   bool get isRunning =>
       activeRunId != null ||
@@ -131,6 +142,8 @@ class CodexSessionInfo {
     bool clearActiveRunId = false,
     String? model,
     String? reasoningEffort,
+    CodexGoalInfo? goal,
+    bool clearGoal = false,
   }) {
     return CodexSessionInfo(
       sessionId: sessionId,
@@ -145,6 +158,7 @@ class CodexSessionInfo {
       codexThreadId: codexThreadId,
       model: model ?? this.model,
       reasoningEffort: reasoningEffort ?? this.reasoningEffort,
+      goal: clearGoal ? null : goal ?? this.goal,
     );
   }
 
@@ -162,6 +176,46 @@ class CodexSessionInfo {
       codexThreadId: json['codexThreadId'] as String?,
       model: json['model'] as String?,
       reasoningEffort: json['reasoningEffort'] as String?,
+      goal: json['goal'] is Map
+          ? CodexGoalInfo.fromJson(
+              Map<String, dynamic>.from(json['goal'] as Map),
+            )
+          : null,
+    );
+  }
+}
+
+class CodexGoalInfo {
+  const CodexGoalInfo({
+    required this.threadId,
+    required this.objective,
+    required this.status,
+    required this.tokensUsed,
+    required this.timeUsedSeconds,
+    required this.createdAt,
+    required this.updatedAt,
+    this.tokenBudget,
+  });
+
+  final String threadId;
+  final String objective;
+  final String status;
+  final int? tokenBudget;
+  final int tokensUsed;
+  final int timeUsedSeconds;
+  final int createdAt;
+  final int updatedAt;
+
+  factory CodexGoalInfo.fromJson(Map<String, dynamic> json) {
+    return CodexGoalInfo(
+      threadId: json['threadId'] as String? ?? '',
+      objective: json['objective'] as String? ?? '',
+      status: json['status'] as String? ?? 'active',
+      tokenBudget: json['tokenBudget'] as int?,
+      tokensUsed: json['tokensUsed'] as int? ?? 0,
+      timeUsedSeconds: json['timeUsedSeconds'] as int? ?? 0,
+      createdAt: json['createdAt'] as int? ?? 0,
+      updatedAt: json['updatedAt'] as int? ?? 0,
     );
   }
 }
@@ -222,6 +276,270 @@ class WorkspaceFileInfo {
       name: json['name'] as String? ?? _baseName(json['path'] as String? ?? ''),
       sizeBytes: json['sizeBytes'] as int?,
       mimeType: json['mimeType'] as String?,
+    );
+  }
+}
+
+class AppProviderCapabilitiesInfo {
+  const AppProviderCapabilitiesInfo({
+    required this.namespaceTools,
+    required this.imageGeneration,
+    required this.webSearch,
+  });
+
+  final bool namespaceTools;
+  final bool imageGeneration;
+  final bool webSearch;
+
+  factory AppProviderCapabilitiesInfo.fromJson(Map<String, dynamic> json) {
+    return AppProviderCapabilitiesInfo(
+      namespaceTools: json['namespaceTools'] as bool? ?? false,
+      imageGeneration: json['imageGeneration'] as bool? ?? false,
+      webSearch: json['webSearch'] as bool? ?? false,
+    );
+  }
+}
+
+class AppModelInfo {
+  const AppModelInfo({
+    required this.id,
+    required this.model,
+    required this.displayName,
+    required this.hidden,
+    required this.supportedReasoningEfforts,
+    required this.inputModalities,
+    required this.supportsPersonality,
+    required this.isDefault,
+    this.description,
+    this.defaultReasoningEffort,
+  });
+
+  final String id;
+  final String model;
+  final String displayName;
+  final String? description;
+  final bool hidden;
+  final List<String> supportedReasoningEfforts;
+  final String? defaultReasoningEffort;
+  final List<String> inputModalities;
+  final bool supportsPersonality;
+  final bool isDefault;
+
+  factory AppModelInfo.fromJson(Map<String, dynamic> json) {
+    return AppModelInfo(
+      id: json['id'] as String? ?? '',
+      model: json['model'] as String? ?? json['id'] as String? ?? '',
+      displayName:
+          json['displayName'] as String? ?? json['id'] as String? ?? 'Model',
+      description: json['description'] as String?,
+      hidden: json['hidden'] as bool? ?? false,
+      supportedReasoningEfforts:
+          (json['supportedReasoningEfforts'] as List<dynamic>? ?? const [])
+              .whereType<String>()
+              .toList(growable: false),
+      defaultReasoningEffort: json['defaultReasoningEffort'] as String?,
+      inputModalities: (json['inputModalities'] as List<dynamic>? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
+      supportsPersonality: json['supportsPersonality'] as bool? ?? false,
+      isDefault: json['isDefault'] as bool? ?? false,
+    );
+  }
+}
+
+class AppThreadInfo {
+  const AppThreadInfo({
+    required this.threadId,
+    required this.title,
+    required this.preview,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.workdir,
+    this.codexSessionId,
+    this.path,
+    this.source,
+    this.status,
+    this.modelProvider,
+    this.cliVersion,
+    this.messageCount,
+  });
+
+  final String threadId;
+  final String? codexSessionId;
+  final String title;
+  final String preview;
+  final String createdAt;
+  final String updatedAt;
+  final String workdir;
+  final String? path;
+  final String? source;
+  final String? status;
+  final String? modelProvider;
+  final String? cliVersion;
+  final int? messageCount;
+
+  factory AppThreadInfo.fromJson(Map<String, dynamic> json) {
+    return AppThreadInfo(
+      threadId: json['threadId'] as String? ?? '',
+      codexSessionId: json['codexSessionId'] as String?,
+      title: json['title'] as String? ?? 'Codex session',
+      preview: json['preview'] as String? ?? '',
+      createdAt: json['createdAt'] as String? ?? '',
+      updatedAt: json['updatedAt'] as String? ?? '',
+      workdir: json['workdir'] as String? ?? '',
+      path: json['path'] as String?,
+      source: json['source'] as String?,
+      status: json['status'] as String?,
+      modelProvider: json['modelProvider'] as String?,
+      cliVersion: json['cliVersion'] as String?,
+      messageCount: json['messageCount'] as int?,
+    );
+  }
+}
+
+class AppSkillInfo {
+  const AppSkillInfo({
+    required this.name,
+    required this.description,
+    required this.path,
+    required this.enabled,
+    this.scope,
+  });
+
+  final String name;
+  final String description;
+  final String path;
+  final String? scope;
+  final bool enabled;
+
+  factory AppSkillInfo.fromJson(Map<String, dynamic> json) {
+    return AppSkillInfo(
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      path: json['path'] as String? ?? '',
+      scope: json['scope'] as String?,
+      enabled: json['enabled'] as bool? ?? true,
+    );
+  }
+}
+
+class AppSkillGroupInfo {
+  const AppSkillGroupInfo({
+    required this.cwd,
+    required this.skills,
+    required this.errors,
+  });
+
+  final String cwd;
+  final List<AppSkillInfo> skills;
+  final List<String> errors;
+
+  factory AppSkillGroupInfo.fromJson(Map<String, dynamic> json) {
+    return AppSkillGroupInfo(
+      cwd: json['cwd'] as String? ?? '',
+      skills: (json['skills'] as List<dynamic>? ?? const [])
+          .map(
+            (item) =>
+                AppSkillInfo.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList(growable: false),
+      errors: (json['errors'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+    );
+  }
+}
+
+class AppFsEntryInfo {
+  const AppFsEntryInfo({
+    required this.path,
+    required this.name,
+    required this.isDirectory,
+    required this.isFile,
+    this.sizeBytes,
+    this.mimeType,
+  });
+
+  final String path;
+  final String name;
+  final bool isDirectory;
+  final bool isFile;
+  final int? sizeBytes;
+  final String? mimeType;
+
+  factory AppFsEntryInfo.fromJson(Map<String, dynamic> json) {
+    return AppFsEntryInfo(
+      path: json['path'] as String? ?? '',
+      name: json['name'] as String? ?? _baseName(json['path'] as String? ?? ''),
+      isDirectory: json['isDirectory'] as bool? ?? false,
+      isFile: json['isFile'] as bool? ?? false,
+      sizeBytes: json['sizeBytes'] as int?,
+      mimeType: json['mimeType'] as String?,
+    );
+  }
+}
+
+class AppFsFileInfo {
+  const AppFsFileInfo({
+    required this.path,
+    required this.name,
+    required this.sizeBytes,
+    this.mimeType,
+    this.text,
+    this.dataBase64,
+  });
+
+  final String path;
+  final String name;
+  final int sizeBytes;
+  final String? mimeType;
+  final String? text;
+  final String? dataBase64;
+
+  factory AppFsFileInfo.fromJson(Map<String, dynamic> json) {
+    return AppFsFileInfo(
+      path: json['path'] as String? ?? '',
+      name: json['name'] as String? ?? _baseName(json['path'] as String? ?? ''),
+      sizeBytes: json['sizeBytes'] as int? ?? 0,
+      mimeType: json['mimeType'] as String?,
+      text: json['text'] as String?,
+      dataBase64: json['dataBase64'] as String?,
+    );
+  }
+}
+
+class ApprovalRequestInfo {
+  const ApprovalRequestInfo({
+    required this.approvalId,
+    required this.title,
+    required this.body,
+    required this.riskLevel,
+  });
+
+  final String approvalId;
+  final String title;
+  final String body;
+  final String riskLevel;
+
+  factory ApprovalRequestInfo.fromText(String text, {String? fallbackTitle}) {
+    final lines = text.split('\n');
+    String? id;
+    String? risk;
+    final body = <String>[];
+    for (final line in lines) {
+      if (line.startsWith('approvalId ')) {
+        id = line.substring('approvalId '.length).trim();
+      } else if (line.startsWith('risk ')) {
+        risk = line.substring('risk '.length).trim();
+      } else {
+        body.add(line);
+      }
+    }
+    return ApprovalRequestInfo(
+      approvalId: id ?? '',
+      title: fallbackTitle ?? 'Approval needed',
+      body: body.join('\n').trim(),
+      riskLevel: risk ?? 'medium',
     );
   }
 }
@@ -426,6 +744,8 @@ AgentMessageKind kindFromWire(String? value) {
   switch (value) {
     case 'thinking':
       return AgentMessageKind.thinking;
+    case 'reasoning':
+      return AgentMessageKind.reasoning;
     case 'executing':
       return AgentMessageKind.executing;
     case 'response':
@@ -434,6 +754,8 @@ AgentMessageKind kindFromWire(String? value) {
       return AgentMessageKind.system;
     case 'files':
       return AgentMessageKind.files;
+    case 'approval':
+      return AgentMessageKind.approval;
     case 'error':
       return AgentMessageKind.error;
     default:

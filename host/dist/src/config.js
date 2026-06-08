@@ -10,8 +10,8 @@ export function resolveConfig(argv = process.argv) {
         .option("--port <port>", "port to bind", parsePort, 8787)
         .option("--pair", "create a new one-time pairing token and print a QR/manual payload", false)
         .option("--insecure-ws-dev", "explicitly allow dev-only cleartext ws:// mode", false)
-        .option("--session-mode <mode>", "session adapter: mock or cli", parseSessionMode, "mock")
-        .option("--codex-command <command>", "Codex CLI executable for --session-mode cli", "codex")
+        .option("--session-mode <mode>", "session adapter: mock or app-server", parseSessionMode, "mock")
+        .option("--codex-command <command>", "Codex executable for --session-mode app-server", "codex")
         .option("--workdir <path>", "default allowed working directory for Codex sessions", process.cwd())
         .option("--workspace <path>", "additional switchable workspace path. Can be provided multiple times", collectWorkspace, [])
         .option("--state-dir <path>", "directory for LAN bridge session state", ".codex-lan")
@@ -36,7 +36,7 @@ export function resolveConfig(argv = process.argv) {
     const workspacePaths = uniquePaths([workdir, ...opts.workspace.map((workspace) => path.resolve(workspace))]);
     const localUrl = `ws://${host}:${opts.port}`;
     const password = opts.password ?? process.env.CODEX_LINK_PASSWORD ?? process.env.CODEX_LAN_PASSWORD;
-    const publicUrl = opts.publicUrl?.trim();
+    const publicUrl = opts.publicUrl ? normalizePublicUrl(opts.publicUrl) : undefined;
     if (remoteMode === "tunnel") {
         if (!password) {
             throw new Error("--password or CODEX_LINK_PASSWORD is required when --remote-mode tunnel is used.");
@@ -87,9 +87,9 @@ function parsePort(value) {
     return parsed;
 }
 function parseSessionMode(value) {
-    if (value === "mock" || value === "cli")
+    if (value === "mock" || value === "app-server")
         return value;
-    throw new Error(`Invalid session mode: ${value}. Expected mock or cli.`);
+    throw new Error(`Invalid session mode: ${value}. Expected mock or app-server.`);
 }
 function parseSandboxMode(value) {
     if (value === "read-only" || value === "workspace-write" || value === "danger-full-access")
@@ -105,6 +105,16 @@ function parseTunnelProvider(value) {
     if (value === "ngrok" || value === "cloudflared" || value === "tailscale" || value === "other")
         return value;
     throw new Error(`Invalid tunnel provider: ${value}. Expected ngrok, cloudflared, tailscale, or other.`);
+}
+function normalizePublicUrl(value) {
+    const trimmed = value.trim();
+    if (!trimmed)
+        return trimmed;
+    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `wss://${trimmed}`;
+    const parsed = new URL(withScheme);
+    const protocol = parsed.protocol === "http:" ? "ws:" : parsed.protocol === "https:" ? "wss:" : parsed.protocol;
+    const path = parsed.pathname === "/" ? "" : parsed.pathname;
+    return `${protocol}//${parsed.host}${path}${parsed.search}${parsed.hash}`;
 }
 function validatePublicUrl(value) {
     let parsed;

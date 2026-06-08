@@ -179,6 +179,52 @@ describe("CodexSessionManager", () => {
     await manager.close();
   });
 
+  it("sets, gets, clears, and persists native session goals", async () => {
+    const stateDir = await tempStateDir();
+    const manager = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+    });
+    const events: Array<{ type: string }> = [];
+    manager.onEvent((event) => {
+      if (event.type === "session.goal.updated" || event.type === "session.goal.cleared") {
+        events.push(event);
+      }
+    });
+    const [session] = manager.listSessions();
+
+    const goal = await manager.setGoal(session.sessionId, {
+      objective: "Finish the app-server adapter",
+      status: "active",
+      tokenBudget: 20000,
+    });
+
+    expect(goal.objective).toBe("Finish the app-server adapter");
+    expect(goal.status).toBe("active");
+    expect(manager.listSessions()[0].goal).toEqual(expect.objectContaining({ objective: "Finish the app-server adapter" }));
+    expect(await manager.getGoal(session.sessionId)).toEqual(expect.objectContaining({ objective: "Finish the app-server adapter" }));
+    expect(events.some((event) => event.type === "session.goal.updated")).toBe(true);
+
+    await manager.close();
+    const restored = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+    });
+
+    expect(restored.listSessions()[0].goal).toEqual(expect.objectContaining({ objective: "Finish the app-server adapter" }));
+    expect(await restored.clearGoal(restored.listSessions()[0].sessionId)).toBe(true);
+    expect(restored.listSessions()[0].goal).toBeUndefined();
+    await restored.close();
+  });
+
   it("stores user prompts and streamed agent messages as replayable history", async () => {
     vi.useFakeTimers();
     const stateDir = await tempStateDir();
@@ -302,6 +348,39 @@ describe("CodexSessionManager", () => {
       }),
     ]);
     expect(results.files.some((file) => file.path.includes("node_modules"))).toBe(false);
+    await manager.close();
+  });
+
+  it("exposes app-server capability fallbacks for models, files, skills, search, and review", async () => {
+    const stateDir = await tempStateDir();
+    const workspace = await tempStateDir();
+    await mkdir(path.join(workspace, "lib"), { recursive: true });
+    await writeFile(path.join(workspace, "README.md"), "# Unit\n");
+    await writeFile(path.join(workspace, "lib", "main.dart"), "void main() {}\n");
+    const manager = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [{ id: "default", label: "repo", path: workspace }],
+    });
+    const [session] = manager.listSessions();
+
+    const models = await manager.listAppModels(session.sessionId, false);
+    const skills = await manager.listAppSkills(session.sessionId, false);
+    const entries = await manager.listAppDirectory(session.sessionId, "");
+    const file = await manager.readAppFile(session.sessionId, "README.md");
+    const search = await manager.searchAppFiles(session.sessionId, "@main", 10);
+    const review = await manager.startReview(session.sessionId, { target: "custom", instructions: "Review current changes", delivery: "inline" });
+
+    expect(models.models.some((model) => model.id === "gpt-5.5")).toBe(true);
+    expect(skills.groups[0]).toMatchObject({ cwd: workspace });
+    expect(entries.entries).toContainEqual(expect.objectContaining({ name: "README.md", path: "README.md", isFile: true }));
+    expect(file.file).toMatchObject({ name: "README.md", text: "# Unit\n" });
+    expect(search.files).toEqual([expect.objectContaining({ path: "lib/main.dart", name: "main.dart" })]);
+    expect(review).toMatchObject({ sessionId: session.sessionId, runId: expect.stringMatching(/^mock-review-/), reviewThreadId: session.sessionId });
+
     await manager.close();
   });
 

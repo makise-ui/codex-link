@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:codex_lan_flutter/app_controller.dart';
 import 'package:codex_lan_flutter/protocol/bridge_messages.dart';
 import 'package:codex_lan_flutter/services/bridge_socket_client.dart';
+import 'package:codex_lan_flutter/services/download_saver.dart';
 import 'package:codex_lan_flutter/services/pairing_parser.dart';
+import 'package:codex_lan_flutter/services/secure_credentials_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -11,6 +15,78 @@ void main() {
     expect(controller.canShowChat, isTrue);
     expect(controller.isOffline, isTrue);
     expect(controller.isConnected, isFalse);
+  });
+
+  test('saved credentials reopen the cached chat surface as offline', () async {
+    final controller = AppController(
+      store: FakeSecureCredentialsStore(
+        const BridgeCredentials(
+          url: 'wss://unit.trycloudflare.com',
+          deviceToken: 'token',
+          deviceId: 'phone',
+        ),
+      ),
+    );
+
+    await controller.loadSavedCredentials();
+
+    expect(controller.credentials?.url, 'wss://unit.trycloudflare.com');
+    expect(controller.phase, ConnectionPhase.offline);
+    expect(controller.canShowChat, isTrue);
+    expect(controller.statusText, contains('Offline'));
+  });
+
+  test(
+    'saved reconnect keeps the cached chat surface visible while connecting',
+    () async {
+      final socket = FakeBridgeSocketClient(
+        connectCompleter: Completer<void>(),
+      );
+      final controller = AppController(
+        socket: socket,
+        store: FakeSecureCredentialsStore(
+          const BridgeCredentials(
+            url: 'https://unit.trycloudflare.com',
+            deviceToken: 'token',
+            deviceId: 'phone',
+          ),
+        ),
+      );
+      await controller.loadSavedCredentials();
+
+      await controller.reconnect();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(socket.connectedUrl, 'wss://unit.trycloudflare.com');
+      expect(controller.phase, ConnectionPhase.connecting);
+      expect(controller.canShowChat, isTrue);
+
+      await controller.disposeController();
+    },
+  );
+
+  test('saved reconnect failures keep cached chat visible for retry', () async {
+    final controller = AppController(
+      socket: FakeBridgeSocketClient(connectError: StateError('down')),
+      store: FakeSecureCredentialsStore(
+        const BridgeCredentials(
+          url: 'wss://unit.trycloudflare.com',
+          deviceToken: 'token',
+          deviceId: 'phone',
+        ),
+      ),
+      autoReconnectDelay: const Duration(hours: 1),
+    );
+    await controller.loadSavedCredentials();
+
+    await controller.reconnect();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.phase, ConnectionPhase.failed);
+    expect(controller.canShowChat, isTrue);
+    expect(controller.statusText, contains('Bridge error'));
+
+    await controller.disposeController();
   });
 
   test('replaces session messages from host history replay', () {
@@ -123,6 +199,204 @@ void main() {
     expect(controller.hostInfo?.connectionMode, 'tunnel');
     expect(controller.hostInfo?.tunnelProvider, 'cloudflared');
     expect(controller.hostInfo?.publicUrl, 'wss://unit.trycloudflare.com');
+  });
+
+  test('app-level slash commands route to native bridge controls', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Commands',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'running',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+            'activeRunId': 'run-1',
+          },
+        ],
+      });
+
+    controller.runCommand(
+      const CodexCommandInfo(
+        commandId: 'codex.stop',
+        title: 'Stop',
+        description: 'Stop the current run',
+        category: 'session',
+      ),
+    );
+    controller.runCommand(
+      const CodexCommandInfo(
+        commandId: 'codex.new',
+        title: 'New chat',
+        description: 'Start a new session',
+        category: 'session',
+      ),
+    );
+
+    expect(socket.sentMessages, [
+      {'type': 'run.cancel', 'sessionId': 's1', 'runId': 'run-1'},
+      {
+        'type': 'session.create',
+        'title': 'New session',
+        'workspaceId': 'default',
+      },
+    ]);
+  });
+
+  test('goal slash prompt uses native session goal RPC', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Goal',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.sendPrompt('/goal Polish the chat UI');
+
+    expect(controller.activeMessages.single.text, '/goal Polish the chat UI');
+    expect(socket.sentMessages.single, {
+      'type': 'session.goal.set',
+      'sessionId': 's1',
+      'objective': 'Polish the chat UI',
+      'status': 'active',
+    });
+  });
+
+  test('goal slash command can inspect and clear the native goal', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Goal',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.sendPrompt('/goal');
+    controller.sendPrompt('/goal clear');
+
+    expect(socket.sentMessages, [
+      {'type': 'session.goal.get', 'sessionId': 's1'},
+      {'type': 'session.goal.clear', 'sessionId': 's1'},
+    ]);
+    expect(controller.activeMessages.map((message) => message.text), [
+      '/goal',
+      '/goal clear',
+    ]);
+  });
+
+  test('active goal updates stay out of the chat timeline', () {
+    final controller = AppController()
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Goal',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'session.goal.updated',
+      'sessionId': 's1',
+      'goal': {
+        'threadId': 'thread-1',
+        'objective': 'Finish app-server adapter',
+        'status': 'active',
+        'tokenBudget': 20000,
+        'tokensUsed': 15,
+        'timeUsedSeconds': 2,
+        'createdAt': 1,
+        'updatedAt': 2,
+      },
+    });
+
+    expect(
+      controller.activeSession?.goal?.objective,
+      'Finish app-server adapter',
+    );
+    expect(controller.activeMessages, isEmpty);
+
+    controller.handleBridgeMessageForTest({
+      'type': 'session.goal.updated',
+      'sessionId': 's1',
+      'goal': {
+        'threadId': 'thread-1',
+        'objective': 'Finish app-server adapter',
+        'status': 'active',
+        'tokenBudget': 20000,
+        'tokensUsed': 55,
+        'timeUsedSeconds': 8,
+        'createdAt': 1,
+        'updatedAt': 3,
+      },
+    });
+
+    expect(controller.activeMessages, isEmpty);
+
+    controller.handleBridgeMessageForTest({
+      'type': 'session.goal.updated',
+      'sessionId': 's1',
+      'goal': {
+        'threadId': 'thread-1',
+        'objective': 'Finish app-server adapter',
+        'status': 'complete',
+        'tokenBudget': 20000,
+        'tokensUsed': 120,
+        'timeUsedSeconds': 30,
+        'createdAt': 1,
+        'updatedAt': 4,
+      },
+    });
+
+    expect(controller.activeMessages.single.title, 'Goal complete');
+
+    controller.handleBridgeMessageForTest({
+      'type': 'session.goal.cleared',
+      'sessionId': 's1',
+    });
+
+    expect(controller.activeSession?.goal, isNull);
+    expect(controller.activeMessages.last.title, 'Goal cleared');
   });
 
   test('parses v3 pairing payload tunnel metadata', () {
@@ -315,16 +589,51 @@ void main() {
             'sandbox': 'workspace-write',
             'model': 'gpt-5-codex',
             'reasoningEffort': 'high',
+            'goal': {
+              'threadId': 'thread-1',
+              'objective': 'Keep polish high',
+              'status': 'active',
+              'tokensUsed': 0,
+              'timeUsedSeconds': 0,
+              'createdAt': 1,
+              'updatedAt': 1,
+            },
           },
         ],
       });
 
     expect(controller.activeSession?.model, 'gpt-5-codex');
     expect(controller.activeSession?.reasoningEffort, 'high');
+    expect(controller.activeSession?.goal?.objective, 'Keep polish high');
   });
 
-  test('stores file offers and downloads from host', () {
-    final controller = AppController()
+  test('updates selected accent color for themed markdown and controls', () {
+    final controller = AppController();
+
+    controller.setAccentName('blue');
+
+    expect(controller.accentName, 'blue');
+  });
+
+  test('manual file downloads are saved to the device', () async {
+    final saver = FakeDownloadSaver('/downloads/generated.dart');
+    final controller = AppController(downloadSaver: saver)
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Files',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      })
       ..handleBridgeMessageForTest({
         'type': 'file.offer',
         'fileId': 'file-1',
@@ -336,6 +645,7 @@ void main() {
       });
 
     expect(controller.fileOffers.single.name, 'generated.dart');
+    controller.requestFileDownload(controller.fileOffers.single);
 
     controller.handleBridgeMessageForTest({
       'type': 'file.download',
@@ -344,15 +654,25 @@ void main() {
       'sizeBytes': 5,
       'dataBase64': 'aGVsbG8=',
     });
+    await Future<void>.delayed(Duration.zero);
 
     expect(controller.downloadedFiles.single.dataBase64, 'aGVsbG8=');
+    expect(saver.savedFiles.single.name, 'generated.dart');
+    expect(saver.savedFiles.single.dataBase64, 'aGVsbG8=');
+    expect(controller.savedFilePaths['file-1'], '/downloads/generated.dart');
+    expect(controller.activeMessages.last.title, 'File saved');
+    expect(
+      controller.activeMessages.last.text,
+      contains('/downloads/generated.dart'),
+    );
   });
 
   test(
     'slash send requests a host file offer instead of asking the agent to paste contents',
     () {
       final socket = FakeBridgeSocketClient();
-      final controller = AppController(socket: socket)
+      final saver = FakeDownloadSaver('/downloads/result.png');
+      final controller = AppController(socket: socket, downloadSaver: saver)
         ..phase = ConnectionPhase.connected
         ..handleBridgeMessageForTest({
           'type': 'session.list',
@@ -462,11 +782,179 @@ void main() {
     expect(controller.fileSuggestions.single.path, 'lib/main.dart');
   });
 
+  test('stores native app-server capability messages and routes actions', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Native',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.refreshAppModels();
+    controller.refreshAppThreads(query: 'native', limit: 5);
+    controller.refreshAppSkills(forceReload: true);
+    controller.listAppDirectory('lib');
+    controller.readAppFile('README.md');
+    controller.searchAppFiles('@main', limit: 8);
+    controller.startReview(instructions: 'review this');
+
+    expect(socket.sentMessages.take(7).toList(), [
+      {'type': 'app.model.list', 'sessionId': 's1'},
+      {
+        'type': 'app.thread.list',
+        'sessionId': 's1',
+        'query': 'native',
+        'limit': 5,
+      },
+      {'type': 'app.skill.list', 'sessionId': 's1', 'forceReload': true},
+      {'type': 'app.fs.list', 'sessionId': 's1', 'path': 'lib'},
+      {'type': 'app.fs.read', 'sessionId': 's1', 'path': 'README.md'},
+      {
+        'type': 'app.file.search',
+        'sessionId': 's1',
+        'query': '@main',
+        'limit': 8,
+      },
+      {
+        'type': 'app.review.start',
+        'sessionId': 's1',
+        'target': 'custom',
+        'instructions': 'review this',
+        'delivery': 'inline',
+      },
+    ]);
+
+    controller.handleBridgeMessageForTest({
+      'type': 'app.model.list',
+      'models': [
+        {
+          'id': 'gpt-test',
+          'model': 'gpt-test',
+          'displayName': 'GPT Test',
+          'hidden': false,
+          'supportedReasoningEfforts': ['low', 'high'],
+          'inputModalities': ['text', 'image'],
+          'supportsPersonality': true,
+          'isDefault': true,
+        },
+      ],
+      'capabilities': {
+        'namespaceTools': true,
+        'imageGeneration': true,
+        'webSearch': true,
+      },
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.thread.list',
+      'threads': [
+        {
+          'threadId': 'thread-1',
+          'title': 'Thread',
+          'preview': 'Thread',
+          'createdAt': '2026-06-08T00:00:00.000Z',
+          'updatedAt': '2026-06-08T00:00:00.000Z',
+          'workdir': '/tmp/repo',
+        },
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.skill.list',
+      'groups': [
+        {
+          'cwd': '/tmp/repo',
+          'skills': [
+            {
+              'name': 'flutter-design-system',
+              'description': 'Token discipline',
+              'path': '/tmp/SKILL.md',
+              'enabled': true,
+            },
+          ],
+          'errors': [],
+        },
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.fs.list',
+      'sessionId': 's1',
+      'path': 'lib',
+      'entries': [
+        {
+          'path': 'lib/main.dart',
+          'name': 'main.dart',
+          'isDirectory': false,
+          'isFile': true,
+        },
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.fs.file',
+      'sessionId': 's1',
+      'file': {
+        'path': 'README.md',
+        'name': 'README.md',
+        'sizeBytes': 7,
+        'mimeType': 'text/plain',
+        'text': '# Unit\n',
+      },
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.file.search.results',
+      'sessionId': 's1',
+      'query': 'main',
+      'files': [
+        {'path': 'lib/main.dart', 'name': 'main.dart'},
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'approval.requested',
+      'sessionId': 's1',
+      'approvalId': 'approval-1',
+      'title': 'Approve command',
+      'body': 'pnpm test',
+      'riskLevel': 'medium',
+    });
+
+    expect(controller.appModels.single.displayName, 'GPT Test');
+    expect(controller.appCapabilities?.webSearch, isTrue);
+    expect(controller.appThreads.single.threadId, 'thread-1');
+    expect(
+      controller.appSkillGroups.single.skills.single.name,
+      'flutter-design-system',
+    );
+    expect(controller.appFileEntries.single.path, 'lib/main.dart');
+    expect(controller.appPreviewFile?.text, '# Unit\n');
+    expect(controller.appFileSearchResults.single.name, 'main.dart');
+    expect(controller.activeMessages.last.kind, AgentMessageKind.approval);
+
+    controller.decideApproval('approval-1', 'approve');
+    expect(socket.sentMessages.last, {
+      'type': 'approval.decision',
+      'sessionId': 's1',
+      'approvalId': 'approval-1',
+      'decision': 'approve',
+    });
+  });
+
   test(
     'file offer replaces the pending request row and image offers auto-download',
     () {
       final socket = FakeBridgeSocketClient();
-      final controller = AppController(socket: socket)
+      final saver = FakeDownloadSaver('/downloads/result.png');
+      final controller = AppController(socket: socket, downloadSaver: saver)
         ..phase = ConnectionPhase.connected
         ..handleBridgeMessageForTest({
           'type': 'session.list',
@@ -503,15 +991,70 @@ void main() {
         'type': 'file.request',
         'fileId': 'image-1',
       });
+      expect(saver.savedFiles, isEmpty);
     },
   );
 }
 
 class FakeBridgeSocketClient extends BridgeSocketClient {
+  FakeBridgeSocketClient({this.connectCompleter, this.connectError});
+
+  final Completer<void>? connectCompleter;
+  final Object? connectError;
   final sentMessages = <Map<String, dynamic>>[];
+  String? connectedUrl;
+
+  @override
+  Future<void> connect({
+    required String url,
+    required void Function(Map<String, dynamic> message) onMessage,
+    required void Function(Object error) onError,
+    required void Function() onDone,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    connectedUrl = normalizeBridgeWebSocketUrl(url);
+    final error = connectError;
+    if (error != null) throw error;
+    await (connectCompleter?.future ?? Future<void>.value());
+  }
 
   @override
   void send(Map<String, dynamic> message) {
     sentMessages.add(Map<String, dynamic>.from(message));
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
+class FakeDownloadSaver implements FileDownloadSaver {
+  FakeDownloadSaver(this.path);
+
+  final String? path;
+  final savedFiles = <DownloadedFileInfo>[];
+
+  @override
+  Future<String?> save(DownloadedFileInfo file) async {
+    savedFiles.add(file);
+    return path;
+  }
+}
+
+class FakeSecureCredentialsStore extends SecureCredentialsStore {
+  FakeSecureCredentialsStore(this.saved);
+
+  BridgeCredentials? saved;
+
+  @override
+  Future<BridgeCredentials?> load() async => saved;
+
+  @override
+  Future<void> save(BridgeCredentials credentials) async {
+    saved = credentials;
+  }
+
+  @override
+  Future<void> clear() async {
+    saved = null;
   }
 }

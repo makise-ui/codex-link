@@ -6,14 +6,38 @@ import '../protocol/bridge_messages.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 
-class SessionSidebar extends StatelessWidget {
+class SessionSidebar extends StatefulWidget {
   const SessionSidebar({super.key, this.onPicked});
 
   final VoidCallback? onPicked;
 
   @override
+  State<SessionSidebar> createState() => _SessionSidebarState();
+}
+
+class _SessionSidebarState extends State<SessionSidebar> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final query = _searchController.text.trim().toLowerCase();
+    final sessions = query.isEmpty
+        ? controller.sessions
+        : controller.sessions
+              .where(
+                (session) =>
+                    session.title.toLowerCase().contains(query) ||
+                    session.workdir.toLowerCase().contains(query) ||
+                    session.workdirName.toLowerCase().contains(query),
+              )
+              .toList(growable: false);
     return SafeArea(
       child: Container(
         width: 288,
@@ -48,6 +72,28 @@ class SessionSidebar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: _ConnectionSummary(controller: controller),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: SizedBox(
+                height: 38,
+                child: TextField(
+                  key: const ValueKey('sidebar-search'),
+                  controller: _searchController,
+                  onChanged: (_) => setState(() {}),
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Search sessions',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 18),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm,
+                      vertical: AppSpacing.xs,
+                    ),
+                    filled: true,
+                    fillColor: CodexColors.panelHigh.withValues(alpha: 0.54),
+                  ),
+                ),
+              ),
+            ),
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Text(
@@ -62,9 +108,9 @@ class SessionSidebar extends StatelessWidget {
             Expanded(
               child: ListView.builder(
                 padding: EdgeInsets.zero,
-                itemCount: controller.sessions.length,
+                itemCount: sessions.length,
                 itemBuilder: (context, index) {
-                  final session = controller.sessions[index];
+                  final session = sessions[index];
                   final active =
                       session.sessionId == controller.activeSession?.sessionId;
                   return _SessionRow(
@@ -72,7 +118,7 @@ class SessionSidebar extends StatelessWidget {
                     active: active,
                     onTap: () {
                       controller.selectSession(session.sessionId);
-                      onPicked?.call();
+                      widget.onPicked?.call();
                     },
                   );
                 },

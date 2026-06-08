@@ -1,11 +1,12 @@
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 7;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
-export type MessageKind = "thinking" | "executing" | "response" | "system";
+export type MessageKind = "thinking" | "reasoning" | "executing" | "response" | "system";
 export type StoredMessageKind = MessageKind | "files" | "error";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type RunMode = "safe" | "yolo";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type GoalStatus = "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
 export type ConnectionMode = "lan" | "tunnel";
 export type TunnelProvider = "ngrok" | "cloudflared" | "tailscale" | "other";
 
@@ -20,12 +21,23 @@ export type ClientMessage =
   | SessionDeleteMessage
   | SessionModeSetMessage
   | SessionConfigSetMessage
+  | SessionGoalSetMessage
+  | SessionGoalGetMessage
+  | SessionGoalClearMessage
   | WorkspaceListRequestMessage
   | WorkspaceAddMessage
   | WorkspaceSwitchMessage
   | WorkspaceFileSearchMessage
   | ExternalSessionListRequestMessage
   | ExternalSessionImportMessage
+  | AppModelListRequestMessage
+  | AppThreadListRequestMessage
+  | AppThreadImportMessage
+  | AppSkillListRequestMessage
+  | AppFsListRequestMessage
+  | AppFsReadRequestMessage
+  | AppFileSearchRequestMessage
+  | AppReviewStartRequestMessage
   | CommandListRequestMessage
   | CommandRunMessage
   | PromptSendMessage
@@ -92,6 +104,24 @@ export type SessionConfigSetMessage = {
   reasoningEffort?: ReasoningEffort;
 };
 
+export type SessionGoalSetMessage = {
+  type: "session.goal.set";
+  sessionId: string;
+  objective?: string;
+  status?: GoalStatus;
+  tokenBudget?: number | null;
+};
+
+export type SessionGoalGetMessage = {
+  type: "session.goal.get";
+  sessionId: string;
+};
+
+export type SessionGoalClearMessage = {
+  type: "session.goal.clear";
+  sessionId: string;
+};
+
 export type WorkspaceListRequestMessage = {
   type: "workspace.list";
 };
@@ -123,6 +153,58 @@ export type ExternalSessionListRequestMessage = {
 export type ExternalSessionImportMessage = {
   type: "external.session.import";
   externalSessionId: string;
+};
+
+export type AppModelListRequestMessage = {
+  type: "app.model.list";
+  sessionId?: string;
+  includeHidden?: boolean;
+};
+
+export type AppThreadListRequestMessage = {
+  type: "app.thread.list";
+  sessionId?: string;
+  query?: string;
+  cwd?: string;
+  limit?: number;
+};
+
+export type AppThreadImportMessage = {
+  type: "app.thread.import";
+  threadId: string;
+};
+
+export type AppSkillListRequestMessage = {
+  type: "app.skill.list";
+  sessionId?: string;
+  forceReload?: boolean;
+};
+
+export type AppFsListRequestMessage = {
+  type: "app.fs.list";
+  sessionId: string;
+  path?: string;
+};
+
+export type AppFsReadRequestMessage = {
+  type: "app.fs.read";
+  sessionId: string;
+  path: string;
+};
+
+export type AppFileSearchRequestMessage = {
+  type: "app.file.search";
+  sessionId: string;
+  query: string;
+  limit?: number;
+};
+
+export type AppReviewStartRequestMessage = {
+  type: "app.review.start";
+  sessionId: string;
+  target?: "uncommittedChanges" | "custom";
+  instructions?: string;
+  delivery?: "inline" | "detached";
 };
 
 export type CommandListRequestMessage = {
@@ -190,7 +272,16 @@ export type ServerMessage =
   | WorkspaceUpdatedMessage
   | WorkspaceFileSearchResultsMessage
   | ExternalSessionListMessage
+  | AppModelListMessage
+  | AppThreadListMessage
+  | AppSkillListMessage
+  | AppFsListMessage
+  | AppFsFileMessage
+  | AppFileSearchResultsMessage
+  | AppReviewStartedMessage
   | CommandListMessage
+  | SessionGoalUpdatedMessage
+  | SessionGoalClearedMessage
   | RunStartedMessage
   | OutputDeltaMessage
   | MessageStartedMessage
@@ -219,6 +310,18 @@ export type SessionRecord = {
   sandbox: SandboxMode;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  goal?: SessionGoalRecord;
+};
+
+export type SessionGoalRecord = {
+  threadId: string;
+  objective: string;
+  status: GoalStatus;
+  tokenBudget?: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type StoredChatMessage = {
@@ -261,6 +364,77 @@ export type CommandRecord = {
   title: string;
   description: string;
   category: "agent" | "session" | "mode";
+};
+
+export type AppProviderCapabilitiesRecord = {
+  namespaceTools: boolean;
+  imageGeneration: boolean;
+  webSearch: boolean;
+};
+
+export type AppModelRecord = {
+  id: string;
+  model: string;
+  displayName: string;
+  description?: string;
+  hidden: boolean;
+  supportedReasoningEfforts: ReasoningEffort[];
+  defaultReasoningEffort?: ReasoningEffort;
+  inputModalities: string[];
+  supportsPersonality: boolean;
+  isDefault: boolean;
+};
+
+export type AppThreadRecord = {
+  threadId: string;
+  codexSessionId?: string;
+  title: string;
+  preview: string;
+  createdAt: string;
+  updatedAt: string;
+  workdir: string;
+  path?: string;
+  source?: string;
+  status?: string;
+  modelProvider?: string;
+  cliVersion?: string;
+  messageCount?: number;
+};
+
+export type AppThreadHistoryRecord = AppThreadRecord & {
+  messages: StoredChatMessage[];
+};
+
+export type AppSkillRecord = {
+  name: string;
+  description: string;
+  path: string;
+  scope?: string;
+  enabled: boolean;
+};
+
+export type AppSkillGroupRecord = {
+  cwd: string;
+  skills: AppSkillRecord[];
+  errors: string[];
+};
+
+export type AppFsEntryRecord = {
+  path: string;
+  name: string;
+  isDirectory: boolean;
+  isFile: boolean;
+  sizeBytes?: number;
+  mimeType?: string;
+};
+
+export type AppFsFileRecord = {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  mimeType?: string;
+  text?: string;
+  dataBase64?: string;
 };
 
 export type PairingAcceptedMessage = {
@@ -340,9 +514,63 @@ export type ExternalSessionListMessage = {
   sessions: ExternalSessionRecord[];
 };
 
+export type AppModelListMessage = {
+  type: "app.model.list";
+  models: AppModelRecord[];
+  capabilities: AppProviderCapabilitiesRecord;
+};
+
+export type AppThreadListMessage = {
+  type: "app.thread.list";
+  threads: AppThreadRecord[];
+};
+
+export type AppSkillListMessage = {
+  type: "app.skill.list";
+  groups: AppSkillGroupRecord[];
+};
+
+export type AppFsListMessage = {
+  type: "app.fs.list";
+  sessionId: string;
+  path: string;
+  entries: AppFsEntryRecord[];
+};
+
+export type AppFsFileMessage = {
+  type: "app.fs.file";
+  sessionId: string;
+  file: AppFsFileRecord;
+};
+
+export type AppFileSearchResultsMessage = {
+  type: "app.file.search.results";
+  sessionId: string;
+  query: string;
+  files: WorkspaceFileRecord[];
+};
+
+export type AppReviewStartedMessage = {
+  type: "app.review.started";
+  sessionId: string;
+  runId: string;
+  reviewThreadId: string;
+};
+
 export type CommandListMessage = {
   type: "command.list";
   commands: CommandRecord[];
+};
+
+export type SessionGoalUpdatedMessage = {
+  type: "session.goal.updated";
+  sessionId: string;
+  goal: SessionGoalRecord;
+};
+
+export type SessionGoalClearedMessage = {
+  type: "session.goal.cleared";
+  sessionId: string;
 };
 
 export type RunStartedMessage = {

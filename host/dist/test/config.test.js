@@ -9,7 +9,7 @@ describe("resolveConfig", () => {
             "--pair",
             "--insecure-ws-dev",
             "--session-mode",
-            "cli",
+            "app-server",
             "--codex-command",
             "codex",
             "--workdir",
@@ -21,10 +21,13 @@ describe("resolveConfig", () => {
         ]);
         expect(config.pair).toBe(true);
         expect(config.insecureWsDev).toBe(true);
-        expect(config.sessionMode).toBe("cli");
+        expect(config.sessionMode).toBe("app-server");
         expect(config.codexCommand).toBe("codex");
         expect(config.sandbox).toBe("workspace-write");
         expect(config.workspaces).toHaveLength(2);
+    });
+    it("rejects the old cli session adapter mode", () => {
+        expect(() => resolveConfig(["node", "src/index.ts", "--insecure-ws-dev", "--session-mode", "cli"])).toThrow(/mock or app-server/);
     });
     it("supports explicit yolo host opt-in", () => {
         const config = resolveConfig(["node", "src/index.ts", "--insecure-ws-dev", "--allow-yolo"]);
@@ -48,6 +51,22 @@ describe("resolveConfig", () => {
         expect(config.remoteMode).toBe("tunnel");
         expect(config.publicUrl).toBe("wss://unit.trycloudflare.com");
         expect(config.tunnelProvider).toBe("cloudflared");
+    });
+    it("normalizes https tunnel public urls to websocket urls", () => {
+        const config = resolveConfig([
+            "node",
+            "src/index.ts",
+            "--insecure-ws-dev",
+            "--remote-mode",
+            "tunnel",
+            "--public-url",
+            "https://unit.trycloudflare.com",
+            "--tunnel-provider",
+            "cloudflared",
+            "--password",
+            "secret",
+        ]);
+        expect(config.publicUrl).toBe("wss://unit.trycloudflare.com");
     });
     it("allows cloudflared auto tunnel mode without a manual public url", () => {
         const config = resolveConfig([

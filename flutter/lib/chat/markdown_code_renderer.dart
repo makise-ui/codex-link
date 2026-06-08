@@ -13,6 +13,7 @@ class MarkdownCodeRenderer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final segments = _splitFencedCode(text);
+    final accent = Theme.of(context).colorScheme.secondary;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -47,9 +48,13 @@ class MarkdownCodeRenderer extends StatelessWidget {
                       color: CodexColors.text,
                       height: 1.45,
                     ),
-                    code: const TextStyle(
+                    strong: const TextStyle(
+                      color: CodexColors.text,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    code: TextStyle(
                       fontFamily: 'monospace',
-                      color: CodexColors.greenSoft,
+                      color: accent,
                       fontSize: 12,
                     ),
                     codeblockDecoration: BoxDecoration(
@@ -59,12 +64,12 @@ class MarkdownCodeRenderer extends StatelessWidget {
                     blockquoteDecoration: BoxDecoration(
                       border: Border(
                         left: BorderSide(
-                          color: CodexColors.green.withValues(alpha: 0.6),
+                          color: accent.withValues(alpha: 0.6),
                           width: 3,
                         ),
                       ),
                     ),
-                    a: const TextStyle(color: CodexColors.greenSoft),
+                    a: TextStyle(color: accent),
                   ),
             ),
       ],

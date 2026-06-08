@@ -29,12 +29,86 @@ void main() {
       ),
     );
 
-    expect(find.text('Thinking'), findsOneWidget);
     expect(find.byKey(const ValueKey('thinking-inline-row')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thinking-wave-text')), findsOneWidget);
     expect(find.byKey(const ValueKey('thinking-wave-dot-0')), findsOneWidget);
     expect(find.byKey(const ValueKey('thinking-wave-dot-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('thinking-wave-dot-2')), findsOneWidget);
     expect(find.byKey(const ValueKey('activity-card')), findsNothing);
+  });
+
+  testWidgets('renders reasoning summaries as translucent thought cards', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'reasoning-1',
+              role: ChatRole.system,
+              kind: AgentMessageKind.reasoning,
+              text: 'Checked repository shape.',
+              createdAt: DateTime(2026),
+              title: 'Thinking summary',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Checked repository shape.'), findsOneWidget);
+    expect(find.byIcon(Icons.psychology_alt_rounded), findsOneWidget);
+  });
+
+  testWidgets('approval cards expose approve and reject actions', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Approvals',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildCodexTheme(),
+          home: Scaffold(
+            body: MessageBubble(
+              message: ChatMessage(
+                id: 'approval-1',
+                role: ChatRole.system,
+                kind: AgentMessageKind.approval,
+                text: 'approvalId approval-1\nrisk medium\npnpm test',
+                createdAt: DateTime(2026),
+                title: 'Approve command',
+                complete: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Approve command'), findsOneWidget);
+    expect(find.text('pnpm test'), findsOneWidget);
+    expect(find.text('Reject'), findsOneWidget);
+    expect(find.text('Approve'), findsOneWidget);
   });
 
   testWidgets('renders multiple executing messages as one expandable stack', (
@@ -136,7 +210,9 @@ void main() {
     expect(find.text('+new'), findsOneWidget);
   });
 
-  testWidgets('assistant response exposes copy action', (tester) async {
+  testWidgets('assistant response does not show a visible copy button', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildCodexTheme(),
@@ -154,7 +230,7 @@ void main() {
       ),
     );
 
-    expect(find.byTooltip('Copy message'), findsOneWidget);
+    expect(find.byTooltip('Copy message'), findsNothing);
   });
 
   testWidgets('file offer cards expose download action', (tester) async {

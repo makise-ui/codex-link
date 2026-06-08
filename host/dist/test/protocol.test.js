@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "../src/protocol/messages.js";
 import { parseClientMessage } from "../src/protocol/schemas.js";
 describe("protocol schemas", () => {
-    it("uses protocol version 5", () => {
-        expect(PROTOCOL_VERSION).toBe(5);
+    it("uses protocol version 7", () => {
+        expect(PROTOCOL_VERSION).toBe(7);
     });
     it("accepts a valid prompt", () => {
         expect(parseClientMessage({
@@ -47,6 +47,21 @@ describe("protocol schemas", () => {
             model: "gpt-5-codex",
             reasoningEffort: "high",
         });
+        expect(parseClientMessage({ type: "session.goal.set", sessionId: "s1", objective: "Ship app-server adapter", status: "active", tokenBudget: 20000 })).toEqual({
+            type: "session.goal.set",
+            sessionId: "s1",
+            objective: "Ship app-server adapter",
+            status: "active",
+            tokenBudget: 20000,
+        });
+        expect(parseClientMessage({ type: "session.goal.get", sessionId: "s1" })).toEqual({
+            type: "session.goal.get",
+            sessionId: "s1",
+        });
+        expect(parseClientMessage({ type: "session.goal.clear", sessionId: "s1" })).toEqual({
+            type: "session.goal.clear",
+            sessionId: "s1",
+        });
         expect(parseClientMessage({ type: "command.run", sessionId: "s1", commandId: "codex.test" })).toEqual({
             type: "command.run",
             sessionId: "s1",
@@ -88,6 +103,51 @@ describe("protocol schemas", () => {
         expect(parseClientMessage({ type: "external.session.import", externalSessionId: "019ea1ae-ac01-7123-8247-f3f94f79383d" })).toEqual({
             type: "external.session.import",
             externalSessionId: "019ea1ae-ac01-7123-8247-f3f94f79383d",
+        });
+    });
+    it("accepts native app-server capability controls", () => {
+        expect(parseClientMessage({ type: "app.model.list", sessionId: "s1", includeHidden: true })).toEqual({
+            type: "app.model.list",
+            sessionId: "s1",
+            includeHidden: true,
+        });
+        expect(parseClientMessage({ type: "app.thread.list", sessionId: "s1", query: "flutter", cwd: "/repo", limit: 12 })).toEqual({
+            type: "app.thread.list",
+            sessionId: "s1",
+            query: "flutter",
+            cwd: "/repo",
+            limit: 12,
+        });
+        expect(parseClientMessage({ type: "app.thread.import", threadId: "019ea136-cff9-7a00-bf21-62056dd9a1e7" })).toEqual({
+            type: "app.thread.import",
+            threadId: "019ea136-cff9-7a00-bf21-62056dd9a1e7",
+        });
+        expect(parseClientMessage({ type: "app.skill.list", sessionId: "s1", forceReload: true })).toEqual({
+            type: "app.skill.list",
+            sessionId: "s1",
+            forceReload: true,
+        });
+        expect(parseClientMessage({ type: "app.fs.list", sessionId: "s1", path: "lib" })).toEqual({
+            type: "app.fs.list",
+            sessionId: "s1",
+            path: "lib",
+        });
+        expect(parseClientMessage({ type: "app.fs.read", sessionId: "s1", path: "README.md" })).toEqual({
+            type: "app.fs.read",
+            sessionId: "s1",
+            path: "README.md",
+        });
+        expect(parseClientMessage({ type: "app.file.search", sessionId: "s1", query: "@main", limit: 20 })).toEqual({
+            type: "app.file.search",
+            sessionId: "s1",
+            query: "@main",
+            limit: 20,
+        });
+        expect(parseClientMessage({ type: "app.review.start", sessionId: "s1", target: "uncommittedChanges", delivery: "inline" })).toEqual({
+            type: "app.review.start",
+            sessionId: "s1",
+            target: "uncommittedChanges",
+            delivery: "inline",
         });
     });
     it("accepts file request client messages", () => {

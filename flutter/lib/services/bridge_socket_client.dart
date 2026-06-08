@@ -16,7 +16,8 @@ class BridgeSocketClient {
     Duration timeout = const Duration(seconds: 8),
   }) async {
     await close();
-    final uri = Uri.parse(url);
+    final normalizedUrl = normalizeBridgeWebSocketUrl(url);
+    final uri = Uri.parse(normalizedUrl);
     final channel = WebSocketChannel.connect(uri);
     _channel = channel;
     _subscription = channel.stream.listen(
@@ -57,4 +58,28 @@ class BridgeSocketClient {
     await _channel?.sink.close();
     _channel = null;
   }
+}
+
+String normalizeBridgeWebSocketUrl(String rawUrl) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return trimmed;
+  final withScheme = RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(trimmed)
+      ? trimmed
+      : '${_looksLocalBridgeTarget(trimmed) ? 'ws' : 'wss'}://$trimmed';
+  final uri = Uri.parse(withScheme);
+  return switch (uri.scheme) {
+    'http' => uri.replace(scheme: 'ws').toString(),
+    'https' => uri.replace(scheme: 'wss').toString(),
+    _ => uri.toString(),
+  };
+}
+
+bool _looksLocalBridgeTarget(String value) {
+  final host = value.split('/').first.split(':').first.toLowerCase();
+  return host == 'localhost' ||
+      host == '127.0.0.1' ||
+      host == '::1' ||
+      host.startsWith('192.168.') ||
+      host.startsWith('10.') ||
+      RegExp(r'^172\.(1[6-9]|2\d|3[01])\.').hasMatch(host);
 }

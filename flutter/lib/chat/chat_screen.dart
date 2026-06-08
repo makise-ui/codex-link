@@ -186,6 +186,10 @@ class _FloatingTopBar extends StatelessWidget {
                       height: 1.1,
                     ),
                   ),
+                  if (session?.goal != null) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    _ActiveGoalChip(goal: session!.goal!),
+                  ],
                 ],
               ),
             ),
@@ -233,6 +237,54 @@ class _FloatingTopBar extends StatelessWidget {
     Navigator.of(
       context,
     ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+  }
+}
+
+class _ActiveGoalChip extends StatelessWidget {
+  const _ActiveGoalChip({required this.goal});
+
+  final CodexGoalInfo goal;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.secondary;
+    final objective = goal.objective.trim().isEmpty
+        ? 'No objective set'
+        : goal.objective.trim();
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        key: const ValueKey('active-goal-chip'),
+        constraints: const BoxConstraints(maxWidth: 420),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+          border: Border.all(color: accent.withValues(alpha: 0.22)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.flag_rounded, color: accent, size: 14),
+            const SizedBox(width: AppSpacing.xs),
+            Flexible(
+              child: Text(
+                'Goal · $objective',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: CodexColors.text,
+                  height: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -489,6 +541,7 @@ List<_TimelineItem> _timelineItems(
     if (!message.complete &&
         (message.kind == AgentMessageKind.thinking ||
             message.kind == AgentMessageKind.executing ||
+            message.kind == AgentMessageKind.reasoning ||
             message.kind == AgentMessageKind.response)) {
       hasActiveLiveItem = true;
     }
@@ -601,9 +654,6 @@ class _CommandRail extends StatelessWidget {
             ),
             label: Text(command.title),
             tooltip: command.description,
-            onPressed: controller.isRunning
-                ? null
-                : () => controller.runCommand(command),
             labelStyle: const TextStyle(
               color: CodexColors.text,
               fontSize: 12,
@@ -615,10 +665,30 @@ class _CommandRail extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
             ),
             visualDensity: VisualDensity.compact,
+            onPressed: controller.isRunning && command.commandId != 'codex.stop'
+                ? null
+                : () => _runRailCommand(context, controller, command),
           );
         },
       ),
     );
+  }
+
+  void _runRailCommand(
+    BuildContext context,
+    AppController controller,
+    CodexCommandInfo command,
+  ) {
+    switch (command.commandId) {
+      case 'codex.sessions':
+      case 'codex.model':
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+        return;
+      default:
+        controller.runCommand(command);
+    }
   }
 }
 
@@ -636,7 +706,6 @@ class _PromptComposer extends StatefulWidget {
 }
 
 class _PromptComposerState extends State<_PromptComposer> {
-  bool _commandSheetOpen = false;
   final List<PromptAttachmentInfo> _attachments = [];
   Timer? _fileMentionDebounce;
 
@@ -656,6 +725,19 @@ class _PromptComposerState extends State<_PromptComposer> {
             controller.fileSuggestionQuery != activeMention.query
         ? const <WorkspaceFileInfo>[]
         : controller.fileSuggestions;
+    final slashQuery = _slashCommandQuery(textController.text);
+    final slashCommands = slashQuery == null
+        ? const <CodexCommandInfo>[]
+        : controller.commands
+              .where(
+                (command) =>
+                    command.category != 'mode' &&
+                    (command.commandId.toLowerCase().contains(slashQuery) ||
+                        command.title.toLowerCase().contains(slashQuery) ||
+                        command.description.toLowerCase().contains(slashQuery)),
+              )
+              .take(6)
+              .toList(growable: false);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -679,6 +761,14 @@ class _PromptComposerState extends State<_PromptComposer> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (slashQuery != null && controller.isConnected) ...[
+                  _SlashCommandSuggestions(
+                    commands: slashCommands,
+                    onSendFile: _insertSendCommand,
+                    onCommand: _runSlashCommand,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                ],
                 if (activeMention != null && fileSuggestions.isNotEmpty) ...[
                   _FileMentionSuggestions(
                     files: fileSuggestions,
@@ -806,9 +896,7 @@ class _PromptComposerState extends State<_PromptComposer> {
   }
 
   void _handleTextChanged(String value) {
-    if (value == '/' && !_commandSheetOpen) {
-      _showCommandPicker(context);
-    }
+    setState(() {});
     final mention = _activeFileMention(widget.textController.value);
     if (mention == null ||
         !widget.controller.isConnected ||
@@ -822,6 +910,37 @@ class _PromptComposerState extends State<_PromptComposer> {
       if (!mounted) return;
       widget.controller.searchWorkspaceFiles(mention.query);
     });
+  }
+
+  void _insertSendCommand() {
+    widget.textController.value = const TextEditingValue(
+      text: '/send ',
+      selection: TextSelection.collapsed(offset: 6),
+    );
+    widget.controller.clearFileSuggestions();
+    setState(() {});
+  }
+
+  void _runSlashCommand(CodexCommandInfo command) {
+    widget.textController.clear();
+    widget.controller.clearFileSuggestions();
+    switch (command.commandId) {
+      case 'codex.goal':
+        widget.textController.value = const TextEditingValue(
+          text: '/goal ',
+          selection: TextSelection.collapsed(offset: 6),
+        );
+        break;
+      case 'codex.sessions':
+      case 'codex.model':
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+        break;
+      default:
+        widget.controller.runCommand(command);
+    }
+    setState(() {});
   }
 
   void _insertFileMention(WorkspaceFileInfo file) {
@@ -914,59 +1033,116 @@ class _PromptComposerState extends State<_PromptComposer> {
       }
     });
   }
-
-  Future<void> _showCommandPicker(BuildContext context) async {
-    final commands = widget.controller.commands
-        .where((command) => command.category != 'mode')
-        .toList();
-    if (!widget.controller.isConnected) return;
-    _commandSheetOpen = true;
-    final picked = await showModalBottomSheet<CodexCommandInfo>(
-      context: context,
-      backgroundColor: CodexColors.panel,
-      showDragHandle: true,
-      builder: (context) => ListView.separated(
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg,
-          AppSpacing.sm,
-          AppSpacing.lg,
-          AppSpacing.xl,
-        ),
-        itemCount: commands.length + 1,
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return ListTile(
-              leading: const Icon(Icons.file_download_outlined),
-              title: const Text('/send <path>'),
-              subtitle: const Text('Offer a workspace file to this phone'),
-              onTap: () {
-                widget.textController
-                  ..text = '/send '
-                  ..selection = const TextSelection.collapsed(offset: 6);
-                Navigator.of(context).pop();
-              },
-            );
-          }
-          final command = commands[index - 1];
-          return ListTile(
-            leading: const Icon(Icons.keyboard_command_key_rounded),
-            title: Text('/${command.title}'),
-            subtitle: Text(command.description),
-            onTap: () => Navigator.of(context).pop(command),
-          );
-        },
-      ),
-    );
-    _commandSheetOpen = false;
-    if (!mounted || picked == null) return;
-    widget.textController.clear();
-    widget.controller.runCommand(picked);
-  }
 }
 
 enum _AttachmentPickMode { image, file }
+
+class _SlashCommandSuggestions extends StatelessWidget {
+  const _SlashCommandSuggestions({
+    required this.commands,
+    required this.onSendFile,
+    required this.onCommand,
+  });
+
+  final List<CodexCommandInfo> commands;
+  final VoidCallback onSendFile;
+  final ValueChanged<CodexCommandInfo> onCommand;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleCommands = commands.take(5).toList(growable: false);
+    return Container(
+      key: const ValueKey('slash-command-suggestions'),
+      constraints: const BoxConstraints(maxHeight: 232),
+      decoration: BoxDecoration(
+        color: CodexColors.ink2.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(
+          color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+        ),
+      ),
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        children: [
+          _SlashCommandRow(
+            key: const ValueKey('slash-command-/send'),
+            icon: Icons.file_download_outlined,
+            title: '/send',
+            description: 'Offer a workspace file to this phone',
+            onTap: onSendFile,
+          ),
+          for (final command in visibleCommands)
+            _SlashCommandRow(
+              key: ValueKey('slash-command-${command.commandId}'),
+              icon: Icons.keyboard_command_key_rounded,
+              title: _slashCommandName(command),
+              description: command.description,
+              onTap: () => onCommand(command),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _slashCommandName(CodexCommandInfo command) {
+  final tail = command.commandId.split('.').last.trim();
+  return '/${tail.isEmpty ? command.title.toLowerCase() : tail.toLowerCase()}';
+}
+
+class _SlashCommandRow extends StatelessWidget {
+  const _SlashCommandRow({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 17, color: CodexColors.muted),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.labelLarge),
+                  const SizedBox(height: AppSpacing.xxs),
+                  Text(
+                    description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: CodexColors.dim,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _FileMentionSuggestions extends StatelessWidget {
   const _FileMentionSuggestions({
@@ -1094,6 +1270,13 @@ _FileMention? _activeFileMention(TextEditingValue value) {
   final query = beforeCursor.substring(atIndex + 1);
   if (query.contains(RegExp(r'\s'))) return null;
   return _FileMention(start: atIndex, end: cursor, query: query);
+}
+
+String? _slashCommandQuery(String text) {
+  final trimmed = text.trimLeft();
+  if (!trimmed.startsWith('/')) return null;
+  if (trimmed.contains(RegExp(r'\s'))) return null;
+  return trimmed.substring(1).toLowerCase();
 }
 
 String _formatBytes(int bytes) {

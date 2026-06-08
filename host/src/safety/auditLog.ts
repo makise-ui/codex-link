@@ -8,6 +8,7 @@ export type AuditEvent = {
     | "device.disconnected"
     | "session.started"
     | "prompt.submitted"
+    | "approval.decided"
     | "run.cancelled"
     | "run.failed"
     | "run.completed";

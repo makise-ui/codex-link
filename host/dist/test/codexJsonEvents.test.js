@@ -38,6 +38,38 @@ describe("Codex JSONL mapping", () => {
             itemId: "cmd-1",
         });
     });
+    it("labels SKILL.md reads as skill usage instead of generic file reads", () => {
+        expect(mapCodexJsonEvent({
+            type: "item.started",
+            item: {
+                id: "skill-1",
+                type: "command_execution",
+                command: "/usr/bin/zsh -lc \"sed -n '1,120p' /home/kurisu/.codex/skills/flutter/SKILL.md\"",
+            },
+        })).toEqual({
+            kind: "message_started",
+            messageKind: "executing",
+            title: "Using skill",
+            text: 'Using skill: flutter\nPath: /home/kurisu/.codex/skills/flutter/SKILL.md\nCommand: /usr/bin/zsh -lc "sed -n \'1,120p\' /home/kurisu/.codex/skills/flutter/SKILL.md"',
+            itemId: "skill-1",
+        });
+    });
+    it("labels lowercase skills.md reads as skill usage", () => {
+        expect(mapCodexJsonEvent({
+            type: "item.started",
+            item: {
+                id: "skill-2",
+                type: "command_execution",
+                command: "/usr/bin/zsh -lc \"sed -n '1,120p' /home/kurisu/.codex/skills/flutter/skills.md\"",
+            },
+        })).toEqual({
+            kind: "message_started",
+            messageKind: "executing",
+            title: "Using skill",
+            text: 'Using skill: flutter\nPath: /home/kurisu/.codex/skills/flutter/skills.md\nCommand: /usr/bin/zsh -lc "sed -n \'1,120p\' /home/kurisu/.codex/skills/flutter/skills.md"',
+            itemId: "skill-2",
+        });
+    });
     it("summarizes very long command output with first and last lines", () => {
         const output = Array.from({ length: 95 }, (_, index) => `line ${index + 1}`).join("\n");
         const mapped = mapCodexJsonEvent({

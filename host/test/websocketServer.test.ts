@@ -53,7 +53,7 @@ describe("startBridgeServer", () => {
     });
     const hostInfo = messages.find((message) => message.type === "host.info");
     expect(hostInfo).toMatchObject({
-      version: 5,
+      version: 7,
       connectionMode: "tunnel",
       tunnelProvider: "cloudflared",
       publicUrl: "wss://unit.trycloudflare.com",
@@ -152,15 +152,136 @@ describe("startBridgeServer", () => {
 
     ws.close();
   });
+
+  it("forwards goal and approval messages to the session manager", async () => {
+    const port = await freePort();
+    const sessionManager = fakeSessionManager();
+    server = await startBridgeServer({
+      host: "127.0.0.1",
+      port,
+      url: `ws://127.0.0.1:${port}`,
+      pairingStore: new PairingStore({ password: "secret" }),
+      sessionManager,
+      auditLog: { record() {} } as unknown as AuditLog,
+      logger: { info() {} } as unknown as pino.Logger,
+      hostInfo: {
+        connectionMode: "tunnel",
+        tunnelProvider: "cloudflared",
+        publicUrl: "wss://unit.trycloudflare.com",
+        localUrl: `ws://127.0.0.1:${port}`,
+        hostLabel: "Codex Link",
+        yoloAllowed: false,
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+    });
+
+    ws.send(JSON.stringify({ type: "session.goal.set", sessionId: "s1", objective: "Finish replacement", status: "active" }));
+    ws.send(JSON.stringify({ type: "session.goal.get", sessionId: "s1" }));
+    ws.send(JSON.stringify({ type: "approval.decision", sessionId: "s1", approvalId: "approval-1", decision: "approve" }));
+    ws.send(JSON.stringify({ type: "session.goal.clear", sessionId: "s1" }));
+
+    await eventually(() => {
+      expect(sessionManager.goalSets).toHaveLength(1);
+      expect(sessionManager.goalGets).toEqual(["s1"]);
+      expect(sessionManager.approvals).toEqual([{ sessionId: "s1", approvalId: "approval-1", decision: "approve" }]);
+      expect(sessionManager.goalClears).toEqual(["s1"]);
+      expect(messages.some((message) => message.type === "session.goal.updated")).toBe(true);
+      expect(messages.some((message) => message.type === "session.goal.cleared")).toBe(true);
+    });
+    expect(messages.some((message) => message.type === "error" && message.code === "approval.not_implemented")).toBe(false);
+
+    ws.close();
+  });
+
+  it("forwards native app-server capability messages to the session manager", async () => {
+    const port = await freePort();
+    const sessionManager = fakeSessionManager();
+    server = await startBridgeServer({
+      host: "127.0.0.1",
+      port,
+      url: `ws://127.0.0.1:${port}`,
+      pairingStore: new PairingStore({ password: "secret" }),
+      sessionManager,
+      auditLog: { record() {} } as unknown as AuditLog,
+      logger: { info() {} } as unknown as pino.Logger,
+      hostInfo: {
+        connectionMode: "tunnel",
+        tunnelProvider: "cloudflared",
+        publicUrl: "wss://unit.trycloudflare.com",
+        localUrl: `ws://127.0.0.1:${port}`,
+        hostLabel: "Codex Link",
+        yoloAllowed: false,
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+    });
+
+    ws.send(JSON.stringify({ type: "app.model.list", sessionId: "s1", includeHidden: true }));
+    ws.send(JSON.stringify({ type: "app.thread.list", sessionId: "s1", query: "native", limit: 5 }));
+    ws.send(JSON.stringify({ type: "app.skill.list", sessionId: "s1", forceReload: true }));
+    ws.send(JSON.stringify({ type: "app.fs.list", sessionId: "s1", path: "lib" }));
+    ws.send(JSON.stringify({ type: "app.fs.read", sessionId: "s1", path: "README.md" }));
+    ws.send(JSON.stringify({ type: "app.file.search", sessionId: "s1", query: "@main", limit: 8 }));
+    ws.send(JSON.stringify({ type: "app.review.start", sessionId: "s1", target: "custom", instructions: "review", delivery: "inline" }));
+    ws.send(JSON.stringify({ type: "app.thread.import", threadId: "native-thread" }));
+
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "app.model.list")).toBe(true);
+      expect(messages.some((message) => message.type === "app.thread.list")).toBe(true);
+      expect(messages.some((message) => message.type === "app.skill.list")).toBe(true);
+      expect(messages.some((message) => message.type === "app.fs.list")).toBe(true);
+      expect(messages.some((message) => message.type === "app.fs.file")).toBe(true);
+      expect(messages.some((message) => message.type === "app.file.search.results")).toBe(true);
+      expect(messages.some((message) => message.type === "app.review.started")).toBe(true);
+      expect(sessionManager.importedAppThreads).toEqual(["native-thread"]);
+    });
+
+    ws.close();
+  });
 });
 
-function fakeSessionManager(): CodexSessionManager & { requestedFiles: Array<{ sessionId: string; path: string }>; fileSearches: Array<{ sessionId: string; query?: string; limit?: number }> } {
+function fakeSessionManager(): CodexSessionManager & {
+  requestedFiles: Array<{ sessionId: string; path: string }>;
+  fileSearches: Array<{ sessionId: string; query?: string; limit?: number }>;
+  goalSets: Array<{ sessionId: string; objective?: string; status?: string; tokenBudget?: number | null }>;
+  goalGets: string[];
+  goalClears: string[];
+  approvals: Array<{ sessionId: string; approvalId: string; decision: "approve" | "reject" }>;
+  importedAppThreads: string[];
+} {
   const requestedFiles: Array<{ sessionId: string; path: string }> = [];
   const fileSearches: Array<{ sessionId: string; query?: string; limit?: number }> = [];
+  const goalSets: Array<{ sessionId: string; objective?: string; status?: string; tokenBudget?: number | null }> = [];
+  const goalGets: string[] = [];
+  const goalClears: string[] = [];
+  const approvals: Array<{ sessionId: string; approvalId: string; decision: "approve" | "reject" }> = [];
+  const importedAppThreads: string[] = [];
   let listener: ((event: unknown) => void) | undefined;
   return {
     requestedFiles,
     fileSearches,
+    goalSets,
+    goalGets,
+    goalClears,
+    approvals,
+    importedAppThreads,
     onEvent: (callback: (event: unknown) => void) => {
       listener = callback;
       return () => {
@@ -192,6 +313,93 @@ function fakeSessionManager(): CodexSessionManager & { requestedFiles: Array<{ s
         files: [{ path: "lib/main.dart", name: "main.dart", sizeBytes: 14, mimeType: "text/plain" }],
       };
     },
+    setGoal: async (sessionId: string, input: { objective?: string; status?: string; tokenBudget?: number | null }) => {
+      goalSets.push({ sessionId, ...input });
+      const goal = {
+        threadId: "thread-1",
+        objective: input.objective ?? "Finish replacement",
+        status: input.status ?? "active",
+        tokenBudget: input.tokenBudget ?? null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      listener?.({ type: "session.goal.updated", sessionId, goal });
+      return goal;
+    },
+    getGoal: async (sessionId: string) => {
+      goalGets.push(sessionId);
+      return {
+        threadId: "thread-1",
+        objective: "Finish replacement",
+        status: "active",
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+    },
+    clearGoal: async (sessionId: string) => {
+      goalClears.push(sessionId);
+      listener?.({ type: "session.goal.cleared", sessionId });
+      return true;
+    },
+    decideApproval: async (sessionId: string, approvalId: string, decision: "approve" | "reject") => {
+      approvals.push({ sessionId, approvalId, decision });
+    },
+    listAppModels: async (_sessionId?: string, _includeHidden?: boolean) => ({
+      type: "app.model.list",
+      models: [{ id: "gpt-test", model: "gpt-test", displayName: "GPT Test", hidden: false, supportedReasoningEfforts: ["low"], inputModalities: ["text"], supportsPersonality: false, isDefault: true }],
+      capabilities: { namespaceTools: true, imageGeneration: true, webSearch: true },
+    }),
+    listAppThreads: async () => ({
+      type: "app.thread.list",
+      threads: [{ threadId: "native-thread", title: "Native", preview: "Native", createdAt: "2026-06-07T00:00:00.000Z", updatedAt: "2026-06-07T00:00:00.000Z", workdir: "/tmp/unit" }],
+    }),
+    importAppThread: async (threadId: string) => {
+      importedAppThreads.push(threadId);
+      return {
+        sessionId: "imported",
+        title: "Imported native",
+        createdAt: "2026-06-07T00:00:00.000Z",
+        updatedAt: "2026-06-07T00:00:00.000Z",
+        workspaceId: "default",
+        workdir: "/tmp/unit",
+        lastStatus: "idle",
+        mode: "safe",
+        sandbox: "workspace-write",
+        codexThreadId: threadId,
+      };
+    },
+    listAppSkills: async () => ({
+      type: "app.skill.list",
+      groups: [{ cwd: "/tmp/unit", skills: [{ name: "flutter-design-system", description: "Token discipline", path: "/tmp/SKILL.md", enabled: true }], errors: [] }],
+    }),
+    listAppDirectory: async (sessionId: string, directoryPath = "") => ({
+      type: "app.fs.list",
+      sessionId,
+      path: directoryPath,
+      entries: [{ path: "lib/main.dart", name: "main.dart", isDirectory: false, isFile: true }],
+    }),
+    readAppFile: async (sessionId: string, filePath: string) => ({
+      type: "app.fs.file",
+      sessionId,
+      file: { path: filePath, name: "README.md", sizeBytes: 7, mimeType: "text/plain", text: "# Unit\n" },
+    }),
+    searchAppFiles: async (sessionId: string, query: string, limit?: number) => ({
+      type: "app.file.search.results",
+      sessionId,
+      query,
+      files: [{ path: "lib/main.dart", name: "main.dart", sizeBytes: limit, mimeType: "text/plain" }],
+    }),
+    startReview: async (sessionId: string) => ({
+      type: "app.review.started",
+      sessionId,
+      runId: "review-1",
+      reviewThreadId: "thread-review",
+    }),
     listSessions: () => [
       {
         sessionId: "s1",
@@ -208,7 +416,15 @@ function fakeSessionManager(): CodexSessionManager & { requestedFiles: Array<{ s
     getWorkspaces: () => [],
     getSessionHistory: () => [],
     listExternalSessions: async () => [],
-  } as unknown as CodexSessionManager & { requestedFiles: Array<{ sessionId: string; path: string }>; fileSearches: Array<{ sessionId: string; query?: string; limit?: number }> };
+  } as unknown as CodexSessionManager & {
+    requestedFiles: Array<{ sessionId: string; path: string }>;
+    fileSearches: Array<{ sessionId: string; query?: string; limit?: number }>;
+    goalSets: Array<{ sessionId: string; objective?: string; status?: string; tokenBudget?: number | null }>;
+    goalGets: string[];
+    goalClears: string[];
+    approvals: Array<{ sessionId: string; approvalId: string; decision: "approve" | "reject" }>;
+    importedAppThreads: string[];
+  };
 }
 
 async function freePort(): Promise<number> {

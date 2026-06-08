@@ -1,11 +1,11 @@
 # Codex Link
 
-Codex Link controls a Codex CLI/agent session from a mobile app over a local connection or an explicit secure tunnel.
+Codex Link controls a Codex app-server/agent session from a mobile app over a local connection or an explicit secure tunnel.
 
 The project intentionally uses a **host bridge** instead of exposing Codex directly to the phone:
 
 ```text
-Flutter app  ──ws:// local or wss:// tunnel──▶  Host bridge  ──local process/stdio──▶  Codex CLI
+Flutter app  ──ws:// local or wss:// tunnel──▶  Host bridge  ──local process/stdio──▶  Codex app-server
 ```
 
 ## Security posture
@@ -16,7 +16,7 @@ Do **not** expose the bridge directly on a public VPS port for V1. Tunnel mode r
 
 The mobile app never sends arbitrary shell commands. It sends structured messages (`prompt.send`, `session.create`, `workspace.switch`, `command.run`, `file.offer.request`, `file.request`, `run.cancel`, etc.) to the host bridge. The host remains the policy authority.
 
-Yolo mode is intentionally gated. The app can only switch a session to yolo when the host is started with `--allow-yolo`; that maps future runs in that session to Codex `--dangerously-bypass-approvals-and-sandbox` and should only be used in a trusted local workspace.
+Yolo mode is intentionally gated. The app can only switch a session to yolo when the host is started with `--allow-yolo`; that maps future runs in that session to Codex `danger-full-access` with approvals disabled and should only be used in a trusted local workspace.
 
 ## Theme
 
@@ -25,7 +25,7 @@ The new Flutter UI uses a ChatGPT-mobile-inspired dark theme: pure black backgro
 ## Project layout
 
 ```text
-host/      Node.js + TypeScript bridge with pairing, protocol v5, multi-session state, tunnel metadata, file offers, file mentions, and CLI Codex adapter
+host/      Node.js + TypeScript bridge with pairing, protocol v6, multi-session state, tunnel metadata, file offers, file mentions, and Codex app-server adapter
 flutter/   Flutter Android client with QR/password pairing, sessions, workspace switching, commands, model settings, file cards, and rich chat UI
 android/   Original Kotlin + Jetpack Compose prototype client kept as a fallback
 shared/    Protocol reference schema
@@ -53,7 +53,7 @@ export CODEX_LINK_PASSWORD="testpass"
 pnpm --filter @codex-lan/host dev -- \
   --pair \
   --insecure-ws-dev \
-  --session-mode cli \
+  --session-mode app-server \
   --codex-command codex \
   --workdir /path/to/allowed/project \
   --sandbox workspace-write \
@@ -64,7 +64,9 @@ pnpm --filter @codex-lan/host dev -- \
 
 The host binds to `127.0.0.1:8787`, starts `cloudflared tunnel --url http://127.0.0.1:8787`, waits for the generated `https://...trycloudflare.com` URL, converts it to `wss://...trycloudflare.com`, then prints the QR/manual pairing payload with that URL.
 
-Manual mode still works if you prefer to run cloudflared yourself:
+Manual mode still works if you prefer to run cloudflared yourself. You can pass
+the generated `https://...trycloudflare.com` URL directly; the host and app
+normalize tunnel HTTP URLs to WebSocket URLs.
 
 ```bash
 cloudflared tunnel --url http://127.0.0.1:8787
@@ -76,13 +78,13 @@ Then pass the printed URL converted from `https://` to `wss://`:
 pnpm --filter @codex-lan/host dev -- \
   --pair \
   --insecure-ws-dev \
-  --session-mode cli \
+  --session-mode app-server \
   --codex-command codex \
   --workdir /path/to/allowed/project \
   --sandbox workspace-write \
   --password "$CODEX_LINK_PASSWORD" \
   --remote-mode tunnel \
-  --public-url wss://YOUR-CLOUDFLARED-DOMAIN.trycloudflare.com \
+  --public-url https://YOUR-CLOUDFLARED-DOMAIN.trycloudflare.com \
   --tunnel-provider cloudflared
 ```
 
@@ -106,7 +108,7 @@ Use the printed public HTTPS host as `wss://...`:
 pnpm --filter @codex-lan/host dev -- \
   --pair \
   --insecure-ws-dev \
-  --session-mode cli \
+  --session-mode app-server \
   --codex-command codex \
   --workdir /path/to/allowed/project \
   --sandbox workspace-write \
@@ -124,7 +126,7 @@ Any provider that forwards WebSocket traffic from a public `wss://` URL to `http
 pnpm --filter @codex-lan/host dev -- \
   --pair \
   --insecure-ws-dev \
-  --session-mode cli \
+  --session-mode app-server \
   --codex-command codex \
   --workdir /path/to/allowed/project \
   --sandbox workspace-write \
@@ -134,25 +136,25 @@ pnpm --filter @codex-lan/host dev -- \
   --tunnel-provider other
 ```
 
-## Host bridge with real Codex CLI
+## Host bridge with real Codex app-server
 
 The default mode is `mock`, which is best for proving mobile pairing and streaming.
 
-To run the real CLI adapter with file creation enabled inside a trusted workspace:
+To run the real app-server adapter with file creation enabled inside a trusted workspace:
 
 ```bash
 pnpm --filter @codex-lan/host dev -- \
   --pair \
   --insecure-ws-dev \
-  --session-mode cli \
+  --session-mode app-server \
   --codex-command codex \
   --workdir /path/to/allowed/project \
   --sandbox workspace-write
 ```
 
-The bridge spawns the configured command with `shell: false`, passes each safe prompt as `codex exec --json --skip-git-repo-check --sandbox <mode> -- <prompt>` for new sessions, avoids keeping a stdin pipe open, parses Codex JSONL events into `thinking`, `executing`, and `response` messages, and cancels with `SIGINT`/`SIGTERM`.
+The bridge spawns the configured command with `shell: false`, starts `codex app-server` over stdio JSON-RPC, maps Codex notifications into `thinking`, `executing`, `response`, file-change, approval, and goal messages, and cancels active turns with `turn/interrupt`.
 
-Follow-up prompts in the same mobile session use the stored Codex thread id through `codex exec --json --skip-git-repo-check --sandbox <mode> resume <threadId> -- <prompt>`, so the app no longer creates a fresh Codex conversation for every message.
+Follow-up prompts in the same mobile session use the stored Codex thread id through app-server `turn/start`/`turn/steer`, so the app no longer creates a fresh Codex conversation for every message.
 
 ### Sending files to the phone
 
@@ -172,7 +174,7 @@ The host controls which workspaces the app can switch between. The default `--wo
 
 ```bash
 pnpm --filter @codex-lan/host dev -- \
-  --pair --insecure-ws-dev --session-mode cli \
+  --pair --insecure-ws-dev --session-mode app-server \
   --workdir /home/kurisu/project-a \
   --workspace /home/kurisu/project-b \
   --workspace /home/kurisu/project-c
@@ -186,13 +188,13 @@ Safe mode uses the host default sandbox, normally `workspace-write`. To allow th
 
 ```bash
 pnpm --filter @codex-lan/host dev -- \
-  --pair --insecure-ws-dev --session-mode cli \
+  --pair --insecure-ws-dev --session-mode app-server \
   --workdir /path/to/trusted/project \
   --sandbox workspace-write \
   --allow-yolo
 ```
 
-Only enable this on a trusted LAN and trusted workspace. Yolo switches that session to Codex's dangerous bypass flag so commands can run automatically without approvals or sandboxing.
+Only enable this on a trusted LAN and trusted workspace. Yolo switches that session to Codex's `danger-full-access` mode so commands can run automatically without approvals or sandboxing.
 
 ## Flutter quick start
 
@@ -215,28 +217,28 @@ Install the debug APK from:
 - One-time QR/manual pairing.
 - Password login and stored device token reconnect.
 - Local/LAN mode and explicit tunnel mode.
-- Protocol v5 session list/create/delete/rename and workspace file search.
+- Protocol v6 session list/create/delete/rename, native goal RPC, and workspace file search.
 - Host info dashboard with local URL, public URL, provider, and yolo allowance.
 - Persistent Codex thread id per mobile session.
 - Workspace switching from the app, limited to host-configured paths.
 - Safe/yolo mode toggle with host-side yolo opt-in.
 - Host command catalog exposed to the app.
+- Native app-server `/goal` handling through `thread/goal/set`, `thread/goal/get`, and `thread/goal/clear`.
 - Send prompts and render rich agent events.
 - Host-to-app file offers and downloads for generated, uploaded, and explicitly requested workspace-bound files.
 - Render `thinking`, `executing`, `response`, system, and error messages.
 - Copy actions for prompts, responses, file paths, and file cards.
 - Markdown and syntax-highlighted code rendering.
 - Cancel active runs.
+- Approval request forwarding from app-server to the bridge protocol.
 - Smooth ChatGPT/Codex-style Flutter UI.
 
 ## Planned hardening
 
 - QR-pinned certificate fingerprint for self-hosted TLS.
 - Device revocation UI.
-- Real Codex app-server JSON-RPC adapter.
-- Approval request forwarding.
 - Chunked file downloads for larger files.
-- Approval-specific risk display.
+- Approval-specific risk display and richer permission UI.
 
 ## License
 

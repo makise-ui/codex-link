@@ -81,30 +81,9 @@ class _UserMessage extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: AppSpacing.xs),
-            _CopyMessageButton(text: message.text),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _CopyMessageButton extends StatelessWidget {
-  const _CopyMessageButton({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      tooltip: 'Copy message',
-      visualDensity: VisualDensity.compact,
-      iconSize: 17,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 28, height: 28),
-      onPressed: text.trim().isEmpty ? null : () => _copyMessage(context, text),
-      icon: const Icon(Icons.copy_rounded, color: CodexColors.muted),
     );
   }
 }
@@ -134,6 +113,7 @@ class _ResponseReveal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.secondary;
     final disableAnimations =
         MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     if (disableAnimations) return child;
@@ -152,7 +132,7 @@ class _ResponseReveal extends StatelessWidget {
               width: 2,
               height: 24,
               decoration: BoxDecoration(
-                color: CodexColors.greenSoft,
+                color: accent,
                 borderRadius: BorderRadius.circular(AppRadius.pill),
               ),
             ),
@@ -187,6 +167,12 @@ class _AssistantMessage extends StatelessWidget {
         active: !message.complete,
         complete: message.complete,
       );
+    }
+    if (message.kind == AgentMessageKind.reasoning) {
+      return _ReasoningSummaryCard(message: message);
+    }
+    if (message.kind == AgentMessageKind.approval) {
+      return _ApprovalCard(message: message);
     }
     if (message.kind == AgentMessageKind.error) {
       return _ErrorBlock(text: message.text);
@@ -225,9 +211,141 @@ class _AssistantMessage extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: AppSpacing.xs),
-            _CopyMessageButton(text: message.text),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReasoningSummaryCard extends StatelessWidget {
+  const _ReasoningSummaryCard({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.secondary;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 620),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: CodexColors.panel.withValues(alpha: 0.42),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(
+              color: accent.withValues(alpha: AppOpacity.border),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.psychology_alt_rounded, color: accent, size: 17),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  message.text.trim().isEmpty
+                      ? (message.title ?? 'Thinking summary')
+                      : message.text.trim(),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: CodexColors.muted,
+                    height: 1.38,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ApprovalCard extends StatelessWidget {
+  const _ApprovalCard({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.read<AppController>();
+    final approval = ApprovalRequestInfo.fromText(
+      message.text,
+      fallbackTitle: message.title,
+    );
+    final accent = Theme.of(context).colorScheme.secondary;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 620),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: CodexColors.panelHigh.withValues(alpha: AppOpacity.panel),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: accent.withValues(alpha: 0.28)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.verified_user_outlined, color: accent, size: 18),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      approval.title,
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ),
+                  Text(
+                    approval.riskLevel,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: CodexColors.muted),
+                  ),
+                ],
+              ),
+              if (approval.body.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  approval.body,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: CodexColors.muted,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+              if (!message.complete && approval.approvalId.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.md),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => controller.decideApproval(
+                        approval.approvalId,
+                        'reject',
+                      ),
+                      icon: const Icon(Icons.close_rounded, size: 17),
+                      label: const Text('Reject'),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    FilledButton.icon(
+                      onPressed: () => controller.decideApproval(
+                        approval.approvalId,
+                        'approve',
+                      ),
+                      icon: const Icon(Icons.check_rounded, size: 17),
+                      label: const Text('Approve'),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -343,6 +461,10 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
       final target = _activityTarget(message);
       return target == null ? 'Read file' : 'Read $target';
     }
+    if (lower.contains('skill')) {
+      final target = _skillTarget(message);
+      return target == null ? 'Using skill' : 'Using skill: $target';
+    }
     if (lower.contains('editing')) return 'Edited files';
     if (lower.contains('command')) return 'Ran command';
     return '$title completed';
@@ -371,6 +493,12 @@ String? _activityTarget(ChatMessage message) {
       .where((part) => part.isNotEmpty)
       .toList(growable: false);
   return parts.isEmpty ? null : parts.last;
+}
+
+String? _skillTarget(ChatMessage message) {
+  final explicit = RegExp(r"Using skill:\s*([^\n]+)").firstMatch(message.text);
+  final name = explicit?.group(1)?.trim();
+  return name == null || name.isEmpty ? null : name;
 }
 
 class _ActivityStackRow extends StatelessWidget {
@@ -472,18 +600,83 @@ class _ThinkingLineState extends State<_ThinkingLine>
           key: const ValueKey('thinking-inline-row'),
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Thinking',
-              style: TextStyle(
-                color: CodexColors.muted,
-                fontWeight: FontWeight.w600,
-              ),
+            _ThinkingWaveText(
+              key: const ValueKey('thinking-wave-text'),
+              text: 'Thinking',
+              animation: _controller,
             ),
             const SizedBox(width: AppSpacing.sm),
             _ThinkingDots(animation: _controller),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ThinkingWaveText extends StatelessWidget {
+  const _ThinkingWaveText({
+    super.key,
+    required this.text,
+    required this.animation,
+  });
+
+  final String text;
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    final disableAnimations =
+        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (disableAnimations) {
+      return Text(
+        text,
+        style: const TextStyle(
+          color: CodexColors.muted,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        final letters = text.split('');
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var index = 0; index < letters.length; index++)
+              Transform.translate(
+                offset: Offset(
+                  0,
+                  math.sin(
+                        ((animation.value + index * 0.055) % 1.0) * math.pi * 2,
+                      ) *
+                      0.8,
+                ),
+                child: Opacity(
+                  opacity:
+                      (0.52 +
+                              (0.28 *
+                                  math
+                                      .sin(
+                                        ((animation.value + index * 0.055) %
+                                                1.0) *
+                                            math.pi,
+                                      )
+                                      .clamp(0.0, 1.0)))
+                          .toDouble(),
+                  child: Text(
+                    letters[index],
+                    style: const TextStyle(
+                      color: CodexColors.muted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -567,6 +760,7 @@ class _ActivityCardState extends State<_ActivityCard>
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.secondary;
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -583,14 +777,12 @@ class _ActivityCardState extends State<_ActivityCard>
             borderRadius: BorderRadius.circular(AppRadius.lg),
             border: Border.all(
               color: widget.active
-                  ? CodexColors.greenSoft.withValues(alpha: AppOpacity.glow)
+                  ? accent.withValues(alpha: AppOpacity.glow)
                   : CodexColors.text.withValues(alpha: AppOpacity.hairline),
             ),
             boxShadow: [
               BoxShadow(
-                color: CodexColors.greenSoft.withValues(
-                  alpha: widget.active ? 0.06 : 0,
-                ),
+                color: accent.withValues(alpha: widget.active ? 0.06 : 0),
                 blurRadius: AppSpacing.xl,
                 offset: const Offset(0, AppSpacing.sm),
               ),
@@ -604,6 +796,7 @@ class _ActivityCardState extends State<_ActivityCard>
                 animation: _controller,
                 active: widget.active,
                 complete: widget.complete,
+                accent: accent,
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
@@ -660,19 +853,19 @@ class _ActivityGlyph extends StatelessWidget {
     required this.animation,
     required this.active,
     required this.complete,
+    required this.accent,
   });
 
   final IconData icon;
   final Animation<double> animation;
   final bool active;
   final bool complete;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
     final effectiveIcon = complete ? Icons.check_rounded : icon;
-    final effectiveColor = active || complete
-        ? CodexColors.greenSoft
-        : CodexColors.muted;
+    final effectiveColor = active || complete ? accent : CodexColors.muted;
     final iconWidget = Icon(effectiveIcon, color: effectiveColor, size: 16);
     return AnimatedBuilder(
       animation: animation,
@@ -754,7 +947,7 @@ class _WaveDot extends StatelessWidget {
     final waveAmount = wave.clamp(0.0, 1.0).toDouble();
     final opacity = disableAnimations ? 0.72 : 0.36 + (waveAmount * 0.64);
     return Transform.translate(
-      offset: Offset(0, -4 * wave),
+      offset: Offset(0, 3 * wave),
       child: Opacity(
         opacity: opacity.clamp(0.32, 1.0).toDouble(),
         child: Container(

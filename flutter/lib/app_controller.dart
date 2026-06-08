@@ -5,16 +5,25 @@ import 'package:uuid/uuid.dart';
 
 import 'protocol/bridge_messages.dart';
 import 'services/bridge_socket_client.dart';
+import 'services/download_saver.dart';
 import 'services/pairing_parser.dart';
 import 'services/secure_credentials_store.dart';
 
 class AppController extends ChangeNotifier {
-  AppController({BridgeSocketClient? socket, SecureCredentialsStore? store})
-    : _socket = socket ?? BridgeSocketClient(),
-      _store = store ?? SecureCredentialsStore();
+  AppController({
+    BridgeSocketClient? socket,
+    SecureCredentialsStore? store,
+    FileDownloadSaver? downloadSaver,
+    Duration autoReconnectDelay = const Duration(seconds: 3),
+  }) : _socket = socket ?? BridgeSocketClient(),
+       _store = store ?? SecureCredentialsStore(),
+       _downloadSaver = downloadSaver ?? const PickerFileDownloadSaver(),
+       _autoReconnectDelay = autoReconnectDelay;
 
   final BridgeSocketClient _socket;
   final SecureCredentialsStore _store;
+  final FileDownloadSaver _downloadSaver;
+  final Duration _autoReconnectDelay;
   final _uuid = const Uuid();
 
   ConnectionPhase phase = ConnectionPhase.idle;
@@ -25,17 +34,30 @@ class AppController extends ChangeNotifier {
   String? activeRunId;
   String? _pendingUrl;
   int _connectGeneration = 0;
+  Timer? _reconnectTimer;
   final Map<String, String> _activeRunIdsBySession = {};
+  final Set<String> _downloadsRequestedForSave = {};
+  final Map<String, String> _lastGoalEventBySession = {};
 
   final List<CodexSessionInfo> sessions = [];
   final List<WorkspaceInfo> workspaces = [];
   final List<CodexCommandInfo> commands = [];
   final List<ExternalSessionInfo> externalSessions = [];
+  final List<AppModelInfo> appModels = [];
+  AppProviderCapabilitiesInfo? appCapabilities;
+  final List<AppThreadInfo> appThreads = [];
+  final List<AppSkillGroupInfo> appSkillGroups = [];
+  final List<AppFsEntryInfo> appFileEntries = [];
+  final List<WorkspaceFileInfo> appFileSearchResults = [];
   final List<FileOfferInfo> fileOffers = [];
   final List<DownloadedFileInfo> downloadedFiles = [];
+  final Map<String, String> savedFilePaths = {};
   final List<WorkspaceFileInfo> fileSuggestions = [];
   final Map<String, List<ChatMessage>> messagesBySession = {};
   String fileSuggestionQuery = '';
+  String appFilePath = '';
+  AppFsFileInfo? appPreviewFile;
+  String accentName = 'neutral';
 
   CodexSessionInfo? get activeSession {
     final id = activeSessionId;
@@ -52,7 +74,11 @@ class AppController extends ChangeNotifier {
   bool get isConnected => phase == ConnectionPhase.connected;
   bool get isOffline => phase == ConnectionPhase.offline;
   bool get canShowChat =>
-      phase == ConnectionPhase.connected || phase == ConnectionPhase.offline;
+      phase == ConnectionPhase.connected ||
+      phase == ConnectionPhase.offline ||
+      (credentials != null &&
+          (phase == ConnectionPhase.connecting ||
+              phase == ConnectionPhase.failed));
   bool get isRunning {
     final session = activeSession;
     if (!isConnected || session == null) return false;
@@ -63,7 +89,8 @@ class AppController extends ChangeNotifier {
   Future<void> loadSavedCredentials() async {
     credentials = await _store.load();
     if (credentials != null) {
-      statusText = 'Saved bridge found. Tap reconnect or scan a fresh QR.';
+      phase = ConnectionPhase.offline;
+      statusText = 'Offline. Saved bridge found; reconnecting is available.';
       notifyListeners();
     }
   }
@@ -74,8 +101,9 @@ class AppController extends ChangeNotifier {
       if (payload.url.isEmpty || payload.pairingToken.isEmpty) {
         throw const FormatException('Pairing QR is missing url or token.');
       }
-      _pendingUrl = payload.url;
-      _connect(payload.url, {
+      final normalizedUrl = normalizeBridgeWebSocketUrl(payload.url);
+      _pendingUrl = normalizedUrl;
+      _connect(normalizedUrl, {
         'type': 'pairing.claim',
         'pairingToken': payload.pairingToken,
         'deviceName': deviceName.trim().isEmpty
@@ -97,8 +125,9 @@ class AppController extends ChangeNotifier {
       return;
     }
     credentials = saved;
-    _pendingUrl = saved.url;
-    _connect(saved.url, {
+    final normalizedUrl = normalizeBridgeWebSocketUrl(saved.url);
+    _pendingUrl = normalizedUrl;
+    _connect(normalizedUrl, {
       'type': 'auth.resume',
       'deviceToken': saved.deviceToken,
     });
@@ -117,8 +146,9 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _pendingUrl = trimmedUrl;
-    _connect(trimmedUrl, {
+    final normalizedUrl = normalizeBridgeWebSocketUrl(trimmedUrl);
+    _pendingUrl = normalizedUrl;
+    _connect(normalizedUrl, {
       'type': 'auth.password',
       'password': trimmedPassword,
       'deviceName': deviceName.trim().isEmpty
@@ -128,6 +158,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> forgetSaved() async {
+    _reconnectTimer?.cancel();
     await _store.clear();
     credentials = null;
     phase = ConnectionPhase.idle;
@@ -137,6 +168,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> cancelConnection() async {
+    _reconnectTimer?.cancel();
     _connectGeneration++;
     await _socket.close();
     phase = ConnectionPhase.idle;
@@ -219,6 +251,77 @@ class AppController extends ChangeNotifier {
     _send({'type': 'external.session.list'});
   }
 
+  void refreshAppModels({bool includeHidden = false}) {
+    _send({
+      'type': 'app.model.list',
+      if (activeSession?.sessionId != null)
+        'sessionId': activeSession!.sessionId,
+      if (includeHidden) 'includeHidden': true,
+    });
+  }
+
+  void refreshAppThreads({String query = '', int limit = 40}) {
+    _send({
+      'type': 'app.thread.list',
+      if (activeSession?.sessionId != null)
+        'sessionId': activeSession!.sessionId,
+      if (query.trim().isNotEmpty) 'query': query.trim(),
+      'limit': limit,
+    });
+  }
+
+  void importAppThread(AppThreadInfo thread) {
+    if (thread.threadId.isEmpty) return;
+    _send({'type': 'app.thread.import', 'threadId': thread.threadId});
+  }
+
+  void refreshAppSkills({bool forceReload = false}) {
+    _send({
+      'type': 'app.skill.list',
+      if (activeSession?.sessionId != null)
+        'sessionId': activeSession!.sessionId,
+      if (forceReload) 'forceReload': true,
+    });
+  }
+
+  void listAppDirectory([String path = '']) {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null) return;
+    _send({'type': 'app.fs.list', 'sessionId': sessionId, 'path': path});
+  }
+
+  void readAppFile(String path) {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null || path.trim().isEmpty) return;
+    _send({'type': 'app.fs.read', 'sessionId': sessionId, 'path': path});
+  }
+
+  void searchAppFiles(String query, {int limit = 40}) {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null || query.trim().isEmpty) return;
+    _send({
+      'type': 'app.file.search',
+      'sessionId': sessionId,
+      'query': query.trim(),
+      'limit': limit,
+    });
+  }
+
+  void startReview({String? instructions}) {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null) return;
+    final trimmed = instructions?.trim();
+    _send({
+      'type': 'app.review.start',
+      'sessionId': sessionId,
+      'target': trimmed == null || trimmed.isEmpty
+          ? 'uncommittedChanges'
+          : 'custom',
+      if (trimmed != null && trimmed.isNotEmpty) 'instructions': trimmed,
+      'delivery': 'inline',
+    });
+  }
+
   void refreshWorkspaces() {
     _send({'type': 'workspace.list'});
   }
@@ -282,7 +385,56 @@ class AppController extends ChangeNotifier {
     _send(message);
   }
 
+  void setGoal(String objective, {String status = 'active', int? tokenBudget}) {
+    final sessionId = activeSession?.sessionId;
+    final trimmed = objective.trim();
+    if (sessionId == null || trimmed.isEmpty) return;
+    final message = <String, dynamic>{
+      'type': 'session.goal.set',
+      'sessionId': sessionId,
+      'objective': trimmed,
+      'status': status,
+    };
+    if (tokenBudget != null) {
+      message['tokenBudget'] = tokenBudget;
+    }
+    _send(message);
+  }
+
+  void getGoal() {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null) return;
+    _send({'type': 'session.goal.get', 'sessionId': sessionId});
+  }
+
+  void clearGoal() {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null) return;
+    _send({'type': 'session.goal.clear', 'sessionId': sessionId});
+  }
+
+  void setAccentName(String name) {
+    const allowed = {'neutral', 'blue', 'green', 'violet', 'amber'};
+    final normalized = allowed.contains(name) ? name : 'neutral';
+    if (accentName == normalized) return;
+    accentName = normalized;
+    notifyListeners();
+  }
+
   void runCommand(CodexCommandInfo command) {
+    switch (command.commandId) {
+      case 'codex.stop':
+        cancelRun();
+        return;
+      case 'codex.new':
+        createSession();
+        return;
+      case 'codex.sessions':
+      case 'codex.model':
+        statusText = 'Open ${command.title} from the chat controls.';
+        notifyListeners();
+        return;
+    }
     final sessionId = activeSession?.sessionId;
     final message = <String, dynamic>{
       'type': 'command.run',
@@ -325,6 +477,9 @@ class AppController extends ChangeNotifier {
         'sessionId': sessionId,
         'path': requestedFilePath,
       });
+      return;
+    }
+    if (attachments.isEmpty && _handleInlineSlashCommand(trimmed, sessionId)) {
       return;
     }
     final displayText = trimmed.isEmpty ? 'Uploaded attachments' : trimmed;
@@ -372,12 +527,27 @@ class AppController extends ChangeNotifier {
     _send({'type': 'run.cancel', 'sessionId': sessionId, 'runId': runId});
   }
 
-  void requestFileDownload(FileOfferInfo offer) {
+  void requestFileDownload(FileOfferInfo offer, {bool saveToDevice = true}) {
     if (offer.fileId.isEmpty) return;
+    if (saveToDevice) {
+      _downloadsRequestedForSave.add(offer.fileId);
+    }
     _send({'type': 'file.request', 'fileId': offer.fileId});
   }
 
+  void decideApproval(String approvalId, String decision) {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null || approvalId.isEmpty) return;
+    _send({
+      'type': 'approval.decision',
+      'sessionId': sessionId,
+      'approvalId': approvalId,
+      'decision': decision,
+    });
+  }
+
   Future<void> disposeController() async {
+    _reconnectTimer?.cancel();
     await _socket.close();
   }
 
@@ -388,6 +558,7 @@ class AppController extends ChangeNotifier {
 
   void _connect(String url, Map<String, dynamic> firstMessage) {
     final generation = ++_connectGeneration;
+    _reconnectTimer?.cancel();
     phase = ConnectionPhase.connecting;
     statusText = 'Connecting to $url…';
     notifyListeners();
@@ -400,24 +571,19 @@ class AppController extends ChangeNotifier {
           onError: (error) {
             if (generation != _connectGeneration) return;
             if (phase == ConnectionPhase.connected) {
-              phase = ConnectionPhase.offline;
-              statusText = 'Offline. Showing cached chat.';
-              activeRunId = null;
-              notifyListeners();
+              _markOfflineAndScheduleReconnect(generation);
               return;
             }
             phase = ConnectionPhase.failed;
             statusText = _friendlyBridgeError(error, url);
             _appendError(statusText);
+            _scheduleReconnect();
             notifyListeners();
           },
           onDone: () {
             if (generation != _connectGeneration) return;
             if (phase == ConnectionPhase.connected) {
-              phase = ConnectionPhase.offline;
-              activeRunId = null;
-              statusText = 'Offline. Showing cached chat.';
-              notifyListeners();
+              _markOfflineAndScheduleReconnect(generation);
             }
           },
         );
@@ -430,6 +596,7 @@ class AppController extends ChangeNotifier {
         phase = ConnectionPhase.failed;
         statusText = _friendlyBridgeError(error, url);
         _appendError(statusText);
+        _scheduleReconnect();
         notifyListeners();
       }
     }());
@@ -473,6 +640,12 @@ class AppController extends ChangeNotifier {
           ),
         );
         break;
+      case 'session.goal.updated':
+        _applyGoalUpdated(message);
+        break;
+      case 'session.goal.cleared':
+        _applyGoalCleared(message);
+        break;
       case 'session.deleted':
         _deleteLocalSession(message['sessionId'] as String? ?? '');
         break;
@@ -512,6 +685,76 @@ class AppController extends ChangeNotifier {
             ),
           );
         break;
+      case 'app.model.list':
+        appModels
+          ..clear()
+          ..addAll(
+            ((message['models'] as List<dynamic>? ?? const [])).map(
+              (item) =>
+                  AppModelInfo.fromJson(Map<String, dynamic>.from(item as Map)),
+            ),
+          );
+        if (message['capabilities'] is Map) {
+          appCapabilities = AppProviderCapabilitiesInfo.fromJson(
+            Map<String, dynamic>.from(message['capabilities'] as Map),
+          );
+        }
+        break;
+      case 'app.thread.list':
+        appThreads
+          ..clear()
+          ..addAll(
+            ((message['threads'] as List<dynamic>? ?? const [])).map(
+              (item) => AppThreadInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        break;
+      case 'app.skill.list':
+        appSkillGroups
+          ..clear()
+          ..addAll(
+            ((message['groups'] as List<dynamic>? ?? const [])).map(
+              (item) => AppSkillGroupInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        break;
+      case 'app.fs.list':
+        appFilePath = message['path'] as String? ?? '';
+        appFileEntries
+          ..clear()
+          ..addAll(
+            ((message['entries'] as List<dynamic>? ?? const [])).map(
+              (item) => AppFsEntryInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        break;
+      case 'app.fs.file':
+        if (message['file'] is Map) {
+          appPreviewFile = AppFsFileInfo.fromJson(
+            Map<String, dynamic>.from(message['file'] as Map),
+          );
+        }
+        break;
+      case 'app.file.search.results':
+        appFileSearchResults
+          ..clear()
+          ..addAll(
+            ((message['files'] as List<dynamic>? ?? const [])).map(
+              (item) => WorkspaceFileInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        break;
+      case 'app.review.started':
+        _appendReviewStarted(message);
+        break;
       case 'run.started':
         _markRunStarted(message);
         break;
@@ -536,6 +779,9 @@ class AppController extends ChangeNotifier {
       case 'diff.available':
         _appendFileChangeEvent(message);
         break;
+      case 'approval.requested':
+        _appendApprovalRequest(message);
+        break;
       case 'file.offer':
         _appendFileOfferEvent(message);
         break;
@@ -551,6 +797,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _acceptPairing(Map<String, dynamic> message) async {
+    _reconnectTimer?.cancel();
     final url = _pendingUrl;
     final token = message['deviceToken'] as String?;
     final deviceId = message['deviceId'] as String?;
@@ -567,6 +814,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _acceptAuth(Map<String, dynamic> message) async {
+    _reconnectTimer?.cancel();
     final url = _pendingUrl ?? credentials?.url;
     final token = message['deviceToken'] as String?;
     final deviceId = message['deviceId'] as String?;
@@ -660,10 +908,74 @@ class AppController extends ChangeNotifier {
     messagesBySession.putIfAbsent(session.sessionId, () => []);
   }
 
+  void _applyGoalUpdated(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    if (sessionId == null) return;
+    final goalMap = message['goal'];
+    if (goalMap is! Map) return;
+    final goal = CodexGoalInfo.fromJson(Map<String, dynamic>.from(goalMap));
+    final index = sessions.indexWhere((item) => item.sessionId == sessionId);
+    if (index >= 0) {
+      sessions[index] = sessions[index].copyWith(goal: goal);
+    }
+    if (!_shouldAnnounceGoalStatus(goal.status)) return;
+    final signature =
+        'updated:${goal.status}:${goal.objective}:${goal.tokenBudget}';
+    if (_lastGoalEventBySession[sessionId] == signature) return;
+    _lastGoalEventBySession[sessionId] = signature;
+    final title = goal.status == 'complete'
+        ? 'Goal complete'
+        : goal.status == 'blocked'
+        ? 'Goal blocked'
+        : 'Goal ${goal.status}';
+    final details = [
+      goal.objective.trim().isEmpty ? 'No objective set.' : goal.objective,
+      if (goal.tokenBudget != null) 'budget ${goal.tokenBudget}',
+      if (goal.tokensUsed > 0) 'used ${goal.tokensUsed}',
+    ].join('\n');
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: _uuid.v4(),
+            role: ChatRole.system,
+            kind: AgentMessageKind.system,
+            title: title,
+            text: details,
+            createdAt: DateTime.now(),
+          ),
+        );
+  }
+
+  void _applyGoalCleared(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    if (sessionId == null) return;
+    final index = sessions.indexWhere((item) => item.sessionId == sessionId);
+    if (index >= 0) {
+      sessions[index] = sessions[index].copyWith(clearGoal: true);
+    }
+    const signature = 'cleared';
+    if (_lastGoalEventBySession[sessionId] == signature) return;
+    _lastGoalEventBySession[sessionId] = signature;
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: _uuid.v4(),
+            role: ChatRole.system,
+            kind: AgentMessageKind.system,
+            title: 'Goal cleared',
+            text: 'No active goal for this session.',
+            createdAt: DateTime.now(),
+          ),
+        );
+  }
+
   void _deleteLocalSession(String sessionId) {
     sessions.removeWhere((session) => session.sessionId == sessionId);
     messagesBySession.remove(sessionId);
     _activeRunIdsBySession.remove(sessionId);
+    _lastGoalEventBySession.remove(sessionId);
     if (activeSessionId == sessionId) {
       activeSessionId = sessions.isEmpty ? null : sessions.first.sessionId;
     }
@@ -756,6 +1068,47 @@ class AppController extends ChangeNotifier {
         );
   }
 
+  void _appendReviewStarted(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    if (sessionId == null) return;
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: 'review-${message['runId'] ?? _uuid.v4()}',
+            role: ChatRole.system,
+            kind: AgentMessageKind.system,
+            title: 'Review started',
+            text:
+                'run ${message['runId'] ?? ''}\nthread ${message['reviewThreadId'] ?? ''}',
+            createdAt: DateTime.now(),
+          ),
+        );
+  }
+
+  void _appendApprovalRequest(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    final approvalId = message['approvalId'] as String?;
+    if (sessionId == null || approvalId == null || approvalId.isEmpty) return;
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: 'approval-$approvalId',
+            role: ChatRole.system,
+            kind: AgentMessageKind.approval,
+            title: message['title'] as String? ?? 'Approval needed',
+            text: [
+              'approvalId $approvalId',
+              'risk ${message['riskLevel'] as String? ?? 'medium'}',
+              message['body'] as String? ?? '',
+            ].join('\n'),
+            createdAt: DateTime.now(),
+            complete: false,
+          ),
+        );
+  }
+
   void _appendFileChangeEvent(Map<String, dynamic> message) {
     final sessionId = _sessionIdForMessage(message);
     if (sessionId == null) return;
@@ -813,7 +1166,7 @@ class AppController extends ChangeNotifier {
       ),
     );
     if (_isImageOffer(offer)) {
-      requestFileDownload(offer);
+      requestFileDownload(offer, saveToDevice: false);
     }
   }
 
@@ -825,10 +1178,13 @@ class AppController extends ChangeNotifier {
         .where((offer) => offer.fileId == file.fileId)
         .firstOrNull;
     if (_isImageDownload(file, matchingOffer)) {
+      if (_downloadsRequestedForSave.remove(file.fileId)) {
+        _saveDownloadedFile(file, matchingOffer);
+      }
       notifyListeners();
       return;
     }
-    final sessionId = activeSession?.sessionId;
+    final sessionId = matchingOffer?.sessionId ?? activeSession?.sessionId;
     if (sessionId == null) return;
     messagesBySession
         .putIfAbsent(sessionId, () => [])
@@ -843,6 +1199,57 @@ class AppController extends ChangeNotifier {
             createdAt: DateTime.now(),
           ),
         );
+    if (_downloadsRequestedForSave.remove(file.fileId)) {
+      _saveDownloadedFile(file, matchingOffer);
+    }
+  }
+
+  void _saveDownloadedFile(DownloadedFileInfo file, FileOfferInfo? offer) {
+    unawaited(() async {
+      try {
+        final path = await _downloadSaver.save(file);
+        if (path == null || path.trim().isEmpty) return;
+        savedFilePaths[file.fileId] = path;
+        final sessionId = offer?.sessionId ?? activeSession?.sessionId;
+        if (sessionId != null) {
+          messagesBySession
+              .putIfAbsent(sessionId, () => [])
+              .add(
+                ChatMessage(
+                  id: 'file-saved-${file.fileId}',
+                  role: ChatRole.system,
+                  kind: AgentMessageKind.files,
+                  title: 'File saved',
+                  text:
+                      'downloaded ${file.name}\nsaved $path\nfileId ${file.fileId}',
+                  createdAt: DateTime.now(),
+                ),
+              );
+        }
+        notifyListeners();
+      } catch (error) {
+        _appendError('Could not save ${file.name}: $error');
+        notifyListeners();
+      }
+    }());
+  }
+
+  void _markOfflineAndScheduleReconnect(int generation) {
+    if (generation != _connectGeneration) return;
+    phase = ConnectionPhase.offline;
+    activeRunId = null;
+    statusText = 'Offline. Showing cached chat while reconnecting…';
+    _scheduleReconnect();
+    notifyListeners();
+  }
+
+  void _scheduleReconnect() {
+    if (_reconnectTimer?.isActive == true) return;
+    if (credentials == null) return;
+    _reconnectTimer = Timer(_autoReconnectDelay, () {
+      if (phase == ConnectionPhase.connected || credentials == null) return;
+      unawaited(reconnect());
+    });
   }
 
   String _friendlyBridgeError(Object error, String url) {
@@ -973,6 +1380,68 @@ class AppController extends ChangeNotifier {
   void _syncActiveRunId() {
     activeRunId = _activeRunIdForSession(activeSessionId);
   }
+
+  bool _handleInlineSlashCommand(String prompt, String sessionId) {
+    final goalMatch = RegExp(
+      r'^/goal(?:\s+(.+))?$',
+      caseSensitive: false,
+    ).firstMatch(prompt.trim());
+    if (goalMatch == null) return false;
+
+    clearFileSuggestions();
+    messagesBySession
+        .putIfAbsent(sessionId, () => [])
+        .add(
+          ChatMessage(
+            id: _uuid.v4(),
+            role: ChatRole.user,
+            kind: AgentMessageKind.response,
+            text: prompt,
+            createdAt: DateTime.now(),
+          ),
+        );
+    final value = goalMatch.group(1)?.trim() ?? '';
+    if (value.isEmpty) {
+      _send({'type': 'session.goal.get', 'sessionId': sessionId});
+      notifyListeners();
+      return true;
+    }
+    if (RegExp(
+      r'^(clear|reset|remove|none)$',
+      caseSensitive: false,
+    ).hasMatch(value)) {
+      _send({'type': 'session.goal.clear', 'sessionId': sessionId});
+      notifyListeners();
+      return true;
+    }
+
+    final status = _goalStatusFromCommandValue(value);
+    if (status != null) {
+      _send({
+        'type': 'session.goal.set',
+        'sessionId': sessionId,
+        'status': status,
+      });
+      notifyListeners();
+      return true;
+    }
+
+    _send({
+      'type': 'session.goal.set',
+      'sessionId': sessionId,
+      'objective': value,
+      'status': 'active',
+    });
+    notifyListeners();
+    return true;
+  }
+}
+
+bool _shouldAnnounceGoalStatus(String status) {
+  return status == 'complete' ||
+      status == 'blocked' ||
+      status == 'usageLimited' ||
+      status == 'budgetLimited';
 }
 
 bool _isImageOffer(FileOfferInfo offer) {
@@ -1028,4 +1497,15 @@ String? _requestedFilePathFromPrompt(String prompt) {
     normalized = normalized.substring(1, normalized.length - 1).trim();
   }
   return normalized;
+}
+
+String? _goalStatusFromCommandValue(String value) {
+  final normalized = value.trim().toLowerCase();
+  return switch (normalized) {
+    'pause' || 'paused' => 'paused',
+    'resume' || 'active' || 'start' => 'active',
+    'block' || 'blocked' => 'blocked',
+    'complete' || 'completed' || 'done' => 'complete',
+    _ => null,
+  };
 }

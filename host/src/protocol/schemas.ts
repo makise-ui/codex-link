@@ -3,6 +3,7 @@ import { z } from "zod";
 const sessionIdSchema = z.string().trim().min(1);
 const runModeSchema = z.enum(["safe", "yolo"]);
 const reasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
+const goalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
 const attachmentSchema = z.object({
   name: z.string().trim().min(1).max(160),
   mimeType: z.string().trim().min(1).max(120).optional(),
@@ -66,6 +67,24 @@ export const sessionConfigSetSchema = z.object({
   reasoningEffort: reasoningEffortSchema.optional(),
 });
 
+export const sessionGoalSetSchema = z.object({
+  type: z.literal("session.goal.set"),
+  sessionId: sessionIdSchema,
+  objective: z.string().trim().min(1).max(4000).optional(),
+  status: goalStatusSchema.optional(),
+  tokenBudget: z.number().int().positive().nullable().optional(),
+});
+
+export const sessionGoalGetSchema = z.object({
+  type: z.literal("session.goal.get"),
+  sessionId: sessionIdSchema,
+});
+
+export const sessionGoalClearSchema = z.object({
+  type: z.literal("session.goal.clear"),
+  sessionId: sessionIdSchema,
+});
+
 export const workspaceListSchema = z.object({
   type: z.literal("workspace.list"),
 });
@@ -97,6 +116,58 @@ export const externalSessionListSchema = z.object({
 export const externalSessionImportSchema = z.object({
   type: z.literal("external.session.import"),
   externalSessionId: z.string().trim().min(1).max(128),
+});
+
+export const appModelListSchema = z.object({
+  type: z.literal("app.model.list"),
+  sessionId: sessionIdSchema.optional(),
+  includeHidden: z.boolean().optional(),
+});
+
+export const appThreadListSchema = z.object({
+  type: z.literal("app.thread.list"),
+  sessionId: sessionIdSchema.optional(),
+  query: z.string().trim().max(240).optional(),
+  cwd: z.string().trim().min(1).max(4096).optional(),
+  limit: z.number().int().min(1).max(80).optional(),
+});
+
+export const appThreadImportSchema = z.object({
+  type: z.literal("app.thread.import"),
+  threadId: z.string().trim().min(1).max(160),
+});
+
+export const appSkillListSchema = z.object({
+  type: z.literal("app.skill.list"),
+  sessionId: sessionIdSchema.optional(),
+  forceReload: z.boolean().optional(),
+});
+
+export const appFsListSchema = z.object({
+  type: z.literal("app.fs.list"),
+  sessionId: sessionIdSchema,
+  path: z.string().trim().max(4096).optional(),
+});
+
+export const appFsReadSchema = z.object({
+  type: z.literal("app.fs.read"),
+  sessionId: sessionIdSchema,
+  path: z.string().trim().min(1).max(4096),
+});
+
+export const appFileSearchSchema = z.object({
+  type: z.literal("app.file.search"),
+  sessionId: sessionIdSchema,
+  query: z.string().trim().min(1).max(240),
+  limit: z.number().int().min(1).max(80).optional(),
+});
+
+export const appReviewStartSchema = z.object({
+  type: z.literal("app.review.start"),
+  sessionId: sessionIdSchema,
+  target: z.enum(["uncommittedChanges", "custom"]).optional(),
+  instructions: z.string().trim().max(4000).optional(),
+  delivery: z.enum(["inline", "detached"]).optional(),
 });
 
 export const commandListSchema = z.object({
@@ -156,12 +227,23 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   sessionDeleteSchema,
   sessionModeSetSchema,
   sessionConfigSetSchema,
+  sessionGoalSetSchema,
+  sessionGoalGetSchema,
+  sessionGoalClearSchema,
   workspaceListSchema,
   workspaceAddSchema,
   workspaceSwitchSchema,
   workspaceFileSearchSchema,
   externalSessionListSchema,
   externalSessionImportSchema,
+  appModelListSchema,
+  appThreadListSchema,
+  appThreadImportSchema,
+  appSkillListSchema,
+  appFsListSchema,
+  appFsReadSchema,
+  appFileSearchSchema,
+  appReviewStartSchema,
   commandListSchema,
   commandRunSchema,
   promptSendSchema,

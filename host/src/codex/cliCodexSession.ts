@@ -3,7 +3,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { ReasoningEffort, SandboxMode } from "../protocol/messages.js";
+import type { MessageKind, ReasoningEffort, SandboxMode } from "../protocol/messages.js";
 import type { CodexEvent, CodexSession, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 import { JsonLineBuffer, mapCodexJsonEvent, parseCodexJsonLine } from "./codexJsonEvents.js";
 
@@ -31,7 +31,7 @@ type ActiveProcess = {
   jsonBuffer: JsonLineBuffer;
   messageCounter: number;
   itemMessageIds: Map<string, string>;
-  messageKinds: Map<string, "thinking" | "executing" | "response" | "system">;
+  messageKinds: Map<string, MessageKind>;
   pendingFileChanges: Promise<void>[];
   thinkingMessageId?: string;
 };
@@ -185,7 +185,7 @@ export class CliCodexSession implements CodexSession {
     }
   }
 
-  private emitStartedMessage(runId: string, kind: "thinking" | "executing" | "response" | "system", title: string | undefined, text?: string, itemId?: string): string {
+  private emitStartedMessage(runId: string, kind: MessageKind, title: string | undefined, text?: string, itemId?: string): string {
     const active = this.active;
     const messageNumber = active ? ++active.messageCounter : randomUUID();
     const messageId = `${runId}:${messageNumber}`;
@@ -203,7 +203,7 @@ export class CliCodexSession implements CodexSession {
     return messageId;
   }
 
-  private emitCompleteMessage(runId: string, kind: "thinking" | "executing" | "response" | "system", title: string | undefined, text: string, itemId?: string): void {
+  private emitCompleteMessage(runId: string, kind: MessageKind, title: string | undefined, text: string, itemId?: string): void {
     const active = this.active;
     if (kind !== "thinking") {
       this.completeThinking(runId);
