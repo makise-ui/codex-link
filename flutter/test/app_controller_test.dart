@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:codex_lan_flutter/app_controller.dart';
 import 'package:codex_lan_flutter/protocol/bridge_messages.dart';
+import 'package:codex_lan_flutter/services/app_notifier.dart';
 import 'package:codex_lan_flutter/services/bridge_socket_client.dart';
 import 'package:codex_lan_flutter/services/download_saver.dart';
 import 'package:codex_lan_flutter/services/pairing_parser.dart';
 import 'package:codex_lan_flutter/services/secure_credentials_store.dart';
+import 'package:codex_lan_flutter/services/update_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -986,7 +988,7 @@ void main() {
       });
 
       expect(controller.activeMessages, hasLength(1));
-      expect(controller.activeMessages.single.title, 'File available');
+      expect(controller.activeMessages.single.title, 'File activity');
       expect(socket.sentMessages.last, {
         'type': 'file.request',
         'fileId': 'image-1',
@@ -994,6 +996,284 @@ void main() {
       expect(saver.savedFiles, isEmpty);
     },
   );
+
+  test('generated file offers merge into the existing file activity item', () {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Generated files',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'running',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+            'activeRunId': 'run-1',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'diff.available',
+      'sessionId': 's1',
+      'files': [
+        {
+          'path': 'lib/generated.dart',
+          'status': 'added',
+          'patch': '+class Generated {}',
+        },
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'file.offer',
+      'fileId': 'file-1',
+      'sessionId': 's1',
+      'path': 'lib/generated.dart',
+      'name': 'generated.dart',
+      'sizeBytes': 12,
+      'reason': 'generated',
+    });
+
+    expect(controller.activeMessages, hasLength(1));
+    expect(controller.activeMessages.single.kind, AgentMessageKind.files);
+    expect(controller.activeMessages.single.title, 'File activity');
+    expect(controller.activeMessages.single.text, contains('fileId file-1'));
+  });
+
+  test('bridge errors update compact error state instead of chat history', () {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Errors',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'error',
+      'code': 'bridge.error',
+      'message': 'Very long host error\nwith stack trace',
+    });
+
+    expect(controller.activeMessages, isEmpty);
+    expect(controller.latestErrorText, contains('Very long host error'));
+  });
+
+  test('new mobile commands route to native app controls', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Commands',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    for (final commandId in [
+      'codex.workspace',
+      'codex.skills',
+      'codex.files',
+      'codex.history',
+      'codex.approvals',
+      'codex.tunnel',
+      'codex.review',
+    ]) {
+      controller.runCommand(
+        CodexCommandInfo(
+          commandId: commandId,
+          title: commandId.split('.').last,
+          description: 'unit',
+          category: 'session',
+        ),
+      );
+    }
+
+    expect(socket.sentMessages, [
+      {'type': 'workspace.list'},
+      {'type': 'app.skill.list', 'sessionId': 's1', 'forceReload': true},
+      {'type': 'app.fs.list', 'sessionId': 's1', 'path': ''},
+      {'type': 'app.thread.list', 'sessionId': 's1', 'limit': 40},
+      {'type': 'external.session.list'},
+      {
+        'type': 'app.review.start',
+        'sessionId': 's1',
+        'target': 'uncommittedChanges',
+        'delivery': 'inline',
+      },
+    ]);
+  });
+
+  test(
+    'plan updates create compact ui notices without foreground notifications',
+    () {
+      final notifier = FakeAppNotifier();
+      final controller = AppController(notifier: notifier)
+        ..phase = ConnectionPhase.connected
+        ..handleBridgeMessageForTest({
+          'type': 'session.list',
+          'activeSessionId': 's1',
+          'sessions': [
+            {
+              'sessionId': 's1',
+              'title': 'Plan notifications',
+              'updatedAt': '2026-06-08T00:00:00.000Z',
+              'workspaceId': 'default',
+              'workdir': '/tmp/repo',
+              'lastStatus': 'running',
+              'mode': 'safe',
+              'sandbox': 'workspace-write',
+              'activeRunId': 'run-1',
+            },
+          ],
+        });
+
+      controller.handleBridgeMessageForTest({
+        'type': 'session.plan.updated',
+        'sessionId': 's1',
+        'runId': 'run-1',
+        'title': 'Plan',
+        'text': 'Refining the UI\n- in_progress: Move command panels',
+      });
+
+      expect(controller.latestNotice?.title, 'Plan updated');
+      expect(controller.latestNotice?.body, 'Refining the UI');
+      expect(notifier.notifications, isEmpty);
+    },
+  );
+
+  test(
+    'completed runs notify the phone only while the app is backgrounded',
+    () {
+      final notifier = FakeAppNotifier();
+      final controller = AppController(notifier: notifier)
+        ..phase = ConnectionPhase.connected
+        ..setAppForeground(false)
+        ..handleBridgeMessageForTest({
+          'type': 'session.list',
+          'activeSessionId': 's1',
+          'sessions': [
+            {
+              'sessionId': 's1',
+              'title': 'Completion',
+              'updatedAt': '2026-06-08T00:00:00.000Z',
+              'workspaceId': 'default',
+              'workdir': '/tmp/repo',
+              'lastStatus': 'running',
+              'mode': 'safe',
+              'sandbox': 'workspace-write',
+              'activeRunId': 'run-1',
+            },
+          ],
+        })
+        ..handleBridgeMessageForTest({
+          'type': 'message.history',
+          'sessionId': 's1',
+          'messages': [
+            {
+              'messageId': 'r1',
+              'role': 'assistant',
+              'kind': 'response',
+              'title': 'Response',
+              'text': 'Done with the command center\nTests are next',
+              'createdAt': '2026-06-08T00:00:01.000Z',
+              'complete': true,
+            },
+          ],
+        });
+
+      controller.handleBridgeMessageForTest({
+        'type': 'run.completed',
+        'sessionId': 's1',
+        'runId': 'run-1',
+        'exitCode': 0,
+      });
+
+      expect(controller.latestNotice?.title, 'Task finished');
+      expect(
+        controller.latestNotice?.body,
+        contains('Done with the command center'),
+      );
+      expect(notifier.notifications.single.title, 'Task finished');
+    },
+  );
+
+  test('update checks expose available release and in-app notice', () async {
+    final update = AppUpdateInfo(
+      currentVersion: '1.0.0',
+      latestVersion: '1.0.1',
+      title: 'Codex Link v1.0.1',
+      releaseUrl: Uri.parse(
+        'https://github.com/makise-ui/codex-link/releases/tag/v1.0.1',
+      ),
+      apkUrl: Uri.parse('https://example.com/codex-link.apk'),
+      hasUpdate: true,
+    );
+    final controller = AppController(updateService: FakeUpdateService(update));
+
+    await controller.checkForUpdates();
+
+    expect(controller.updateStatus, UpdateCheckStatus.available);
+    expect(controller.availableUpdate, update);
+    expect(controller.latestNotice?.title, 'Update available');
+    expect(controller.latestNotice?.body, contains('1.0.1'));
+  });
+}
+
+class FakeAppNotifier implements AppNotifier {
+  final notifications = <AppNotification>[];
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> show({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    notifications.add(
+      AppNotification(title: title, body: body, payload: payload),
+    );
+  }
+}
+
+class AppNotification {
+  const AppNotification({
+    required this.title,
+    required this.body,
+    this.payload,
+  });
+
+  final String title;
+  final String body;
+  final String? payload;
 }
 
 class FakeBridgeSocketClient extends BridgeSocketClient {
@@ -1037,6 +1317,22 @@ class FakeDownloadSaver implements FileDownloadSaver {
   Future<String?> save(DownloadedFileInfo file) async {
     savedFiles.add(file);
     return path;
+  }
+}
+
+class FakeUpdateService implements AppUpdateService {
+  FakeUpdateService(this.update);
+
+  final AppUpdateInfo update;
+  AppUpdateInfo? opened;
+
+  @override
+  Future<AppUpdateInfo> checkForUpdate() async => update;
+
+  @override
+  Future<bool> openUpdate(AppUpdateInfo update) async {
+    opened = update;
+    return true;
   }
 }
 

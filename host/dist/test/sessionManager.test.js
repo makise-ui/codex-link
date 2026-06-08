@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodexSessionManager } from "../src/codex/sessionManager.js";
+import { CodexSessionManager, summarizeDoctorOutput } from "../src/codex/sessionManager.js";
 const tempDirs = [];
 afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -364,6 +364,77 @@ describe("CodexSessionManager", () => {
         expect(history.some((message) => message.role === "user" && message.text === "persist this after restart")).toBe(true);
         expect(history.some((message) => message.role === "assistant" && message.text.includes("Connected to the local Codex Link bridge"))).toBe(true);
         await restarted.close();
+    });
+    it("formats codex doctor json as a readable mobile report", () => {
+        const report = summarizeDoctorOutput(JSON.stringify({
+            schemaVersion: 1,
+            overallStatus: "ok",
+            codexVersion: "0.137.0",
+            checks: {
+                "config.load": {
+                    id: "config.load",
+                    category: "config",
+                    status: "ok",
+                    summary: "config loaded",
+                    details: {
+                        cwd: "/repo/flutter",
+                        model: "gpt-5.5",
+                        "model provider": "openai",
+                        "mcp servers": "0",
+                    },
+                },
+                "sandbox.helpers": {
+                    id: "sandbox.helpers",
+                    category: "sandbox",
+                    status: "ok",
+                    summary: "sandbox configuration is readable",
+                    details: {
+                        "approval policy": "OnRequest",
+                        "filesystem sandbox": "restricted",
+                        "network sandbox": "restricted",
+                    },
+                },
+                "auth.credentials": {
+                    id: "auth.credentials",
+                    category: "auth",
+                    status: "ok",
+                    summary: "auth is configured",
+                    details: {
+                        "stored auth mode": "chatgpt",
+                        "stored ChatGPT tokens": "true",
+                        "stored API key": "false",
+                    },
+                },
+                "app_server.status": {
+                    id: "app_server.status",
+                    category: "app-server",
+                    status: "ok",
+                    summary: "background server is not running",
+                    details: {
+                        mode: "ephemeral",
+                        status: "not running",
+                    },
+                },
+                "network.websocket_reachability": {
+                    id: "network.websocket_reachability",
+                    category: "websocket",
+                    status: "ok",
+                    summary: "Responses WebSocket handshake succeeded",
+                    details: {
+                        "handshake result": "HTTP 101 Switching Protocols",
+                        endpoint: "wss://chatgpt.com/backend-api/<redacted>",
+                    },
+                },
+            },
+        }), "").join("\n");
+        expect(report).toContain("Codex version:       0.137.0");
+        expect(report).toContain("Model:               gpt-5.5 (provider openai)");
+        expect(report).toContain("Directory:           /repo/flutter");
+        expect(report).toContain("Permissions:         restricted filesystem, restricted network");
+        expect(report).toContain("Account:             chatgpt auth, ChatGPT tokens stored");
+        expect(report).toContain("WebSocket:           HTTP 101 Switching Protocols");
+        expect(report).toContain("OK   config.load - config loaded");
+        expect(report).not.toContain("\"checks\"");
     });
 });
 async function tempStateDir() {

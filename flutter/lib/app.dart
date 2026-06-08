@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -22,6 +24,8 @@ class _CodexLanAppState extends State<CodexLanApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _controller = AppController();
     _controller.loadSavedCredentials();
+    _controller.initializeNotifications();
+    unawaited(_controller.checkForUpdates(silent: true));
   }
 
   @override
@@ -33,6 +37,7 @@ class _CodexLanAppState extends State<CodexLanApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _controller.setAppForeground(state == AppLifecycleState.resumed);
     if (state != AppLifecycleState.resumed) return;
     if (_controller.credentials != null &&
         _controller.canShowChat &&

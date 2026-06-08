@@ -972,19 +972,26 @@ class _WaveDot extends StatelessWidget {
   }
 }
 
-class _FileChangeCard extends StatelessWidget {
+class _FileChangeCard extends StatefulWidget {
   const _FileChangeCard({required this.message});
 
   final ChatMessage message;
 
   @override
+  State<_FileChangeCard> createState() => _FileChangeCardState();
+}
+
+class _FileChangeCardState extends State<_FileChangeCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final files = _parseFileChanges(message.text);
+    final files = _parseFileChanges(widget.message.text);
     final controller = Provider.of<AppController?>(context);
     if (files.isEmpty) {
       return _ActivityCard(
-        text: message.text.trim(),
-        title: message.title ?? 'File activity',
+        text: widget.message.text.trim(),
+        title: widget.message.title ?? 'File activity',
         icon: Icons.description_outlined,
         active: false,
         complete: false,
@@ -995,10 +1002,9 @@ class _FileChangeCard extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620),
         child: Container(
-          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: CodexColors.panelHigh.withValues(alpha: 0.74),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
             border: Border.all(
               color: CodexColors.green.withValues(alpha: 0.24),
             ),
@@ -1007,55 +1013,101 @@ class _FileChangeCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                children: [
-                  const Icon(
-                    Icons.description_outlined,
-                    color: CodexColors.greenSoft,
-                    size: 17,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    message.title ?? 'Files changed',
-                    style: const TextStyle(
-                      color: CodexColors.text,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  if (files.length > 1) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      '${files.length}',
-                      style: const TextStyle(
-                        color: CodexColors.dim,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 8),
-              for (final file in files)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xs),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              InkWell(
+                key: const ValueKey('file-activity-toggle'),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Row(
                     children: [
-                      _FileRow(file: file, controller: controller),
-                      if (_imageDownloadFor(controller, file) case final image?)
-                        Padding(
-                          padding: const EdgeInsets.only(top: AppSpacing.sm),
-                          child: _ImageFilePreview(download: image),
+                      const Icon(
+                        Icons.description_outlined,
+                        color: CodexColors.greenSoft,
+                        size: 17,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          widget.message.title ?? 'File activity',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: CodexColors.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
-                      if (file.patchLines.isNotEmpty) ...[
-                        const SizedBox(height: AppSpacing.xs),
-                        _PatchPreview(lines: file.patchLines),
-                      ],
+                      ),
+                      Text(
+                        '${files.length} ${files.length == 1 ? 'file' : 'files'}',
+                        style: const TextStyle(
+                          color: CodexColors.dim,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Icon(
+                        _expanded
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        color: CodexColors.muted,
+                        size: 20,
+                      ),
                     ],
                   ),
                 ),
+              ),
+              AnimatedSize(
+                duration: AppMotion.quick,
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: _expanded
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.md,
+                          0,
+                          AppSpacing.md,
+                          AppSpacing.md,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final file in files)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  top: AppSpacing.xs,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _FileRow(
+                                      file: file,
+                                      controller: controller,
+                                    ),
+                                    if (_imageDownloadFor(controller, file)
+                                        case final image?)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          top: AppSpacing.sm,
+                                        ),
+                                        child: _ImageFilePreview(
+                                          download: image,
+                                        ),
+                                      ),
+                                    if (file.patchLines.isNotEmpty) ...[
+                                      const SizedBox(height: AppSpacing.xs),
+                                      _PatchPreview(lines: file.patchLines),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
             ],
           ),
         ),
@@ -1348,40 +1400,73 @@ List<_FileChange> _parseFileChanges(String text) {
   return files;
 }
 
-class _ErrorBlock extends StatelessWidget {
+class _ErrorBlock extends StatefulWidget {
   const _ErrorBlock({required this.text});
 
   final String text;
 
   @override
+  State<_ErrorBlock> createState() => _ErrorBlockState();
+}
+
+class _ErrorBlockState extends State<_ErrorBlock> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: CodexColors.danger.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: CodexColors.danger.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.error_outline_rounded,
-            color: CodexColors.danger,
-            size: 18,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: CodexColors.text,
-                fontSize: 13,
-                height: 1.35,
+    final lines = widget.text.trim().split(RegExp(r'\r?\n'));
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 620),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: const ValueKey('error-compact-row'),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Container(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: CodexColors.danger.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(
+                  color: CodexColors.danger.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    color: CodexColors.danger,
+                    size: 18,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      _expanded ? widget.text.trim() : lines.first,
+                      maxLines: _expanded ? 8 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: CodexColors.text,
+                        fontSize: 13,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    _expanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: CodexColors.muted,
+                    size: 20,
+                  ),
+                ],
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }

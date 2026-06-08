@@ -3,28 +3,44 @@ import 'package:provider/provider.dart';
 
 import '../app_controller.dart';
 import '../protocol/bridge_messages.dart';
+import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 
+enum SettingsSection { connection, updates, mode, model, appearance }
+
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.initialSection});
+
+  final SettingsSection? initialSection;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  late final Map<SettingsSection, GlobalKey> _sectionKeys = {
+    for (final section in SettingsSection.values) section: GlobalKey(),
+  };
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final controller = context.read<AppController>();
-      controller.refreshWorkspaces();
-      controller.refreshExternalSessions();
       controller.refreshAppModels();
-      controller.refreshAppThreads();
-      controller.refreshAppSkills();
-      controller.listAppDirectory();
+      final target = widget.initialSection;
+      final sectionContext = target == null
+          ? null
+          : _sectionKeys[target]?.currentContext;
+      if (sectionContext != null) {
+        Scrollable.ensureVisible(
+          sectionContext,
+          duration: AppMotion.scroll,
+          curve: Curves.easeInOutCubic,
+          alignment: 0.08,
+        );
+      }
     });
   }
 
@@ -52,6 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             padding: const EdgeInsets.all(AppSpacing.lg),
             children: [
               _Section(
+                key: _sectionKeys[SettingsSection.connection],
                 title: 'Connection',
                 children: [
                   _SettingRow(
@@ -108,111 +125,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
+                key: _sectionKeys[SettingsSection.mode],
+                title: 'Mode',
+                children: [_RunModeSection(controller: controller)],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                key: _sectionKeys[SettingsSection.model],
                 title: 'Model',
                 children: [_ModelConfigSection(controller: controller)],
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
-                title: 'App-server sessions',
-                children: [_AppThreadSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                title: 'Skills',
-                children: [_SkillSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                title: 'Files',
-                children: [_AppFileSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                title: 'Review',
-                children: [_ReviewSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
+                key: _sectionKeys[SettingsSection.appearance],
                 title: 'Appearance',
                 children: [_AccentPicker(controller: controller)],
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
-                title: 'Workspace',
-                children: [
-                  _AddWorkspaceRow(controller: controller),
-                  for (final workspace in controller.workspaces)
-                    _WorkspaceRow(controller: controller, workspace: workspace),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                title: 'All sessions',
-                children: [
-                  for (final workspace in controller.workspaces)
-                    _WorkspaceSessionGroup(
-                      workspace: workspace,
-                      sessions: controller.sessions
-                          .where(
-                            (session) =>
-                                session.workspaceId == workspace.workspaceId,
-                          )
-                          .toList(),
-                      onPick: (session) {
-                        controller.selectSession(session.sessionId);
-                        Navigator.maybePop(context);
-                      },
-                    ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                title: 'External Codex sessions',
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.md,
-                      0,
-                      AppSpacing.md,
-                      AppSpacing.xs,
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${controller.externalSessions.length} found in ~/.codex/sessions',
-                            style: const TextStyle(
-                              color: CodexColors.muted,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        TextButton.icon(
-                          onPressed: controller.refreshExternalSessions,
-                          icon: const Icon(Icons.refresh_rounded, size: 17),
-                          label: const Text('Refresh'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (controller.externalSessions.isEmpty)
-                    const ListTile(
-                      leading: Icon(Icons.history_toggle_off_rounded),
-                      title: Text('No external sessions found'),
-                      subtitle: Text(
-                        'Run Codex CLI once to create ~/.codex sessions',
-                      ),
-                    )
-                  else
-                    for (final session in controller.externalSessions.take(40))
-                      _ExternalSessionRow(
-                        session: session,
-                        onImport: () {
-                          controller.importExternalSession(session);
-                          Navigator.maybePop(context);
-                        },
-                      ),
-                ],
+                key: _sectionKeys[SettingsSection.updates],
+                title: 'Updates',
+                children: [_UpdateSection(controller: controller)],
               ),
             ],
           ),
@@ -222,13 +155,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
-class _AccentPicker extends StatelessWidget {
-  const _AccentPicker({required this.controller});
+class _UpdateSection extends StatelessWidget {
+  const _UpdateSection({required this.controller});
 
   final AppController controller;
 
   @override
   Widget build(BuildContext context) {
+    final update = controller.availableUpdate;
+    final checking = controller.updateStatus == UpdateCheckStatus.checking;
+    final hasUpdate =
+        controller.updateStatus == UpdateCheckStatus.available &&
+        update?.hasUpdate == true;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -236,32 +174,39 @@ class _AccentPicker extends StatelessWidget {
         AppSpacing.md,
         AppSpacing.md,
       ),
-      child: Wrap(
-        spacing: AppSpacing.sm,
-        runSpacing: AppSpacing.sm,
+      child: Column(
         children: [
-          for (final entry in accentColorOptions.entries)
-            ChoiceChip(
-              label: Text(accentLabelForName(entry.key)),
-              selected: controller.accentName == entry.key,
-              avatar: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: entry.value,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.18),
+          _SettingRow(
+            icon: hasUpdate
+                ? Icons.system_update_alt_rounded
+                : Icons.system_update_rounded,
+            title: _updateTitle(controller.updateStatus, update),
+            subtitle: _updateSubtitle(controller.updateStatus, update),
+            trailing: checking
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : hasUpdate
+                ? FilledButton.tonal(
+                    onPressed: controller.openAvailableUpdate,
+                    child: const Text('Download APK'),
+                  )
+                : TextButton(
+                    onPressed: () => controller.checkForUpdates(),
+                    child: const Text('Check'),
                   ),
+          ),
+          if (hasUpdate)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.xs),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => controller.checkForUpdates(),
+                  icon: const Icon(Icons.refresh_rounded, size: 17),
+                  label: const Text('Check again'),
                 ),
-                child: const SizedBox.square(dimension: 13),
-              ),
-              onSelected: (_) => controller.setAccentName(entry.key),
-              visualDensity: VisualDensity.compact,
-              backgroundColor: CodexColors.panelHigh,
-              selectedColor: entry.value.withValues(alpha: 0.16),
-              side: BorderSide(
-                color: controller.accentName == entry.key
-                    ? entry.value.withValues(alpha: 0.46)
-                    : CodexColors.borderSoft,
               ),
             ),
         ],
@@ -270,280 +215,81 @@ class _AccentPicker extends StatelessWidget {
   }
 }
 
-class _AppThreadSection extends StatelessWidget {
-  const _AppThreadSection({required this.controller});
-
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            0,
-            AppSpacing.md,
-            AppSpacing.xs,
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${controller.appThreads.length} native sessions',
-                  style: const TextStyle(
-                    color: CodexColors.muted,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: () => controller.refreshAppThreads(),
-                icon: const Icon(Icons.refresh_rounded, size: 17),
-                label: const Text('Refresh'),
-              ),
-            ],
-          ),
-        ),
-        if (controller.appThreads.isEmpty)
-          const ListTile(
-            leading: Icon(Icons.history_toggle_off_rounded),
-            title: Text('No app-server sessions loaded'),
-          )
-        else
-          for (final thread in controller.appThreads.take(30))
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.forum_outlined),
-              title: Text(
-                thread.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                thread.workdir,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontFamily: 'monospace'),
-              ),
-              trailing: const Icon(Icons.call_made_rounded, size: 17),
-              onTap: () {
-                controller.importAppThread(thread);
-                Navigator.maybePop(context);
-              },
-            ),
-      ],
-    );
+String _updateTitle(UpdateCheckStatus status, AppUpdateInfo? update) {
+  if (status == UpdateCheckStatus.available && update != null) {
+    return update.title;
   }
+  return switch (status) {
+    UpdateCheckStatus.checking => 'Checking for updates',
+    UpdateCheckStatus.current => 'Codex Link is up to date',
+    UpdateCheckStatus.failed => 'Update check failed',
+    _ => 'App updates',
+  };
 }
 
-class _SkillSection extends StatelessWidget {
-  const _SkillSection({required this.controller});
-
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final skills = controller.appSkillGroups
-        .expand((group) => group.skills)
-        .where((skill) => skill.enabled)
-        .toList(growable: false);
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            0,
-            AppSpacing.md,
-            AppSpacing.xs,
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${skills.length} enabled',
-                  style: const TextStyle(
-                    color: CodexColors.muted,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: () => controller.refreshAppSkills(forceReload: true),
-                icon: const Icon(Icons.refresh_rounded, size: 17),
-                label: const Text('Reload'),
-              ),
-            ],
-          ),
-        ),
-        if (skills.isEmpty)
-          const ListTile(
-            leading: Icon(Icons.extension_off_rounded),
-            title: Text('No skills reported'),
-          )
-        else
-          for (final skill in skills.take(24))
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.extension_rounded),
-              title: Text(
-                skill.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                skill.description,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-      ],
-    );
+String _updateSubtitle(UpdateCheckStatus status, AppUpdateInfo? update) {
+  if (update != null) {
+    final target = update.hasUpdate ? 'Latest' : 'Current';
+    return 'Installed ${update.currentVersion} - $target ${update.latestVersion}';
   }
+  return switch (status) {
+    UpdateCheckStatus.failed => 'Could not reach the latest GitHub release.',
+    _ => 'Checks GitHub Releases and opens the latest APK when available.',
+  };
 }
 
-class _AppFileSection extends StatelessWidget {
-  const _AppFileSection({required this.controller});
+class _RunModeSection extends StatelessWidget {
+  const _RunModeSection({required this.controller});
 
   final AppController controller;
 
   @override
   Widget build(BuildContext context) {
-    final preview = controller.appPreviewFile;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            0,
-            AppSpacing.md,
-            AppSpacing.xs,
+    final session = controller.activeSession;
+    final yoloAllowed = controller.hostInfo?.yoloAllowed == true;
+    final yoloEnabled = session?.mode == RunMode.yolo;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.md,
+      ),
+      child: Column(
+        children: [
+          SwitchListTile(
+            key: const ValueKey('run-mode-yolo-switch'),
+            contentPadding: EdgeInsets.zero,
+            secondary: Icon(
+              yoloEnabled ? Icons.warning_amber_rounded : Icons.shield_outlined,
+              color: yoloEnabled ? CodexColors.amber : CodexColors.muted,
+            ),
+            title: const Text('Yolo mode'),
+            subtitle: Text(
+              yoloAllowed
+                  ? 'Use danger-full-access for future prompts in this session.'
+                  : 'Restart the host with yolo allowed to enable this.',
+              style: const TextStyle(color: CodexColors.muted),
+            ),
+            value: yoloEnabled,
+            onChanged: !yoloAllowed || controller.isRunning
+                ? null
+                : controller.setYolo,
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  controller.appFilePath.isEmpty ? '/' : controller.appFilePath,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: CodexColors.muted,
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Parent folder',
-                onPressed: controller.appFilePath.isEmpty
-                    ? null
-                    : () => controller.listAppDirectory(
-                        _parentPath(controller.appFilePath),
-                      ),
-                icon: const Icon(Icons.arrow_upward_rounded),
-              ),
-              IconButton(
-                tooltip: 'Refresh files',
-                onPressed: () =>
-                    controller.listAppDirectory(controller.appFilePath),
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-            ],
-          ),
-        ),
-        for (final entry in controller.appFileEntries.take(32))
+          const Divider(height: 1, color: CodexColors.borderSoft),
           ListTile(
             dense: true,
-            leading: Icon(
-              entry.isDirectory
-                  ? Icons.folder_rounded
-                  : Icons.insert_drive_file_outlined,
-            ),
-            title: Text(
-              entry.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+            leading: const Icon(Icons.folder_open_rounded),
+            title: Text(yoloEnabled ? 'Danger full access' : 'Safe mode'),
             subtitle: Text(
-              entry.path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              session?.sandbox ?? 'workspace-write',
+              style: const TextStyle(fontFamily: 'monospace'),
             ),
-            onTap: () => entry.isDirectory
-                ? controller.listAppDirectory(entry.path)
-                : controller.readAppFile(entry.path),
-          ),
-        if (preview != null)
-          Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Container(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                color: CodexColors.ink2.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(color: CodexColors.borderSoft),
-              ),
-              child: Text(
-                preview.text?.trim().isNotEmpty == true
-                    ? preview.text!.trim()
-                    : '${preview.name}\n${preview.sizeBytes} bytes',
-                maxLines: 8,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: CodexColors.muted,
-                  fontFamily: 'monospace',
-                  height: 1.35,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _ReviewSection extends StatelessWidget {
-  const _ReviewSection({required this.controller});
-
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.xs,
-        AppSpacing.md,
-        AppSpacing.md,
-      ),
-      child: Row(
-        children: [
-          const Expanded(
-            child: Text(
-              'Run native app-server review for current workspace changes.',
-              style: TextStyle(color: CodexColors.muted, fontSize: 12),
-            ),
-          ),
-          FilledButton.icon(
-            onPressed: controller.isRunning
-                ? null
-                : () => controller.startReview(),
-            icon: const Icon(Icons.rate_review_outlined, size: 17),
-            label: const Text('Start'),
           ),
         ],
       ),
     );
   }
-}
-
-String _parentPath(String path) {
-  final normalized = path.replaceAll('\\', '/');
-  final parts = normalized.split('/')..removeWhere((part) => part.isEmpty);
-  if (parts.isEmpty) return '';
-  parts.removeLast();
-  return parts.join('/');
 }
 
 class _ModelConfigSection extends StatefulWidget {
@@ -700,23 +446,10 @@ class _ModelConfigSectionState extends State<_ModelConfigSection> {
   }
 }
 
-class _AddWorkspaceRow extends StatefulWidget {
-  const _AddWorkspaceRow({required this.controller});
+class _AccentPicker extends StatelessWidget {
+  const _AccentPicker({required this.controller});
 
   final AppController controller;
-
-  @override
-  State<_AddWorkspaceRow> createState() => _AddWorkspaceRowState();
-}
-
-class _AddWorkspaceRowState extends State<_AddWorkspaceRow> {
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -725,48 +458,39 @@ class _AddWorkspaceRowState extends State<_AddWorkspaceRow> {
         AppSpacing.md,
         AppSpacing.xs,
         AppSpacing.md,
-        AppSpacing.sm,
+        AppSpacing.md,
       ),
-      child: Row(
+      child: Wrap(
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.sm,
         children: [
-          Expanded(
-            child: TextField(
-              controller: _controller,
-              enabled: !widget.controller.isRunning,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.create_new_folder_rounded),
-                hintText: '/home/kurisu/project',
-                labelText: 'Add host folder',
+          for (final entry in accentColorOptions.entries)
+            ChoiceChip(
+              label: Text(accentLabelForName(entry.key)),
+              selected: controller.accentName == entry.key,
+              avatar: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: entry.value,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: CodexColors.text.withValues(alpha: 0.18),
+                  ),
+                ),
+                child: const SizedBox.square(dimension: 13),
               ),
-              onSubmitted: (_) => _submit(),
+              onSelected: (_) => controller.setAccentName(entry.key),
+              visualDensity: VisualDensity.compact,
+              backgroundColor: CodexColors.panelHigh,
+              selectedColor: entry.value.withValues(alpha: 0.16),
+              side: BorderSide(
+                color: controller.accentName == entry.key
+                    ? entry.value.withValues(alpha: 0.46)
+                    : CodexColors.borderSoft,
+              ),
             ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          IconButton.filledTonal(
-            tooltip: 'Add workspace',
-            onPressed: widget.controller.isRunning ? null : _submit,
-            icon: const Icon(Icons.add_rounded),
-          ),
-          const SizedBox(width: AppSpacing.xs),
-          IconButton.filledTonal(
-            tooltip: 'Create workspace folder',
-            onPressed: widget.controller.isRunning ? null : _create,
-            icon: const Icon(Icons.create_new_folder_rounded),
-          ),
         ],
       ),
     );
-  }
-
-  void _submit() {
-    widget.controller.addWorkspacePath(_controller.text);
-    _controller.clear();
-  }
-
-  void _create() {
-    widget.controller.addWorkspacePath(_controller.text, create: true);
-    _controller.clear();
   }
 }
 
@@ -781,7 +505,7 @@ String _hostModeLabel(HostInfo hostInfo) {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.children});
+  const _Section({super.key, required this.title, required this.children});
 
   final String title;
   final List<Widget> children;
@@ -835,105 +559,6 @@ class _SettingRow extends StatelessWidget {
       title: Text(title),
       subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: trailing,
-    );
-  }
-}
-
-class _WorkspaceRow extends StatelessWidget {
-  const _WorkspaceRow({required this.controller, required this.workspace});
-
-  final AppController controller;
-  final WorkspaceInfo workspace;
-
-  @override
-  Widget build(BuildContext context) {
-    final active =
-        workspace.workspaceId == controller.activeSession?.workspaceId;
-    return ListTile(
-      leading: Icon(
-        active ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-        color: active ? CodexColors.greenSoft : CodexColors.muted,
-      ),
-      title: Text(workspace.label),
-      subtitle: Text(
-        workspace.path,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontFamily: 'monospace'),
-      ),
-      onTap: controller.isRunning
-          ? null
-          : () => controller.switchWorkspace(workspace.workspaceId),
-    );
-  }
-}
-
-class _WorkspaceSessionGroup extends StatelessWidget {
-  const _WorkspaceSessionGroup({
-    required this.workspace,
-    required this.sessions,
-    required this.onPick,
-  });
-
-  final WorkspaceInfo workspace;
-  final List<CodexSessionInfo> sessions;
-  final ValueChanged<CodexSessionInfo> onPick;
-
-  @override
-  Widget build(BuildContext context) {
-    return ExpansionTile(
-      initiallyExpanded: workspace.active,
-      leading: const Icon(Icons.folder_rounded),
-      title: Text(workspace.label),
-      subtitle: Text(
-        workspace.path,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontFamily: 'monospace'),
-      ),
-      children: [
-        if (sessions.isEmpty)
-          const ListTile(
-            dense: true,
-            title: Text('No sessions in this workspace'),
-          )
-        else
-          for (final session in sessions)
-            ListTile(
-              dense: true,
-              title: Text(
-                session.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(session.workdir, maxLines: 1),
-              onTap: () => onPick(session),
-            ),
-      ],
-    );
-  }
-}
-
-class _ExternalSessionRow extends StatelessWidget {
-  const _ExternalSessionRow({required this.session, required this.onImport});
-
-  final ExternalSessionInfo session;
-  final VoidCallback onImport;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      leading: const Icon(Icons.history_rounded),
-      title: Text(session.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        session.workdir,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontFamily: 'monospace'),
-      ),
-      trailing: const Icon(Icons.call_made_rounded, size: 17),
-      onTap: onImport,
     );
   }
 }

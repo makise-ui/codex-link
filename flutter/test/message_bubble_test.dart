@@ -178,7 +178,7 @@ void main() {
     expect(find.text('Read main.dart'), findsOneWidget);
   });
 
-  testWidgets('renders file change events as visible timeline cards', (
+  testWidgets('renders file change events as compact expandable cards', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -201,6 +201,13 @@ void main() {
     );
 
     expect(find.text('Files changed'), findsOneWidget);
+    expect(find.text('2 files'), findsOneWidget);
+    expect(find.text('lib/new_file.dart'), findsNothing);
+    expect(find.text('+class NewFile {}'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
+    await tester.pumpAndSettle();
+
     expect(find.text('lib/new_file.dart'), findsOneWidget);
     expect(find.text('lib/chat.dart'), findsOneWidget);
     expect(find.text('added'), findsOneWidget);
@@ -252,6 +259,9 @@ void main() {
       ),
     );
 
+    expect(find.text('Download'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
+    await tester.pumpAndSettle();
     expect(find.text('Download'), findsOneWidget);
     expect(find.byTooltip('Copy file path'), findsOneWidget);
   });
@@ -277,6 +287,9 @@ void main() {
       ),
     );
 
+    expect(find.text('lib/report.txt'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
+    await tester.pumpAndSettle();
     expect(find.text('lib/report.txt'), findsOneWidget);
     expect(find.text('requested'), findsOneWidget);
     expect(find.text('Download'), findsOneWidget);
@@ -330,6 +343,9 @@ void main() {
       ),
     );
 
+    expect(find.byKey(const ValueKey('image-preview-image-1')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('image-preview-image-1')), findsOneWidget);
     final boundedPreview = tester
         .widgetList<ConstrainedBox>(find.byType(ConstrainedBox))
@@ -339,5 +355,35 @@ void main() {
               widget.constraints.maxHeight == 280,
         );
     expect(boundedPreview, hasLength(1));
+  });
+
+  testWidgets('error details are collapsed behind a compact row', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'error-1',
+              role: ChatRole.system,
+              kind: AgentMessageKind.error,
+              text: 'Very long bridge error\nstack line 1\nstack line 2',
+              createdAt: DateTime(2026),
+              title: 'Error',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('error-compact-row')), findsOneWidget);
+    expect(find.textContaining('stack line 1'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('error-compact-row')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('stack line 1'), findsOneWidget);
   });
 }

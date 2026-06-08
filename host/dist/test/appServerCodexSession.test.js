@@ -185,6 +185,18 @@ rl.on("line", (line) => {
     write({ method: "item/reasoning/summaryPartAdded", params: { threadId, turnId, itemId: "reason-1", summaryIndex: 0 } });
     write({ method: "item/reasoning/summaryTextDelta", params: { threadId, turnId, itemId: "reason-1", summaryIndex: 0, delta: "Checked repository shape." } });
     write({ method: "item/completed", params: { threadId, turnId, completedAtMs: 1, item: { type: "reasoning", id: "reason-1" } } });
+    write({
+      method: "turn/plan/updated",
+      params: {
+        threadId,
+        turnId,
+        explanation: "Checking the mobile bridge polish",
+        plan: [
+          { step: "Move plan out of the chat timeline", status: "completed" },
+          { step: "Render it as a collapsible composer bar", status: "in_progress" },
+        ],
+      },
+    });
     write({ method: "item/started", params: { threadId, turnId, startedAtMs: 1, item: { type: "mcpToolCall", id: "mcp-1", server: "files", tool: "read" } } });
     write({ method: "item/mcpToolCall/progress", params: { threadId, turnId, itemId: "mcp-1", message: "Reading project metadata" } });
     write({ method: "item/completed", params: { threadId, turnId, completedAtMs: 1, item: { type: "mcpToolCall", id: "mcp-1", server: "files", tool: "read" } } });
@@ -289,6 +301,14 @@ describe("AppServerCodexSession", () => {
         expect(events.some((event) => event.type === "run.started" && event.runId === "turn-1")).toBe(true);
         expect(events.some((event) => event.type === "message.started" && event.title === "Reading file")).toBe(true);
         expect(events.some((event) => event.type === "message.started" && event.title === "Thinking summary")).toBe(true);
+        expect(events).toContainEqual({
+            type: "session.plan.updated",
+            sessionId: session.sessionId,
+            runId: "turn-1",
+            title: "Plan",
+            text: expect.stringContaining("Checking the mobile bridge polish"),
+        });
+        expect(events.some((event) => event.type === "message.started" && event.title === "Plan")).toBe(false);
         expect(events.some((event) => event.type === "message.delta" && event.text.includes("Checked repository shape"))).toBe(true);
         expect(events.some((event) => event.type === "message.delta" && event.text.includes("Reading project metadata"))).toBe(true);
         expect(events.some((event) => event.type === "message.delta" && event.text.includes("Terminal input"))).toBe(true);

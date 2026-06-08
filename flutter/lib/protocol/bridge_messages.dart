@@ -220,6 +220,29 @@ class CodexGoalInfo {
   }
 }
 
+class CodexPlanInfo {
+  const CodexPlanInfo({
+    required this.sessionId,
+    required this.title,
+    required this.text,
+    this.runId,
+  });
+
+  final String sessionId;
+  final String? runId;
+  final String title;
+  final String text;
+
+  factory CodexPlanInfo.fromJson(Map<String, dynamic> json) {
+    return CodexPlanInfo(
+      sessionId: json['sessionId'] as String? ?? '',
+      runId: json['runId'] as String?,
+      title: json['title'] as String? ?? 'Plan',
+      text: json['text'] as String? ?? '',
+    );
+  }
+}
+
 class WorkspaceInfo {
   const WorkspaceInfo({
     required this.workspaceId,

@@ -22,6 +22,23 @@ Yolo mode is intentionally gated. The app can only switch a session to yolo when
 
 The new Flutter UI uses a ChatGPT-mobile-inspired dark theme: pure black background, floating round menu/action controls, dark gray user bubbles, plain assistant text, bottom pill composer, smooth transitions, a command rail, Markdown rendering, and syntax-highlighted code blocks.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-connect.jpg" alt="Connect to Codex Link" width="220"></td>
+    <td><img src="docs/screenshots/02-chat.jpg" alt="Connected chat" width="220"></td>
+    <td><img src="docs/screenshots/03-sidebar.jpg" alt="Session sidebar" width="220"></td>
+    <td><img src="docs/screenshots/04-tool-calls.jpg" alt="Tool call cards in chat" width="220"></td>
+  </tr>
+  <tr>
+    <td align="center">Connect</td>
+    <td align="center">Chat</td>
+    <td align="center">Sidebar</td>
+    <td align="center">Tool calls</td>
+  </tr>
+</table>
+
 ## Project layout
 
 ```text
@@ -211,6 +228,12 @@ Install the debug APK from:
 ```text
 /home/kurisu/codex-app/flutter/build/app/outputs/flutter-apk/app-debug.apk
 ```
+
+## App updates
+
+The Flutter app checks the latest GitHub Release for `makise-ui/codex-link` on startup and from **Settings -> Updates**. When the release tag is newer than the installed app version, the app shows an update notice and opens the release APK asset in the system browser.
+
+Android does not allow a normal app to silently replace itself. The V1 updater is an explicit download/install flow: publish a GitHub Release with an `.apk` asset, then users can download it from the in-app update prompt.
 
 ## MVP capabilities
 

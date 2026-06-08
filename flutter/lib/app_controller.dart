@@ -4,25 +4,49 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import 'protocol/bridge_messages.dart';
+import 'services/app_notifier.dart';
 import 'services/bridge_socket_client.dart';
 import 'services/download_saver.dart';
 import 'services/pairing_parser.dart';
 import 'services/secure_credentials_store.dart';
+import 'services/update_service.dart';
+
+class AppNotice {
+  const AppNotice({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    this.payload,
+  });
+
+  final String id;
+  final String title;
+  final String body;
+  final String? payload;
+  final DateTime createdAt;
+}
 
 class AppController extends ChangeNotifier {
   AppController({
     BridgeSocketClient? socket,
     SecureCredentialsStore? store,
     FileDownloadSaver? downloadSaver,
+    AppNotifier? notifier,
+    AppUpdateService? updateService,
     Duration autoReconnectDelay = const Duration(seconds: 3),
   }) : _socket = socket ?? BridgeSocketClient(),
        _store = store ?? SecureCredentialsStore(),
        _downloadSaver = downloadSaver ?? const PickerFileDownloadSaver(),
+       _notifier = notifier ?? LocalAppNotifier(),
+       _updateService = updateService ?? GitHubAppUpdateService(),
        _autoReconnectDelay = autoReconnectDelay;
 
   final BridgeSocketClient _socket;
   final SecureCredentialsStore _store;
   final FileDownloadSaver _downloadSaver;
+  final AppNotifier _notifier;
+  final AppUpdateService _updateService;
   final Duration _autoReconnectDelay;
   final _uuid = const Uuid();
 
@@ -38,6 +62,14 @@ class AppController extends ChangeNotifier {
   final Map<String, String> _activeRunIdsBySession = {};
   final Set<String> _downloadsRequestedForSave = {};
   final Map<String, String> _lastGoalEventBySession = {};
+  final Map<String, CodexPlanInfo> _plansBySession = {};
+  final Set<String> _runNoticeSignatures = {};
+  bool _isAppForeground = true;
+  String? latestErrorText;
+  AppNotice? latestNotice;
+  UpdateCheckStatus updateStatus = UpdateCheckStatus.idle;
+  AppUpdateInfo? availableUpdate;
+  String? updateErrorText;
 
   final List<CodexSessionInfo> sessions = [];
   final List<WorkspaceInfo> workspaces = [];
@@ -71,6 +103,21 @@ class AppController extends ChangeNotifier {
     return messagesBySession[id] ?? const [];
   }
 
+  CodexPlanInfo? get activePlan {
+    final id = activeSession?.sessionId;
+    if (id == null) return null;
+    final plan = _plansBySession[id];
+    if (plan == null || plan.text.trim().isEmpty) return null;
+    return plan;
+  }
+
+  List<ChatMessage> get pendingApprovals => activeMessages
+      .where(
+        (message) =>
+            message.kind == AgentMessageKind.approval && !message.complete,
+      )
+      .toList(growable: false);
+
   bool get isConnected => phase == ConnectionPhase.connected;
   bool get isOffline => phase == ConnectionPhase.offline;
   bool get canShowChat =>
@@ -84,6 +131,90 @@ class AppController extends ChangeNotifier {
     if (!isConnected || session == null) return false;
     return session.isRunning ||
         _activeRunIdForSession(session.sessionId) != null;
+  }
+
+  String latestAssistantPreview({int maxLines = 3, int maxChars = 220}) {
+    final message = _latestAssistantMessageForSession(activeSession?.sessionId);
+    if (message == null) return '';
+    return _compactPreview(
+      message.text,
+      maxLines: maxLines,
+      maxChars: maxChars,
+    );
+  }
+
+  Future<void> initializeNotifications() => _notifier.initialize();
+
+  Future<void> checkForUpdates({bool silent = false}) async {
+    if (updateStatus == UpdateCheckStatus.checking) return;
+    updateStatus = UpdateCheckStatus.checking;
+    updateErrorText = null;
+    notifyListeners();
+
+    try {
+      final update = await _updateService.checkForUpdate();
+      availableUpdate = update;
+      updateStatus = update.hasUpdate
+          ? UpdateCheckStatus.available
+          : UpdateCheckStatus.current;
+      if (update.hasUpdate) {
+        _showNotice(
+          'Update available',
+          '${update.title} is ready to download.',
+          payload: 'update:${update.latestVersion}',
+        );
+      } else if (!silent) {
+        _showNotice(
+          'App is current',
+          'Codex Link ${update.currentVersion} is up to date.',
+          payload: 'update:current',
+        );
+      }
+    } catch (error) {
+      updateStatus = UpdateCheckStatus.failed;
+      updateErrorText = error.toString();
+      if (!silent) {
+        _showNotice(
+          'Update check failed',
+          _compactPreview(error.toString(), maxLines: 2, maxChars: 160),
+          payload: 'update:error',
+        );
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> openAvailableUpdate() async {
+    final update = availableUpdate;
+    if (update == null) return;
+    try {
+      final opened = await _updateService.openUpdate(update);
+      if (!opened) {
+        _showNotice(
+          'Could not open update',
+          'Open the GitHub release from Settings.',
+          payload: 'update:open-failed',
+        );
+      }
+    } catch (error) {
+      updateErrorText = error.toString();
+      _showNotice(
+        'Could not open update',
+        _compactPreview(error.toString(), maxLines: 2, maxChars: 160),
+        payload: 'update:open-error',
+      );
+    }
+    notifyListeners();
+  }
+
+  void setAppForeground(bool isForeground) {
+    _isAppForeground = isForeground;
+  }
+
+  void clearLatestNotice() {
+    if (latestNotice == null) return;
+    latestNotice = null;
+    notifyListeners();
   }
 
   Future<void> loadSavedCredentials() async {
@@ -429,9 +560,48 @@ class AppController extends ChangeNotifier {
       case 'codex.new':
         createSession();
         return;
+      case 'codex.workspace':
+        refreshWorkspaces();
+        statusText = 'Workspace controls are open in commands.';
+        notifyListeners();
+        return;
+      case 'codex.skills':
+        refreshAppSkills(forceReload: true);
+        statusText = 'Skills are open in commands.';
+        notifyListeners();
+        return;
+      case 'codex.files':
+        listAppDirectory();
+        statusText = 'Files are open in commands.';
+        notifyListeners();
+        return;
+      case 'codex.history':
+        refreshAppThreads();
+        refreshExternalSessions();
+        statusText = 'Session history is open in commands.';
+        notifyListeners();
+        return;
+      case 'codex.approvals':
+        statusText = pendingApprovals.isEmpty
+            ? 'No pending approvals.'
+            : '${pendingApprovals.length} approval${pendingApprovals.length == 1 ? '' : 's'} pending.';
+        notifyListeners();
+        return;
+      case 'codex.tunnel':
+        statusText = hostInfo?.connectionMode == 'tunnel'
+            ? 'Tunnel details are open in settings.'
+            : 'Local bridge details are open in settings.';
+        notifyListeners();
+        return;
+      case 'codex.review':
+        startReview();
+        return;
       case 'codex.sessions':
+        statusText = 'Open ${command.title} from commands.';
+        notifyListeners();
+        return;
       case 'codex.model':
-        statusText = 'Open ${command.title} from the chat controls.';
+        statusText = 'Open ${command.title} from settings.';
         notifyListeners();
         return;
     }
@@ -544,6 +714,17 @@ class AppController extends ChangeNotifier {
       'approvalId': approvalId,
       'decision': decision,
     });
+    final list = messagesBySession[sessionId];
+    if (list != null) {
+      for (var index = 0; index < list.length; index++) {
+        final message = list[index];
+        if (message.kind == AgentMessageKind.approval &&
+            message.text.contains('approvalId $approvalId')) {
+          list[index] = message.copyWith(complete: true);
+        }
+      }
+      notifyListeners();
+    }
   }
 
   Future<void> disposeController() async {
@@ -645,6 +826,9 @@ class AppController extends ChangeNotifier {
         break;
       case 'session.goal.cleared':
         _applyGoalCleared(message);
+        break;
+      case 'session.plan.updated':
+        _applyPlanUpdated(message);
         break;
       case 'session.deleted':
         _deleteLocalSession(message['sessionId'] as String? ?? '');
@@ -945,6 +1129,7 @@ class AppController extends ChangeNotifier {
             createdAt: DateTime.now(),
           ),
         );
+    _showNotice(title, _compactPreview(details), payload: 'goal:$sessionId');
   }
 
   void _applyGoalCleared(Map<String, dynamic> message) {
@@ -971,11 +1156,28 @@ class AppController extends ChangeNotifier {
         );
   }
 
+  void _applyPlanUpdated(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    if (sessionId == null) return;
+    final plan = CodexPlanInfo.fromJson({...message, 'sessionId': sessionId});
+    if (plan.text.trim().isEmpty) {
+      _plansBySession.remove(sessionId);
+      return;
+    }
+    _plansBySession[sessionId] = plan;
+    _showNotice(
+      'Plan updated',
+      _compactPreview(plan.text, maxLines: 1),
+      payload: 'plan:$sessionId',
+    );
+  }
+
   void _deleteLocalSession(String sessionId) {
     sessions.removeWhere((session) => session.sessionId == sessionId);
     messagesBySession.remove(sessionId);
     _activeRunIdsBySession.remove(sessionId);
     _lastGoalEventBySession.remove(sessionId);
+    _plansBySession.remove(sessionId);
     if (activeSessionId == sessionId) {
       activeSessionId = sessions.isEmpty ? null : sessions.first.sessionId;
     }
@@ -1127,18 +1329,12 @@ class AppController extends ChangeNotifier {
         })
         .join('\n');
     if (lines.isEmpty) return;
-    messagesBySession
-        .putIfAbsent(sessionId, () => [])
-        .add(
-          ChatMessage(
-            id: _uuid.v4(),
-            role: ChatRole.system,
-            kind: AgentMessageKind.files,
-            title: 'Files changed',
-            text: lines,
-            createdAt: DateTime.now(),
-          ),
-        );
+    _upsertFileActivity(
+      sessionId,
+      lines,
+      title: 'File activity',
+      runId: message['runId'] as String?,
+    );
   }
 
   void _appendFileOfferEvent(Map<String, dynamic> message) {
@@ -1154,16 +1350,10 @@ class AppController extends ChangeNotifier {
           message.title == 'Requesting file' &&
           message.text.trim() == offer.path,
     );
-    list.add(
-      ChatMessage(
-        id: 'file-offer-${offer.fileId}',
-        role: ChatRole.system,
-        kind: AgentMessageKind.files,
-        title: 'File available',
-        text:
-            '${offer.reason} ${offer.path}\nsize ${offer.sizeBytes}\nfileId ${offer.fileId}',
-        createdAt: DateTime.now(),
-      ),
+    _upsertFileActivity(
+      sessionId,
+      '${offer.reason} ${offer.path}\nsize ${offer.sizeBytes}\nfileId ${offer.fileId}',
+      title: 'File activity',
     );
     if (_isImageOffer(offer)) {
       requestFileDownload(offer, saveToDevice: false);
@@ -1239,6 +1429,11 @@ class AppController extends ChangeNotifier {
     phase = ConnectionPhase.offline;
     activeRunId = null;
     statusText = 'Offline. Showing cached chat while reconnecting…';
+    _showNotice(
+      'Bridge disconnected',
+      'Showing cached chat. Trying to reconnect.',
+      payload: 'connection:offline',
+    );
     _scheduleReconnect();
     notifyListeners();
   }
@@ -1264,20 +1459,68 @@ class AppController extends ChangeNotifier {
   }
 
   void _appendError(String text) {
-    final sessionId = activeSession?.sessionId;
-    if (sessionId == null) return;
-    messagesBySession
-        .putIfAbsent(sessionId, () => [])
-        .add(
-          ChatMessage(
-            id: _uuid.v4(),
-            role: ChatRole.system,
-            kind: AgentMessageKind.error,
-            title: 'Error',
-            text: text,
-            createdAt: DateTime.now(),
-          ),
-        );
+    latestErrorText = text;
+  }
+
+  void clearLatestError() {
+    if (latestErrorText == null) return;
+    latestErrorText = null;
+    notifyListeners();
+  }
+
+  void _showNotice(String title, String body, {String? payload}) {
+    final normalizedTitle = title.trim();
+    final normalizedBody = body.trim();
+    if (normalizedTitle.isEmpty || normalizedBody.isEmpty) return;
+    latestNotice = AppNotice(
+      id: _uuid.v4(),
+      title: normalizedTitle,
+      body: normalizedBody,
+      payload: payload,
+      createdAt: DateTime.now(),
+    );
+    if (!_isAppForeground) {
+      unawaited(
+        _notifier.show(
+          title: normalizedTitle,
+          body: normalizedBody,
+          payload: payload,
+        ),
+      );
+    }
+  }
+
+  void _upsertFileActivity(
+    String sessionId,
+    String text, {
+    required String title,
+    String? runId,
+  }) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final list = messagesBySession.putIfAbsent(sessionId, () => []);
+    final messageId =
+        'file-activity-${runId ?? _activeRunIdForSession(sessionId) ?? sessionId}';
+    final index = list.indexWhere((message) => message.id == messageId);
+    if (index >= 0) {
+      final current = list[index];
+      final nextText = current.text.trim().isEmpty
+          ? trimmed
+          : '${current.text.trim()}\n$trimmed';
+      list[index] = current.copyWith(text: nextText, title: title);
+      return;
+    }
+    list.add(
+      ChatMessage(
+        id: messageId,
+        role: ChatRole.system,
+        kind: AgentMessageKind.files,
+        title: title,
+        text: trimmed,
+        runId: runId ?? _activeRunIdForSession(sessionId),
+        createdAt: DateTime.now(),
+      ),
+    );
   }
 
   void _markRunStarted(Map<String, dynamic> message) {
@@ -1296,7 +1539,14 @@ class AppController extends ChangeNotifier {
   void _markRunCompleted(Map<String, dynamic> message) {
     final sessionId = _sessionIdForMessage(message);
     if (sessionId == null) return;
-    _clearSessionRun(sessionId, message['runId'] as String?);
+    final exitCode = message['exitCode'] as int?;
+    final status = exitCode == null || exitCode == 0 ? 'completed' : 'failed';
+    _clearSessionRun(
+      sessionId,
+      message['runId'] as String?,
+      lastStatus: status,
+    );
+    _notifyRunFinished(sessionId, message['runId'] as String?, status);
   }
 
   void _applyStatusMessage(Map<String, dynamic> message) {
@@ -1315,6 +1565,7 @@ class AppController extends ChangeNotifier {
     }
     if (status == 'completed' || status == 'failed' || status == 'cancelled') {
       _clearSessionRun(sessionId, runId, lastStatus: status);
+      _notifyRunFinished(sessionId, runId, status);
     }
   }
 
@@ -1334,6 +1585,26 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  void _notifyRunFinished(String sessionId, String? runId, String status) {
+    final signature = '$sessionId:${runId ?? 'unknown'}:$status';
+    if (_runNoticeSignatures.contains(signature)) return;
+    _runNoticeSignatures.add(signature);
+    final title = switch (status) {
+      'failed' => 'Task failed',
+      'cancelled' => 'Task cancelled',
+      _ => 'Task finished',
+    };
+    final preview = _latestAssistantPreviewForSession(sessionId);
+    final body = preview.isEmpty
+        ? switch (status) {
+            'failed' => 'The run finished with an error.',
+            'cancelled' => 'The run was cancelled.',
+            _ => 'The run completed.',
+          }
+        : preview;
+    _showNotice(title, body, payload: 'run:$sessionId:${runId ?? ''}');
+  }
+
   void _updateSessionRunState(
     String sessionId, {
     String? activeRunId,
@@ -1349,6 +1620,25 @@ class AppController extends ChangeNotifier {
       clearActiveRunId: clearActiveRunId,
       lastStatus: lastStatus,
     );
+  }
+
+  ChatMessage? _latestAssistantMessageForSession(String? sessionId) {
+    if (sessionId == null) return null;
+    final messages = messagesBySession[sessionId] ?? const <ChatMessage>[];
+    for (final candidate in messages.reversed) {
+      if (candidate.role == ChatRole.assistant &&
+          candidate.kind == AgentMessageKind.response &&
+          candidate.text.trim().isNotEmpty) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  String _latestAssistantPreviewForSession(String sessionId) {
+    final message = _latestAssistantMessageForSession(sessionId);
+    if (message == null) return '';
+    return _compactPreview(message.text);
   }
 
   String? _sessionIdForMessage(Map<String, dynamic> message) {
@@ -1442,6 +1732,18 @@ bool _shouldAnnounceGoalStatus(String status) {
       status == 'blocked' ||
       status == 'usageLimited' ||
       status == 'budgetLimited';
+}
+
+String _compactPreview(String text, {int maxLines = 3, int maxChars = 220}) {
+  final lines = text
+      .trim()
+      .split(RegExp(r'\r?\n'))
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .take(maxLines)
+      .join('\n');
+  if (lines.length <= maxChars) return lines;
+  return '${lines.substring(0, maxChars - 1).trimRight()}…';
 }
 
 bool _isImageOffer(FileOfferInfo offer) {

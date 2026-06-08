@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
 import type { AppFileSearchResultsMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppModelListMessage, AppModelRecord, AppProviderCapabilitiesRecord, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, StoredChatMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
 import type { CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptResult } from "./codexSession.js";
@@ -9,6 +11,8 @@ import { findExternalSession, listExternalSessions, readExternalSessionHistory }
 import { FileTransferManager, mimeTypeFor } from "./fileTransferManager.js";
 import { MockCodexSession } from "./mockCodexSession.js";
 import { SessionStore } from "./sessionStore.js";
+
+const execFileAsync = promisify(execFile);
 
 type Listener = (event: ServerMessage) => void;
 
@@ -130,6 +134,70 @@ export class CodexSessionManager {
     this.activeSessionId = record.sessionId;
     await this.saveAndEmit(record);
     return record;
+  }
+
+  async runDoctorCommand(sessionId: string): Promise<void> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = record.sessionId;
+    const messageId = randomUUID();
+    const runId = `doctor-${messageId}`;
+    const startedAt = new Date().toISOString();
+    this.appendHistory(record.sessionId, {
+      messageId,
+      role: "system",
+      kind: "executing",
+      title: "Codex doctor",
+      text: "",
+      runId,
+      createdAt: startedAt,
+      complete: false,
+    });
+    this.emit({
+      type: "message.started",
+      sessionId: record.sessionId,
+      runId,
+      messageId,
+      role: "system",
+      kind: "executing",
+      title: "Codex doctor",
+    });
+
+    const command = `${this.options.codexCommand} doctor --json`;
+    const lines = [`Command: ${command}`];
+    try {
+      const { stdout, stderr } = await execFileAsync(this.options.codexCommand, ["doctor", "--json"], {
+        cwd: record.workdir,
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const summary = summarizeDoctorOutput(stdout, stderr);
+      lines.push(...summary);
+    } catch (error) {
+      lines.push("Codex doctor failed.");
+      lines.push(error instanceof Error ? error.message : String(error));
+    }
+
+    const text = lines.join("\n");
+    const history = this.messageHistory.get(record.sessionId);
+    const existing = history?.find((message) => message.messageId === messageId);
+    if (existing) {
+      existing.text = text;
+      existing.complete = true;
+    }
+    this.emit({
+      type: "message.delta",
+      sessionId: record.sessionId,
+      runId,
+      messageId,
+      text,
+    });
+    this.emit({
+      type: "message.completed",
+      sessionId: record.sessionId,
+      runId,
+      messageId,
+    });
+    await this.save();
   }
 
   async listAppSkills(sessionId: string | undefined, forceReload = false): Promise<AppSkillListMessage> {
@@ -962,6 +1030,169 @@ function isImageAttachment(attachment: PromptAttachment): boolean {
 
 function isThinkingNoise(text: string): boolean {
   return text.trim().replace(/\.+$/, "").replace(/…$/, "").toLowerCase() === "thinking";
+}
+
+type DoctorCheckRecord = {
+  id?: unknown;
+  category?: unknown;
+  status?: unknown;
+  summary?: unknown;
+  details?: unknown;
+  remediation?: unknown;
+};
+
+type DoctorReportRecord = {
+  overallStatus?: unknown;
+  codexVersion?: unknown;
+  checks?: unknown;
+};
+
+export function summarizeDoctorOutput(stdout: string, stderr: string): string[] {
+  const trimmedStdout = stdout.trim();
+  const trimmedStderr = stderr.trim();
+  if (!trimmedStdout && !trimmedStderr) return ["Codex doctor finished with no output."];
+
+  if (trimmedStdout) {
+    try {
+      const parsed = JSON.parse(trimmedStdout) as DoctorReportRecord;
+      const formatted = formatDoctorReport(parsed);
+      if (formatted.length > 0) {
+        if (trimmedStderr) {
+          formatted.push("", "Warnings:", ...trimmedStderr.split(/\r?\n/).map((line) => `- ${line}`));
+        }
+        return formatted;
+      }
+    } catch {
+      // Fall back to compact raw output below when Codex changes shape or prints non-JSON.
+    }
+  }
+
+  const output = [trimmedStdout, trimmedStderr].filter(Boolean).join("\n");
+  const lines = output.split(/\r?\n/);
+  if (lines.length <= 36) return lines;
+  return [
+    ...lines.slice(0, 24),
+    `... ${lines.length - 36} lines omitted ...`,
+    ...lines.slice(-12),
+  ];
+}
+
+function formatDoctorReport(report: DoctorReportRecord): string[] {
+  const checks = doctorChecks(report);
+  if (!report || checks.size === 0) return [];
+
+  const config = checks.get("config.load");
+  const sandbox = checks.get("sandbox.helpers");
+  const auth = checks.get("auth.credentials");
+  const appServer = checks.get("app_server.status");
+  const git = checks.get("git.environment");
+  const providerNetwork = checks.get("network.provider_reachability");
+  const webSocket = checks.get("network.websocket_reachability");
+  const updates = checks.get("updates.status");
+
+  const lines: string[] = [];
+  pushDoctorField(lines, "Status", stringValue(report.overallStatus));
+  pushDoctorField(lines, "Codex version", stringValue(report.codexVersion));
+
+  const model = detailValue(config, "model");
+  const provider = detailValue(config, "model provider");
+  pushDoctorField(lines, "Model", model && provider ? `${model} (provider ${provider})` : model);
+  pushDoctorField(lines, "Directory", detailValue(config, "cwd"));
+
+  const filesystem = detailValue(sandbox, "filesystem sandbox");
+  const network = detailValue(sandbox, "network sandbox");
+  const permissions = [
+    filesystem ? `${filesystem} filesystem` : undefined,
+    network ? `${network} network` : undefined,
+  ].filter(Boolean).join(", ");
+  pushDoctorField(lines, "Permissions", permissions);
+  pushDoctorField(lines, "Approval policy", detailValue(sandbox, "approval policy"));
+  pushDoctorField(lines, "Account", authSummary(auth));
+
+  const appServerStatus = detailValue(appServer, "status");
+  const appServerMode = detailValue(appServer, "mode");
+  pushDoctorField(
+    lines,
+    "App server",
+    [appServerStatus, appServerMode ? `mode ${appServerMode}` : undefined].filter(Boolean).join(", ") ||
+      stringValue(appServer?.summary),
+  );
+
+  const branch = detailValue(git, "git branch");
+  const repoRoot = detailValue(git, "repo root");
+  pushDoctorField(lines, "Git", [branch, repoRoot ? `at ${repoRoot}` : undefined].filter(Boolean).join(" "));
+  pushDoctorField(lines, "MCP servers", detailValue(config, "mcp servers"));
+  pushDoctorField(lines, "Provider network", stringValue(providerNetwork?.summary));
+  pushDoctorField(lines, "WebSocket", detailValue(webSocket, "handshake result") || stringValue(webSocket?.summary));
+  pushDoctorField(lines, "Updates", detailValue(updates, "latest version status") || stringValue(updates?.summary));
+
+  lines.push("", "Checks:");
+  for (const [id, check] of [...checks.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    const status = doctorStatusLabel(stringValue(check.status));
+    const summary = stringValue(check.summary) || "no summary";
+    lines.push(`${status.padEnd(4)} ${id} - ${summary}`);
+    const remediation = stringValue(check.remediation);
+    if (remediation) lines.push(`     Fix: ${remediation}`);
+  }
+  return lines;
+}
+
+function doctorChecks(report: DoctorReportRecord): Map<string, DoctorCheckRecord> {
+  if (!isRecord(report.checks)) return new Map();
+  const checks = new Map<string, DoctorCheckRecord>();
+  for (const [key, value] of Object.entries(report.checks)) {
+    if (!isRecord(value)) continue;
+    const check = value as DoctorCheckRecord;
+    checks.set(stringValue(check.id) || key, check);
+  }
+  return checks;
+}
+
+function pushDoctorField(lines: string[], label: string, value: string | undefined): void {
+  if (!value) return;
+  lines.push(`${`${label}:`.padEnd(21)}${value}`);
+}
+
+function authSummary(check: DoctorCheckRecord | undefined): string | undefined {
+  const parts = [
+    detailValue(check, "stored auth mode") ? `${detailValue(check, "stored auth mode")} auth` : undefined,
+    detailValue(check, "stored ChatGPT tokens") === "true" ? "ChatGPT tokens stored" : undefined,
+    detailValue(check, "stored API key") === "true" ? "API key stored" : undefined,
+    detailValue(check, "stored agent identity") === "true" ? "agent identity stored" : undefined,
+  ].filter(Boolean);
+  return parts.join(", ") || stringValue(check?.summary);
+}
+
+function detailValue(check: DoctorCheckRecord | undefined, key: string): string | undefined {
+  if (!check || !isRecord(check.details)) return undefined;
+  return stringValue(check.details[key]);
+}
+
+function doctorStatusLabel(status: string | undefined): string {
+  switch (status?.toLowerCase()) {
+    case "ok":
+      return "OK";
+    case "warning":
+    case "warn":
+      return "WARN";
+    case "error":
+    case "failed":
+    case "fail":
+      return "FAIL";
+    default:
+      return status?.toUpperCase() || "INFO";
+  }
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "string") return value.trim() || undefined;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const DEFAULT_APP_CAPABILITIES: AppProviderCapabilitiesRecord = {

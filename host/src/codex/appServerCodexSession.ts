@@ -714,7 +714,13 @@ export class AppServerCodexSession implements CodexSession {
       : [];
     const text = [explanation, ...plan].filter(Boolean).join("\n");
     if (text.trim().length === 0) return;
-    this.emitCompleteMessage(turnId, "system", "Plan", text.endsWith("\n") ? text : `${text}\n`);
+    this.emit({
+      type: "session.plan.updated",
+      sessionId: this.sessionId,
+      runId: turnId,
+      title: "Plan",
+      text: text.endsWith("\n") ? text : `${text}\n`,
+    });
   }
 
   private emitCompletionTextIfNeeded(turnId: string, itemId: string, text?: string): void {
@@ -836,7 +842,7 @@ function itemPresentation(item: Record<string, unknown>): { kind: MessageKind; t
     case "agentMessage":
       return { kind: "response", title: "Response", text: readString(item, "text") };
     case "plan":
-      return { kind: "system", title: "Plan", text: readString(item, "text") };
+      return undefined;
     case "reasoning":
       return { kind: "thinking", title: "Thinking", text: "Thinking…" };
     case "commandExecution":

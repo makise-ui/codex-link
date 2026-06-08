@@ -282,6 +282,7 @@ export type ServerMessage =
   | CommandListMessage
   | SessionGoalUpdatedMessage
   | SessionGoalClearedMessage
+  | SessionPlanUpdatedMessage
   | RunStartedMessage
   | OutputDeltaMessage
   | MessageStartedMessage
@@ -571,6 +572,14 @@ export type SessionGoalUpdatedMessage = {
 export type SessionGoalClearedMessage = {
   type: "session.goal.cleared";
   sessionId: string;
+};
+
+export type SessionPlanUpdatedMessage = {
+  type: "session.plan.updated";
+  sessionId: string;
+  runId?: string;
+  title: string;
+  text: string;
 };
 
 export type RunStartedMessage = {

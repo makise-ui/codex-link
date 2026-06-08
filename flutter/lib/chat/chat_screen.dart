@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_controller.dart';
+import '../commands/command_center_screen.dart';
 import '../protocol/bridge_messages.dart';
 import '../sessions/session_sidebar.dart';
 import '../settings/settings_screen.dart';
@@ -22,38 +23,9 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _promptController = TextEditingController();
   final _scrollController = ScrollController();
-  AppController? _controller;
-  bool _wasRunning = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final nextController = context.read<AppController>();
-    if (_controller == nextController) return;
-    _controller?.removeListener(_handleControllerChanged);
-    _controller = nextController;
-    _wasRunning = nextController.isRunning;
-    nextController.addListener(_handleControllerChanged);
-  }
-
-  void _handleControllerChanged() {
-    final controller = _controller;
-    if (controller == null) return;
-    if (_wasRunning && !controller.isRunning && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(controller.statusText),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
-    _wasRunning = controller.isRunning;
-  }
 
   @override
   void dispose() {
-    _controller?.removeListener(_handleControllerChanged);
     _promptController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -112,7 +84,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _CommandRail(controller: controller),
+                          _NoticeBanner(controller: controller),
+                          _SessionPlanBar(plan: controller.activePlan),
+                          _ApprovalQueueBar(controller: controller),
+                          _ErrorStatusBar(controller: controller),
+                          _BottomConnectionChip(controller: controller),
                           _PromptComposer(
                             controller: controller,
                             textController: _promptController,
@@ -140,7 +116,6 @@ class _FloatingTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = controller.activeSession;
-    final connection = _connectionLabel(controller);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: GlassCard(
@@ -193,15 +168,6 @@ class _FloatingTopBar extends StatelessWidget {
                 ],
               ),
             ),
-            GestureDetector(
-              onTap: controller.isOffline ? controller.reconnect : null,
-              child: SoftPill(
-                label: connection.label,
-                color: connection.color,
-                icon: connection.icon,
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
             if (controller.isRunning) ...[
               const _RunningIndicator(),
               const SizedBox(width: AppSpacing.sm),
@@ -221,7 +187,12 @@ class _FloatingTopBar extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Session info',
+                  tooltip: 'Commands',
+                  onPressed: () => _showCommands(context),
+                  icon: const Icon(Icons.terminal_rounded, size: 21),
+                ),
+                IconButton(
+                  tooltip: 'Settings',
                   onPressed: () => _showSessionInfo(context, controller),
                   icon: const Icon(Icons.settings_rounded, size: 21),
                 ),
@@ -230,6 +201,12 @@ class _FloatingTopBar extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  void _showCommands(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const CommandCenterScreen()),
     );
   }
 
@@ -321,6 +298,482 @@ _ConnectionBadge _connectionLabel(AppController controller) {
     icon: Icons.lan_rounded,
     color: CodexColors.muted,
   );
+}
+
+class _BottomConnectionChip extends StatelessWidget {
+  const _BottomConnectionChip({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    if (controller.hostInfo == null && !controller.isOffline) {
+      return const SizedBox.shrink();
+    }
+    final connection = _connectionLabel(controller);
+    final info = controller.hostInfo;
+    final detail = controller.isOffline
+        ? 'tap to reconnect'
+        : info?.connectionMode == 'tunnel'
+        ? (info?.tunnelProvider ?? 'tunnel')
+        : 'local bridge';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        0,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: InkWell(
+              key: const ValueKey('bottom-connection-chip'),
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+              onTap: controller.isOffline ? controller.reconnect : null,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm,
+                  vertical: AppSpacing.xs,
+                ),
+                decoration: BoxDecoration(
+                  color: CodexColors.panel.withValues(alpha: 0.44),
+                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                  border: Border.all(
+                    color: connection.color.withValues(alpha: 0.18),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(connection.icon, size: 13, color: connection.color),
+                    const SizedBox(width: AppSpacing.xs),
+                    Text(
+                      connection.label,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: CodexColors.text,
+                        height: 1,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Text(
+                      detail,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: CodexColors.dim,
+                        height: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NoticeBanner extends StatelessWidget {
+  const _NoticeBanner({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final notice = controller.latestNotice;
+    if (notice == null) return const SizedBox.shrink();
+    final accent = Theme.of(context).colorScheme.secondary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: GlassCard(
+            key: const ValueKey('chat-notice-banner'),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            radius: AppRadius.lg,
+            color: CodexColors.panelHigh.withValues(alpha: 0.88),
+            blur: 18,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.notifications_none_rounded, color: accent, size: 17),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        notice.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        notice.body,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: CodexColors.muted,
+                          height: 1.28,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Dismiss notification',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 17,
+                  onPressed: controller.clearLatestNotice,
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: CodexColors.muted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionPlanBar extends StatefulWidget {
+  const _SessionPlanBar({required this.plan});
+
+  final CodexPlanInfo? plan;
+
+  @override
+  State<_SessionPlanBar> createState() => _SessionPlanBarState();
+}
+
+class _SessionPlanBarState extends State<_SessionPlanBar>
+    with SingleTickerProviderStateMixin {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant _SessionPlanBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.plan?.text != widget.plan?.text) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final plan = widget.plan;
+    if (plan == null) return const SizedBox.shrink();
+    final lines = plan.text
+        .trim()
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    if (lines.isEmpty) return const SizedBox.shrink();
+    final summary = lines.first;
+    final details = lines.skip(1).join('\n');
+    final accent = Theme.of(context).colorScheme.secondary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: const ValueKey('session-plan-bar'),
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: AnimatedContainer(
+                duration: AppMotion.quick,
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm,
+                ),
+                decoration: BoxDecoration(
+                  color: CodexColors.panel.withValues(alpha: 0.58),
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(color: accent.withValues(alpha: 0.18)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: CodexColors.ink.withValues(alpha: 0.22),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.checklist_rounded, size: 16, color: accent),
+                        const SizedBox(width: AppSpacing.sm),
+                        Text(
+                          plan.title,
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Text(
+                            summary,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: CodexColors.muted),
+                          ),
+                        ),
+                        AnimatedRotation(
+                          turns: _expanded ? 0.5 : 0,
+                          duration: AppMotion.quick,
+                          curve: Curves.easeOutCubic,
+                          child: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 18,
+                            color: CodexColors.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    AnimatedSize(
+                      duration: AppMotion.quick,
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topCenter,
+                      child: _expanded && details.isNotEmpty
+                          ? Padding(
+                              padding: const EdgeInsets.only(
+                                top: AppSpacing.sm,
+                              ),
+                              child: Text(
+                                details,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: CodexColors.muted,
+                                      height: 1.35,
+                                    ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ApprovalQueueBar extends StatelessWidget {
+  const _ApprovalQueueBar({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final approvals = controller.pendingApprovals;
+    if (approvals.isEmpty) return const SizedBox.shrink();
+    final approval = ApprovalRequestInfo.fromText(
+      approvals.last.text,
+      fallbackTitle: approvals.last.title,
+    );
+    final accent = Theme.of(context).colorScheme.secondary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Container(
+            key: const ValueKey('approval-queue-bar'),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: CodexColors.panelHigh.withValues(alpha: 0.86),
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              border: Border.all(color: accent.withValues(alpha: 0.24)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.verified_user_outlined, color: accent, size: 17),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        approvals.length == 1
+                            ? approval.title
+                            : '${approvals.length} approvals pending',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      if (approval.body.trim().isNotEmpty)
+                        Text(
+                          approval.body.trim(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: CodexColors.muted),
+                        ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  key: const ValueKey('approval-queue-reject'),
+                  onPressed: approval.approvalId.isEmpty
+                      ? null
+                      : () => controller.decideApproval(
+                          approval.approvalId,
+                          'reject',
+                        ),
+                  child: const Text('Reject'),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                FilledButton(
+                  key: const ValueKey('approval-queue-approve'),
+                  onPressed: approval.approvalId.isEmpty
+                      ? null
+                      : () => controller.decideApproval(
+                          approval.approvalId,
+                          'approve',
+                        ),
+                  child: const Text('Approve'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorStatusBar extends StatefulWidget {
+  const _ErrorStatusBar({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_ErrorStatusBar> createState() => _ErrorStatusBarState();
+}
+
+class _ErrorStatusBarState extends State<_ErrorStatusBar> {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant _ErrorStatusBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller.latestErrorText !=
+        widget.controller.latestErrorText) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = widget.controller.latestErrorText?.trim();
+    if (text == null || text.isEmpty) return const SizedBox.shrink();
+    final lines = text.split(RegExp(r'\r?\n'));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: const ValueKey('chat-error-status-bar'),
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm,
+                ),
+                decoration: BoxDecoration(
+                  color: CodexColors.danger.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(
+                    color: CodexColors.danger.withValues(alpha: 0.26),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: CodexColors.danger,
+                      size: 17,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        _expanded ? text : lines.first,
+                        maxLines: _expanded ? 6 : 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: CodexColors.text,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Dismiss error',
+                      visualDensity: VisualDensity.compact,
+                      iconSize: 17,
+                      onPressed: widget.controller.clearLatestError,
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: CodexColors.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _EdgeFade extends StatelessWidget {
@@ -626,72 +1079,6 @@ class _EmptyChatHero extends StatelessWidget {
   }
 }
 
-class _CommandRail extends StatelessWidget {
-  const _CommandRail({required this.controller});
-
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final commands = controller.commands
-        .where((command) => command.category != 'mode')
-        .toList();
-    if (commands.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      height: 42,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-        scrollDirection: Axis.horizontal,
-        itemCount: commands.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final command = commands[index];
-          return ActionChip(
-            avatar: Icon(
-              Icons.auto_fix_high_rounded,
-              size: 16,
-              color: CodexColors.muted,
-            ),
-            label: Text(command.title),
-            tooltip: command.description,
-            labelStyle: const TextStyle(
-              color: CodexColors.text,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-            backgroundColor: CodexColors.panelHigh,
-            side: const BorderSide(color: CodexColors.borderSoft),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(999),
-            ),
-            visualDensity: VisualDensity.compact,
-            onPressed: controller.isRunning && command.commandId != 'codex.stop'
-                ? null
-                : () => _runRailCommand(context, controller, command),
-          );
-        },
-      ),
-    );
-  }
-
-  void _runRailCommand(
-    BuildContext context,
-    AppController controller,
-    CodexCommandInfo command,
-  ) {
-    switch (command.commandId) {
-      case 'codex.sessions':
-      case 'codex.model':
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
-        return;
-      default:
-        controller.runCommand(command);
-    }
-  }
-}
-
 class _PromptComposer extends StatefulWidget {
   const _PromptComposer({
     required this.controller,
@@ -736,8 +1123,8 @@ class _PromptComposerState extends State<_PromptComposer> {
                         command.title.toLowerCase().contains(slashQuery) ||
                         command.description.toLowerCase().contains(slashQuery)),
               )
-              .take(6)
               .toList(growable: false);
+    final goalSubcommands = _goalSubcommandsFor(textController.text);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -761,7 +1148,13 @@ class _PromptComposerState extends State<_PromptComposer> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (slashQuery != null && controller.isConnected) ...[
+                if (goalSubcommands.isNotEmpty && controller.isConnected) ...[
+                  _SlashSubcommandSuggestions(
+                    subcommands: goalSubcommands,
+                    onSelected: _insertGoalSubcommand,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                ] else if (slashQuery != null && controller.isConnected) ...[
                   _SlashCommandSuggestions(
                     commands: slashCommands,
                     onSendFile: _insertSendCommand,
@@ -824,8 +1217,7 @@ class _PromptComposerState extends State<_PromptComposer> {
                         controller: textController,
                         minLines: 1,
                         maxLines: 5,
-                        enabled:
-                            controller.isConnected && !controller.isRunning,
+                        enabled: controller.isConnected,
                         cursorColor: CodexColors.text,
                         style: const TextStyle(
                           color: CodexColors.text,
@@ -856,32 +1248,13 @@ class _PromptComposerState extends State<_PromptComposer> {
                         shape: const CircleBorder(),
                         clipBehavior: Clip.antiAlias,
                         child: IconButton(
-                          tooltip: controller.isRunning ? 'Stop' : 'Send',
+                          tooltip: 'Send',
                           color: CodexColors.ink,
                           iconSize: 18,
-                          icon: Icon(
-                            controller.isRunning
-                                ? Icons.stop_rounded
-                                : Icons.arrow_upward_rounded,
-                          ),
-                          onPressed: controller.isRunning
-                              ? controller.cancelRun
-                              : () {
-                                  final text = textController.text.trim();
-                                  final attachments =
-                                      List<PromptAttachmentInfo>.from(
-                                        _attachments,
-                                      );
-                                  textController.clear();
-                                  widget.controller.clearFileSuggestions();
-                                  setState(() => _attachments.clear());
-                                  controller.sendPrompt(
-                                    text.isEmpty && attachments.isNotEmpty
-                                        ? 'Please inspect the uploaded attachments.'
-                                        : text,
-                                    attachments: attachments,
-                                  );
-                                },
+                          icon: const Icon(Icons.arrow_upward_rounded),
+                          onPressed: controller.isConnected
+                              ? () => _submitPrompt(controller)
+                              : null,
                         ),
                       ),
                     ),
@@ -898,9 +1271,7 @@ class _PromptComposerState extends State<_PromptComposer> {
   void _handleTextChanged(String value) {
     setState(() {});
     final mention = _activeFileMention(widget.textController.value);
-    if (mention == null ||
-        !widget.controller.isConnected ||
-        widget.controller.isRunning) {
+    if (mention == null || !widget.controller.isConnected) {
       _fileMentionDebounce?.cancel();
       widget.controller.clearFileSuggestions();
       return;
@@ -921,6 +1292,16 @@ class _PromptComposerState extends State<_PromptComposer> {
     setState(() {});
   }
 
+  void _insertGoalSubcommand(_GoalSubcommand subcommand) {
+    final text = '${subcommand.command} ';
+    widget.textController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    widget.controller.clearFileSuggestions();
+    setState(() {});
+  }
+
   void _runSlashCommand(CodexCommandInfo command) {
     widget.textController.clear();
     widget.controller.clearFileSuggestions();
@@ -932,15 +1313,77 @@ class _PromptComposerState extends State<_PromptComposer> {
         );
         break;
       case 'codex.sessions':
+        _openCommandCenter(CommandCenterSection.sessions);
+        break;
       case 'codex.model':
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+        _openSettings(SettingsSection.model);
+        break;
+      case 'codex.workspace':
+        widget.controller.runCommand(command);
+        _openCommandCenter(CommandCenterSection.workspace);
+        break;
+      case 'codex.skills':
+        widget.controller.runCommand(command);
+        _openCommandCenter(CommandCenterSection.skills);
+        break;
+      case 'codex.files':
+        widget.controller.runCommand(command);
+        _openCommandCenter(CommandCenterSection.files);
+        break;
+      case 'codex.history':
+        widget.controller.runCommand(command);
+        _openCommandCenter(CommandCenterSection.sessions);
+        break;
+      case 'codex.tunnel':
+        widget.controller.runCommand(command);
+        _openSettings(SettingsSection.connection);
+        break;
+      case 'codex.approvals':
+        widget.controller.runCommand(command);
+        _openCommandCenter(CommandCenterSection.approvals);
+        break;
+      case 'codex.review':
+        widget.controller.runCommand(command);
+        _openCommandCenter(CommandCenterSection.review);
+        break;
+      case 'codex.doctor':
+        widget.controller.runCommand(command);
+        _openCommandCenter(CommandCenterSection.diagnostics);
         break;
       default:
         widget.controller.runCommand(command);
     }
     setState(() {});
+  }
+
+  void _openSettings(SettingsSection section) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(initialSection: section),
+      ),
+    );
+  }
+
+  void _openCommandCenter(CommandCenterSection section) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CommandCenterScreen(initialSection: section),
+      ),
+    );
+  }
+
+  void _submitPrompt(AppController controller) {
+    final text = widget.textController.text.trim();
+    final attachments = List<PromptAttachmentInfo>.from(_attachments);
+    widget.textController.clear();
+    widget.controller.clearFileSuggestions();
+    setState(() => _attachments.clear());
+    controller.sendPrompt(
+      text.isEmpty && attachments.isNotEmpty
+          ? 'Please inspect the uploaded attachments.'
+          : text,
+      attachments: attachments,
+    );
   }
 
   void _insertFileMention(WorkspaceFileInfo file) {
@@ -1037,6 +1480,104 @@ class _PromptComposerState extends State<_PromptComposer> {
 
 enum _AttachmentPickMode { image, file }
 
+class _GoalSubcommand {
+  const _GoalSubcommand({required this.command, required this.description});
+
+  final String command;
+  final String description;
+}
+
+const _goalSubcommandCatalog = <_GoalSubcommand>[
+  _GoalSubcommand(
+    command: '/goal',
+    description: 'Inspect the current session goal',
+  ),
+  _GoalSubcommand(
+    command: '/goal clear',
+    description: 'Remove the active goal',
+  ),
+  _GoalSubcommand(
+    command: '/goal active',
+    description: 'Resume the active goal',
+  ),
+  _GoalSubcommand(
+    command: '/goal complete',
+    description: 'Mark the goal as complete',
+  ),
+  _GoalSubcommand(
+    command: '/goal blocked',
+    description: 'Mark the goal as blocked',
+  ),
+  _GoalSubcommand(
+    command: '/goal paused',
+    description: 'Pause goal progress tracking',
+  ),
+];
+
+List<_GoalSubcommand> _goalSubcommandsFor(String text) {
+  final trimmedLeft = text.trimLeft();
+  final match = RegExp(
+    r'^/goal(?:\s+([^\s]*))?$',
+    caseSensitive: false,
+  ).firstMatch(trimmedLeft);
+  if (match == null) return const [];
+  if (!trimmedLeft.contains(RegExp(r'\s'))) return const [];
+  final query = (match.group(1) ?? '').toLowerCase();
+  return _goalSubcommandCatalog
+      .where((subcommand) {
+        final tail = subcommand.command.split(' ').skip(1).join(' ');
+        return query.isEmpty ||
+            tail.toLowerCase().startsWith(query) ||
+            subcommand.description.toLowerCase().contains(query);
+      })
+      .take(6)
+      .toList(growable: false);
+}
+
+class _SlashSubcommandSuggestions extends StatelessWidget {
+  const _SlashSubcommandSuggestions({
+    required this.subcommands,
+    required this.onSelected,
+  });
+
+  final List<_GoalSubcommand> subcommands;
+  final ValueChanged<_GoalSubcommand> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('slash-subcommand-suggestions'),
+      constraints: const BoxConstraints(maxHeight: 232),
+      decoration: BoxDecoration(
+        color: CodexColors.ink2.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(
+          color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+        ),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        itemCount: subcommands.length,
+        separatorBuilder: (_, _) => Divider(
+          height: 1,
+          color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+        ),
+        itemBuilder: (context, index) {
+          final subcommand = subcommands[index];
+          return _SlashCommandRow(
+            key: ValueKey('slash-subcommand-${subcommand.command}'),
+            icon: Icons.subdirectory_arrow_right_rounded,
+            title: subcommand.command,
+            description: subcommand.description,
+            onTap: () => onSelected(subcommand),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _SlashCommandSuggestions extends StatelessWidget {
   const _SlashCommandSuggestions({
     required this.commands,
@@ -1050,7 +1591,6 @@ class _SlashCommandSuggestions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visibleCommands = commands.take(5).toList(growable: false);
     return Container(
       key: const ValueKey('slash-command-suggestions'),
       constraints: const BoxConstraints(maxHeight: 232),
@@ -1072,7 +1612,7 @@ class _SlashCommandSuggestions extends StatelessWidget {
             description: 'Offer a workspace file to this phone',
             onTap: onSendFile,
           ),
-          for (final command in visibleCommands)
+          for (final command in commands)
             _SlashCommandRow(
               key: ValueKey('slash-command-${command.commandId}'),
               icon: Icons.keyboard_command_key_rounded,

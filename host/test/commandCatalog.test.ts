@@ -9,6 +9,14 @@ describe("command catalog", () => {
       "codex.stop",
       "codex.sessions",
       "codex.new",
+      "codex.workspace",
+      "codex.review",
+      "codex.skills",
+      "codex.files",
+      "codex.history",
+      "codex.approvals",
+      "codex.tunnel",
+      "codex.doctor",
       "codex.diff",
       "codex.compact",
       "codex.model",
@@ -33,5 +41,13 @@ describe("command catalog", () => {
     expect(promptForCommand("codex.stop")).toBeUndefined();
     expect(promptForCommand("codex.sessions")).toBeUndefined();
     expect(promptForCommand("codex.new")).toBeUndefined();
+    expect(promptForCommand("codex.workspace")).toBeUndefined();
+    expect(promptForCommand("codex.review")).toBeUndefined();
+    expect(promptForCommand("codex.skills")).toBeUndefined();
+    expect(promptForCommand("codex.files")).toBeUndefined();
+    expect(promptForCommand("codex.history")).toBeUndefined();
+    expect(promptForCommand("codex.approvals")).toBeUndefined();
+    expect(promptForCommand("codex.tunnel")).toBeUndefined();
+    expect(promptForCommand("codex.doctor")).toBeUndefined();
   });
 });

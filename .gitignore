@@ -11,6 +11,8 @@ build/
 
 .DS_Store
 *.log
+*.apk
+*.apk.sha256
 
 .agents/
 .codex/

@@ -327,6 +327,11 @@ export async function startBridgeServer(options) {
             await options.sessionManager.setSessionMode(targetSessionId, "yolo");
             return;
         }
+        if (commandId === "codex.doctor") {
+            options.auditLog.record({ type: "prompt.submitted", deviceId, sessionId: targetSessionId, detail: "command=codex.doctor" });
+            await options.sessionManager.runDoctorCommand(targetSessionId);
+            return;
+        }
         const prompt = promptForCommand(commandId);
         if (!prompt) {
             throw new Error(`Unknown command: ${commandId}`);
