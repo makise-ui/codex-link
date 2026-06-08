@@ -1,16 +1,15 @@
-# codex_lan_flutter
+# Codex Link Flutter App
 
-A new Flutter project.
+Android client for Codex Link.
 
-## Getting Started
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```
 
-This project is a starting point for a Flutter application.
+See the main project documentation:
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- [Getting started](../docs/GETTING_STARTED.md)
+- [Flutter app](../docs/FLUTTER_APP.md)

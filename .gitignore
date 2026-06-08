@@ -13,6 +13,7 @@ build/
 *.log
 *.apk
 *.apk.sha256
+flutter/flutter_*.png
 
 .agents/
 .codex/

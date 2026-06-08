@@ -2,7 +2,7 @@
   "name": "codex-lan-control",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-network Android companion prototype for controlling a Codex agent through a safe host bridge.",
+  "description": "Mobile Codex controller with a Flutter app and secure host bridge.",
   "scripts": {
     "dev:host": "pnpm --filter @codex-lan/host dev",
     "test:host": "pnpm --filter @codex-lan/host test",

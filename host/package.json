@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local-network host bridge for the Codex Android companion prototype.",
+  "description": "Host bridge for controlling Codex app-server sessions from Codex Link.",
   "scripts": {
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
