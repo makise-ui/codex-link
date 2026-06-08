@@ -51,12 +51,19 @@ class _PairingScreenState extends State<PairingScreen> {
                     ChatGptActionPill(
                       children: [
                         IconButton(
+                          tooltip: 'Open GitHub',
+                          onPressed: controller.openProjectOnGitHub,
+                          icon: const Icon(Icons.code_rounded),
+                        ),
+                        IconButton(
+                          tooltip: 'Scan QR code',
                           onPressed: connecting
                               ? null
                               : () => _openScanner(context),
                           icon: const Icon(Icons.qr_code_scanner_rounded),
                         ),
                         IconButton(
+                          tooltip: 'Reconnect saved host',
                           onPressed:
                               controller.credentials == null || connecting
                               ? null

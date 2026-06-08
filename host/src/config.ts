@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import os from "node:os";
 import path from "node:path";
 import { findLanAddress } from "./util/lanAddress.js";
 
@@ -88,6 +89,7 @@ export function resolveConfig(argv = process.argv): HostConfig {
   const workdir = path.resolve(opts.workdir);
   const stateDir = path.resolve(workdir, opts.stateDir);
   const workspacePaths = uniquePaths([workdir, ...opts.workspace.map((workspace) => path.resolve(workspace))]);
+  const playgroundPath = path.resolve(os.homedir(), ".codex-link", "playground");
   const localUrl = `ws://${host}:${opts.port}`;
   const password = opts.password ?? process.env.CODEX_LINK_PASSWORD ?? process.env.CODEX_LAN_PASSWORD;
   const publicUrl = opts.publicUrl ? normalizePublicUrl(opts.publicUrl) : undefined;
@@ -102,6 +104,19 @@ export function resolveConfig(argv = process.argv): HostConfig {
     if (publicUrl) {
       validatePublicUrl(publicUrl);
     }
+  }
+
+  const workspaces: WorkspaceConfig[] = workspacePaths.map((workspacePath, index) => ({
+    id: index === 0 ? "default" : `workspace-${index + 1}`,
+    label: path.basename(workspacePath) || workspacePath,
+    path: workspacePath,
+  }));
+  if (!workspaces.some((workspace) => path.resolve(workspace.path) === playgroundPath)) {
+    workspaces.push({
+      id: "playground",
+      label: "Playground",
+      path: playgroundPath,
+    });
   }
 
   return {
@@ -122,11 +137,7 @@ export function resolveConfig(argv = process.argv): HostConfig {
     cloudflaredCommand: opts.cloudflaredCommand,
     localUrl,
     password,
-    workspaces: workspacePaths.map((workspacePath, index) => ({
-      id: index === 0 ? "default" : `workspace-${index + 1}`,
-      label: path.basename(workspacePath) || workspacePath,
-      path: workspacePath,
-    })),
+    workspaces,
   };
 }
 

@@ -139,7 +139,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _Section(
                 key: _sectionKeys[SettingsSection.appearance],
                 title: 'Appearance',
-                children: [_AccentPicker(controller: controller)],
+                children: [
+                  _ThemeModePicker(controller: controller),
+                  _AccentPicker(controller: controller),
+                ],
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
@@ -181,7 +184,11 @@ class _UpdateSection extends StatelessWidget {
                 ? Icons.system_update_alt_rounded
                 : Icons.system_update_rounded,
             title: _updateTitle(controller.updateStatus, update),
-            subtitle: _updateSubtitle(controller.updateStatus, update),
+            subtitle: _updateSubtitle(
+              controller.updateStatus,
+              update,
+              controller.updateErrorText,
+            ),
             trailing: checking
                 ? const SizedBox.square(
                     dimension: 18,
@@ -227,13 +234,20 @@ String _updateTitle(UpdateCheckStatus status, AppUpdateInfo? update) {
   };
 }
 
-String _updateSubtitle(UpdateCheckStatus status, AppUpdateInfo? update) {
+String _updateSubtitle(
+  UpdateCheckStatus status,
+  AppUpdateInfo? update,
+  String? errorText,
+) {
   if (update != null) {
     final target = update.hasUpdate ? 'Latest' : 'Current';
     return 'Installed ${update.currentVersion} - $target ${update.latestVersion}';
   }
   return switch (status) {
-    UpdateCheckStatus.failed => 'Could not reach the latest GitHub release.',
+    UpdateCheckStatus.failed =>
+      errorText?.trim().isNotEmpty == true
+          ? errorText!.trim()
+          : 'Could not reach the latest GitHub release.',
     _ => 'Checks GitHub Releases and opens the latest APK when available.',
   };
 }
@@ -442,6 +456,60 @@ class _ModelConfigSectionState extends State<_ModelConfigSection> {
     widget.controller.setSessionConfig(
       model: _modelController.text,
       reasoningEffort: effort,
+    );
+  }
+}
+
+class _ThemeModePicker extends StatelessWidget {
+  const _ThemeModePicker({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.sm,
+      ),
+      child: Wrap(
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.sm,
+        children: [
+          ChoiceChip(
+            key: const ValueKey('theme-mode-dark'),
+            label: const Text('Dark'),
+            avatar: const Icon(Icons.dark_mode_rounded, size: 16),
+            selected: controller.themeName == 'dark',
+            onSelected: (_) => controller.setThemeName('dark'),
+            visualDensity: VisualDensity.compact,
+            backgroundColor: CodexColors.panelHigh,
+            selectedColor: CodexColors.text.withValues(alpha: 0.14),
+            side: BorderSide(
+              color: controller.themeName == 'dark'
+                  ? CodexColors.text.withValues(alpha: 0.38)
+                  : CodexColors.borderSoft,
+            ),
+          ),
+          ChoiceChip(
+            key: const ValueKey('theme-mode-light'),
+            label: const Text('Light'),
+            avatar: const Icon(Icons.light_mode_rounded, size: 16),
+            selected: controller.themeName == 'light',
+            onSelected: (_) => controller.setThemeName('light'),
+            visualDensity: VisualDensity.compact,
+            backgroundColor: CodexColors.panelHigh,
+            selectedColor: CodexColors.amber.withValues(alpha: 0.16),
+            side: BorderSide(
+              color: controller.themeName == 'light'
+                  ? CodexColors.amber.withValues(alpha: 0.48)
+                  : CodexColors.borderSoft,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

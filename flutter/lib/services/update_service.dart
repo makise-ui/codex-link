@@ -32,6 +32,8 @@ abstract class AppUpdateService {
   Future<AppUpdateInfo> checkForUpdate();
 
   Future<bool> openUpdate(AppUpdateInfo update);
+
+  Future<bool> openProjectPage();
 }
 
 class GitHubAppUpdateService implements AppUpdateService {
@@ -72,6 +74,13 @@ class GitHubAppUpdateService implements AppUpdateService {
       final response = await request.close();
       final body = await utf8.decoder.bind(response).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        if (response.statusCode == HttpStatus.notFound) {
+          throw GitHubReleaseUnavailableException(
+            owner: owner,
+            repo: repo,
+            statusCode: response.statusCode,
+          );
+        }
         throw HttpException(
           'GitHub release check failed with HTTP ${response.statusCode}',
           uri: uri,
@@ -96,6 +105,13 @@ class GitHubAppUpdateService implements AppUpdateService {
   Future<bool> openUpdate(AppUpdateInfo update) {
     return _launchUri(update.apkUrl ?? update.releaseUrl);
   }
+
+  @override
+  Future<bool> openProjectPage() {
+    return _launchUri(projectUrl);
+  }
+
+  Uri get projectUrl => Uri.https('github.com', '/$owner/$repo');
 
   static AppUpdateInfo parseLatestRelease({
     required String currentVersion,
@@ -140,6 +156,26 @@ class GitHubAppUpdateService implements AppUpdateService {
   static Future<bool> _launchExternal(Uri uri) {
     return launchUrl(uri, mode: LaunchMode.externalApplication);
   }
+}
+
+class GitHubReleaseUnavailableException implements Exception {
+  const GitHubReleaseUnavailableException({
+    required this.owner,
+    required this.repo,
+    required this.statusCode,
+  });
+
+  final String owner;
+  final String repo;
+  final int statusCode;
+
+  String get message =>
+      'Latest GitHub release is not reachable for $owner/$repo. '
+      'The repository or release is private, missing, or not published yet. '
+      'Open GitHub to install manually or make the release public for in-app updates.';
+
+  @override
+  String toString() => message;
 }
 
 int compareAppVersions(String left, String right) {

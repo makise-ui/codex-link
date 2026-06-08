@@ -118,24 +118,29 @@ class _FloatingTopBar extends StatelessWidget {
     final session = controller.activeSession;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-      child: GlassCard(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        radius: AppRadius.xl,
-        color: CodexColors.panel.withValues(alpha: 0.56),
-        blur: 24,
-        child: Row(
-          children: [
-            if (showMenu)
-              Builder(
-                builder: (context) => ChatGptCircleButton(
-                  icon: Icons.menu_rounded,
-                  size: 38,
-                  background: CodexColors.composer,
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showMenu) ...[
+            Builder(
+              builder: (context) => ChatGptCircleButton(
+                icon: Icons.menu_rounded,
+                size: 40,
+                background: CodexColors.composer.withValues(alpha: 0.82),
+                onPressed: () => Scaffold.of(context).openDrawer(),
               ),
-            if (showMenu) const SizedBox(width: 10),
-            Expanded(
+            ),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          Expanded(
+            child: GlassCard(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              radius: AppRadius.xl,
+              color: CodexColors.panel.withValues(alpha: 0.42),
+              blur: 24,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -168,38 +173,40 @@ class _FloatingTopBar extends StatelessWidget {
                 ],
               ),
             ),
-            if (controller.isRunning) ...[
-              const _RunningIndicator(),
-              const SizedBox(width: AppSpacing.sm),
-            ],
-            ChatGptActionPill(
-              children: [
-                IconButton(
-                  tooltip: controller.isRunning ? 'Stop' : 'New chat',
-                  onPressed: controller.isRunning
-                      ? controller.cancelRun
-                      : controller.createSession,
-                  icon: Icon(
-                    controller.isRunning
-                        ? Icons.stop_rounded
-                        : Icons.edit_square,
-                    size: 20,
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Commands',
-                  onPressed: () => _showCommands(context),
-                  icon: const Icon(Icons.terminal_rounded, size: 21),
-                ),
-                IconButton(
-                  tooltip: 'Settings',
-                  onPressed: () => _showSessionInfo(context, controller),
-                  icon: const Icon(Icons.settings_rounded, size: 21),
-                ),
-              ],
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          if (controller.isRunning) ...[
+            const Padding(
+              padding: EdgeInsets.only(top: AppSpacing.sm),
+              child: _RunningIndicator(),
             ),
+            const SizedBox(width: AppSpacing.sm),
           ],
-        ),
+          ChatGptActionPill(
+            children: [
+              IconButton(
+                tooltip: controller.isRunning ? 'Stop' : 'New chat',
+                onPressed: controller.isRunning
+                    ? controller.cancelRun
+                    : controller.createSession,
+                icon: Icon(
+                  controller.isRunning ? Icons.stop_rounded : Icons.edit_square,
+                  size: 20,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Commands',
+                onPressed: () => _showCommands(context),
+                icon: const Icon(Icons.terminal_rounded, size: 21),
+              ),
+              IconButton(
+                tooltip: 'Settings',
+                onPressed: () => _showSessionInfo(context, controller),
+                icon: const Icon(Icons.settings_rounded, size: 21),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1106,6 +1113,9 @@ class _PromptComposerState extends State<_PromptComposer> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final textController = widget.textController;
+    final canEditPrompt = controller.canShowChat;
+    final canSendPrompt = controller.isConnected;
+    final light = isCodexLight(context);
     final activeMention = _activeFileMention(textController.value);
     final fileSuggestions =
         activeMention == null ||
@@ -1135,133 +1145,148 @@ class _PromptComposerState extends State<_PromptComposer> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 860),
-          child: GlassCard(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.sm,
-              AppSpacing.xs,
-              AppSpacing.xs,
-              AppSpacing.xs,
-            ),
-            radius: AppRadius.xl,
-            color: CodexColors.composer.withValues(alpha: 0.72),
-            blur: 24,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (goalSubcommands.isNotEmpty && controller.isConnected) ...[
-                  _SlashSubcommandSuggestions(
-                    subcommands: goalSubcommands,
-                    onSelected: _insertGoalSubcommand,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              ChatGptCircleButton(
+                key: const ValueKey('floating-attach-button'),
+                icon: Icons.add_rounded,
+                size: 44,
+                background: codexComposerColor(context).withValues(alpha: 0.82),
+                onPressed: controller.isConnected && !controller.isRunning
+                    ? () => _showAttachmentPicker(context)
+                    : null,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: GlassCard(
+                  key: const ValueKey('composer-input-shell'),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.xxs,
+                    AppSpacing.xs,
+                    AppSpacing.xxs,
                   ),
-                  const SizedBox(height: AppSpacing.xs),
-                ] else if (slashQuery != null && controller.isConnected) ...[
-                  _SlashCommandSuggestions(
-                    commands: slashCommands,
-                    onSendFile: _insertSendCommand,
-                    onCommand: _runSlashCommand,
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                ],
-                if (activeMention != null && fileSuggestions.isNotEmpty) ...[
-                  _FileMentionSuggestions(
-                    files: fileSuggestions,
-                    onSelected: _insertFileMention,
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                ],
-                if (_attachments.isNotEmpty) ...[
-                  SizedBox(
-                    height: 34,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _attachments.length,
-                      separatorBuilder: (_, _) =>
+                  radius: AppRadius.xl,
+                  color: codexComposerColor(
+                    context,
+                  ).withValues(alpha: light ? 0.90 : 0.72),
+                  blur: 24,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (goalSubcommands.isNotEmpty &&
+                          controller.isConnected) ...[
+                        _SlashSubcommandSuggestions(
+                          subcommands: goalSubcommands,
+                          onSelected: _insertGoalSubcommand,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                      ] else if (slashQuery != null &&
+                          controller.isConnected) ...[
+                        _SlashCommandSuggestions(
+                          commands: slashCommands,
+                          onSendFile: _insertSendCommand,
+                          onCommand: _runSlashCommand,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                      ],
+                      if (activeMention != null &&
+                          fileSuggestions.isNotEmpty) ...[
+                        _FileMentionSuggestions(
+                          files: fileSuggestions,
+                          onSelected: _insertFileMention,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                      ],
+                      if (_attachments.isNotEmpty) ...[
+                        SizedBox(
+                          height: 34,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _attachments.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(width: AppSpacing.xs),
+                            itemBuilder: (context, index) {
+                              final attachment = _attachments[index];
+                              return InputChip(
+                                avatar: Icon(
+                                  _isImageName(attachment.name)
+                                      ? Icons.image_rounded
+                                      : Icons.attach_file_rounded,
+                                  size: 16,
+                                ),
+                                label: Text(attachment.name),
+                                onDeleted: () => setState(
+                                  () => _attachments.removeAt(index),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                backgroundColor: CodexColors.panelHigh,
+                                side: const BorderSide(
+                                  color: CodexColors.borderSoft,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                      ],
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: textController,
+                              minLines: 1,
+                              maxLines: 5,
+                              enabled: canEditPrompt,
+                              textAlignVertical: TextAlignVertical.center,
+                              cursorColor: codexTextColor(context),
+                              style: TextStyle(
+                                color: codexTextColor(context),
+                                height: 1.25,
+                              ),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: controller.isOffline
+                                    ? 'Offline - cached chat'
+                                    : 'Message Codex',
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                disabledBorder: InputBorder.none,
+                                filled: false,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              textInputAction: TextInputAction.newline,
+                              onChanged: _handleTextChanged,
+                            ),
+                          ),
                           const SizedBox(width: AppSpacing.xs),
-                      itemBuilder: (context, index) {
-                        final attachment = _attachments[index];
-                        return InputChip(
-                          avatar: Icon(
-                            _isImageName(attachment.name)
-                                ? Icons.image_rounded
-                                : Icons.attach_file_rounded,
-                            size: 16,
+                          SizedBox.square(
+                            dimension: 38,
+                            child: Material(
+                              color: codexTextColor(context),
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: IconButton(
+                                tooltip: 'Send',
+                                color: Theme.of(context).colorScheme.surface,
+                                iconSize: 18,
+                                icon: const Icon(Icons.arrow_upward_rounded),
+                                onPressed: canSendPrompt
+                                    ? () => _submitPrompt(controller)
+                                    : null,
+                              ),
+                            ),
                           ),
-                          label: Text(attachment.name),
-                          onDeleted: () =>
-                              setState(() => _attachments.removeAt(index)),
-                          visualDensity: VisualDensity.compact,
-                          backgroundColor: CodexColors.panelHigh,
-                          side: const BorderSide(color: CodexColors.borderSoft),
-                        );
-                      },
-                    ),
+                        ],
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: AppSpacing.xs),
-                ],
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      tooltip: 'Attach',
-                      onPressed: controller.isConnected && !controller.isRunning
-                          ? () => _showAttachmentPicker(context)
-                          : null,
-                      icon: const Icon(
-                        Icons.add_rounded,
-                        size: 22,
-                        color: CodexColors.text,
-                      ),
-                    ),
-                    Expanded(
-                      child: TextField(
-                        controller: textController,
-                        minLines: 1,
-                        maxLines: 5,
-                        enabled: controller.isConnected,
-                        cursorColor: CodexColors.text,
-                        style: const TextStyle(
-                          color: CodexColors.text,
-                          height: 1.35,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: controller.isOffline
-                              ? 'Offline - cached chat'
-                              : 'Message Codex',
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          disabledBorder: InputBorder.none,
-                          filled: false,
-                          contentPadding: const EdgeInsets.symmetric(
-                            vertical: AppSpacing.md,
-                          ),
-                        ),
-                        textInputAction: TextInputAction.newline,
-                        onChanged: _handleTextChanged,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.xs),
-                    SizedBox.square(
-                      dimension: 38,
-                      child: Material(
-                        color: CodexColors.text,
-                        shape: const CircleBorder(),
-                        clipBehavior: Clip.antiAlias,
-                        child: IconButton(
-                          tooltip: 'Send',
-                          color: CodexColors.ink,
-                          iconSize: 18,
-                          icon: const Icon(Icons.arrow_upward_rounded),
-                          onPressed: controller.isConnected
-                              ? () => _submitPrompt(controller)
-                              : null,
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

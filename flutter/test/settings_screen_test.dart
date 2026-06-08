@@ -112,6 +112,50 @@ void main() {
     expect(find.text('Appearance'), findsOneWidget);
   });
 
+  testWidgets('settings can switch between dark and light modes', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Appearance',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildCodexTheme(),
+          home: const SettingsScreen(),
+        ),
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('theme-mode-light')),
+      420,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const ValueKey('theme-mode-light')));
+    await tester.pump();
+
+    expect(controller.themeName, 'light');
+    expect(find.byKey(const ValueKey('theme-mode-dark')), findsOneWidget);
+  });
+
   testWidgets('command center owns workspace files history and commands', (
     tester,
   ) async {
@@ -175,20 +219,20 @@ void main() {
     expect(find.text('/goal'), findsOneWidget);
     expect(find.text('/doctor'), findsOneWidget);
     expect(find.text('Workspace'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('App-server sessions'),
+      360,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('App-server sessions'), findsOneWidget);
 
-    await tester.scrollUntilVisible(
-      find.text('External Codex sessions'),
-      420,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -420));
+    await tester.pumpAndSettle();
     expect(find.text('External Codex sessions'), findsOneWidget);
 
-    await tester.scrollUntilVisible(
-      find.text('Files'),
-      520,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -520));
+    await tester.pumpAndSettle();
     expect(find.text('Files'), findsOneWidget);
   });
 
@@ -271,6 +315,9 @@ class FakeUpdateService implements AppUpdateService {
 
   @override
   Future<bool> openUpdate(AppUpdateInfo update) async => true;
+
+  @override
+  Future<bool> openProjectPage() async => true;
 }
 
 class FakeBridgeSocketClient extends BridgeSocketClient {

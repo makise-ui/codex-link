@@ -79,66 +79,72 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
           ],
         ),
         body: SafeArea(
-          child: ListView(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(AppSpacing.lg),
-            children: [
-              _Section(
-                key: _sectionKeys[CommandCenterSection.commands],
-                title: 'Commands',
-                children: [_CommandCatalogSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                key: _sectionKeys[CommandCenterSection.approvals],
-                title: 'Approvals',
-                children: [_ApprovalSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                key: _sectionKeys[CommandCenterSection.workspace],
-                title: 'Workspace',
-                children: [
-                  _AddWorkspaceRow(controller: controller),
-                  for (final workspace in controller.workspaces)
-                    _WorkspaceRow(controller: controller, workspace: workspace),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                key: _sectionKeys[CommandCenterSection.sessions],
-                title: 'App-server sessions',
-                children: [_AppThreadSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                title: 'External Codex sessions',
-                children: [_ExternalSessionsSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                key: _sectionKeys[CommandCenterSection.files],
-                title: 'Files',
-                children: [_AppFileSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                key: _sectionKeys[CommandCenterSection.skills],
-                title: 'Skills',
-                children: [_SkillSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                key: _sectionKeys[CommandCenterSection.review],
-                title: 'Review',
-                children: [_ReviewSection(controller: controller)],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _Section(
-                key: _sectionKeys[CommandCenterSection.diagnostics],
-                title: 'Diagnostics',
-                children: [_DiagnosticsSection(controller: controller)],
-              ),
-            ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.commands],
+                  title: 'Commands',
+                  children: [_CommandCatalogSection(controller: controller)],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.approvals],
+                  title: 'Approvals',
+                  children: [_ApprovalSection(controller: controller)],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.workspace],
+                  title: 'Workspace',
+                  children: [
+                    _AddWorkspaceRow(controller: controller),
+                    for (final workspace in controller.workspaces)
+                      _WorkspaceRow(
+                        controller: controller,
+                        workspace: workspace,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.sessions],
+                  title: 'App-server sessions',
+                  children: [_AppThreadSection(controller: controller)],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  title: 'External Codex sessions',
+                  children: [_ExternalSessionsSection(controller: controller)],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.files],
+                  title: 'Files',
+                  children: [_AppFileSection(controller: controller)],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.skills],
+                  title: 'Skills',
+                  children: [_SkillSection(controller: controller)],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.review],
+                  title: 'Review',
+                  children: [_ReviewSection(controller: controller)],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _Section(
+                  key: _sectionKeys[CommandCenterSection.diagnostics],
+                  title: 'Diagnostics',
+                  children: [_DiagnosticsSection(controller: controller)],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -234,19 +240,15 @@ class _ApprovalTile extends StatelessWidget {
           TextButton(
             onPressed: approval.approvalId.isEmpty
                 ? null
-                : () => controller.decideApproval(
-                    approval.approvalId,
-                    'reject',
-                  ),
+                : () =>
+                      controller.decideApproval(approval.approvalId, 'reject'),
             child: const Text('Reject'),
           ),
           FilledButton(
             onPressed: approval.approvalId.isEmpty
                 ? null
-                : () => controller.decideApproval(
-                    approval.approvalId,
-                    'approve',
-                  ),
+                : () =>
+                      controller.decideApproval(approval.approvalId, 'approve'),
             child: const Text('Approve'),
           ),
         ],

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -122,6 +122,31 @@ describe("CodexSessionManager", () => {
     expect(workspace.path).toBe(newWorkspace);
     expect(workspace.active).toBe(true);
     expect(manager.getWorkspaces(session.sessionId).some((item) => item.path === newWorkspace && item.active)).toBe(true);
+    await manager.close();
+  });
+
+  it("creates the playground directory when switching into it", async () => {
+    const stateDir = await tempStateDir();
+    const parent = await tempStateDir();
+    const playground = path.join(parent, "playground");
+    const manager = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [
+        { id: "default", label: "repo", path: "/repo" },
+        { id: "playground", label: "Playground", path: playground },
+      ],
+    });
+    const [session] = manager.listSessions();
+
+    const updated = await manager.switchWorkspace(session.sessionId, "playground");
+
+    expect(updated.workdir).toBe(playground);
+    const stats = await stat(playground);
+    expect(stats.isDirectory()).toBe(true);
     await manager.close();
   });
 

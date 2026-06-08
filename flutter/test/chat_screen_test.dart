@@ -57,6 +57,96 @@ void main() {
     expect(find.byType(BottomSheet), findsNothing);
   });
 
+  testWidgets('composer separates the attach control from the input shell', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Composer',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(theme: buildCodexTheme(), home: const ChatScreen()),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('floating-attach-button')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('composer-input-shell')), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('composer-input-shell'))).height,
+      tester
+          .getSize(find.byKey(const ValueKey('floating-attach-button')))
+          .height,
+    );
+
+    await tester.enterText(find.byType(TextField).last, 'Center this');
+    await tester.pump();
+
+    final shellRect = tester.getRect(
+      find.byKey(const ValueKey('composer-input-shell')),
+    );
+    final editableRect = tester.getRect(find.byType(EditableText));
+    expect(
+      (editableRect.center.dy - shellRect.center.dy).abs(),
+      lessThanOrEqualTo(3),
+    );
+  });
+
+  testWidgets('composer stays editable while cached chat is offline', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.offline
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Offline composer',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(theme: buildCodexTheme(), home: const ChatScreen()),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField).last, 'keep typing');
+    await tester.pump();
+
+    final editable = tester.widget<EditableText>(find.byType(EditableText));
+    expect(editable.controller.text, 'keep typing');
+  });
+
   testWidgets('command shortcuts are only shown after typing slash', (
     tester,
   ) async {

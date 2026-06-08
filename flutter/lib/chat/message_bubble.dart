@@ -50,6 +50,7 @@ class _UserMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final light = isCodexLight(context);
     return Align(
       alignment: Alignment.centerRight,
       child: Container(
@@ -61,10 +62,12 @@ class _UserMessage extends StatelessWidget {
           vertical: AppSpacing.md,
         ),
         decoration: BoxDecoration(
-          color: CodexColors.bubble,
+          color: light ? LightCodexColors.bubble : CodexColors.bubble,
           borderRadius: BorderRadius.circular(AppRadius.xl),
           border: Border.all(
-            color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
+            color: codexTextColor(
+              context,
+            ).withValues(alpha: AppOpacity.hairline),
           ),
         ),
         child: Column(
@@ -76,7 +79,7 @@ class _UserMessage extends StatelessWidget {
               child: Text(
                 message.text,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: CodexColors.text,
+                  color: codexTextColor(context),
                   height: 1.34,
                 ),
               ),
@@ -204,7 +207,7 @@ class _AssistantMessage extends StatelessWidget {
                 long: message.text.length > 600,
                 child: DefaultTextStyle.merge(
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: CodexColors.text,
+                    color: codexTextColor(context),
                     height: 1.5,
                   ),
                   child: MarkdownCodeRenderer(text: message.text),
@@ -377,78 +380,81 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620),
-        child: Container(
+        child: Column(
           key: const ValueKey('activity-card'),
-          decoration: BoxDecoration(
-            color: CodexColors.panelHigh.withValues(alpha: AppOpacity.panel),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(
-              color: active
-                  ? CodexColors.greenSoft.withValues(alpha: AppOpacity.glow)
-                  : CodexColors.text.withValues(alpha: AppOpacity.hairline),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              InkWell(
-                key: const ValueKey('activity-stack-toggle'),
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-                onTap: () => setState(() => _expanded = !_expanded),
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Row(
-                    children: [
-                      Icon(
-                        active
-                            ? Icons.more_horiz_rounded
-                            : Icons.check_circle_rounded,
-                        color: active
-                            ? CodexColors.greenSoft
-                            : CodexColors.muted,
-                        size: 18,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkWell(
+              key: const ValueKey('activity-stack-toggle'),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.xs,
+                  vertical: AppSpacing.xs,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      active
+                          ? Icons.more_horiz_rounded
+                          : Icons.check_circle_rounded,
+                      color: active ? CodexColors.greenSoft : CodexColors.muted,
+                      size: 18,
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: Text(
+                        summary,
+                        style: Theme.of(context).textTheme.labelLarge,
                       ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Text(
-                          summary,
-                          style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: CodexColors.muted,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: AppMotion.quick,
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topLeft,
+              child: _expanded
+                  ? Padding(
+                      padding: const EdgeInsets.only(
+                        left: AppSpacing.lg,
+                        top: AppSpacing.xs,
+                      ),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          border: Border(
+                            left: BorderSide(
+                              color: CodexColors.text.withValues(
+                                alpha: AppOpacity.hairline,
+                              ),
+                            ),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: AppSpacing.md),
+                          child: Column(
+                            children: [
+                              for (final message in messages)
+                                _ActivityStackRow(message: message),
+                            ],
+                          ),
                         ),
                       ),
-                      Icon(
-                        _expanded
-                            ? Icons.expand_less_rounded
-                            : Icons.expand_more_rounded,
-                        color: CodexColors.muted,
-                        size: 20,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              AnimatedCrossFade(
-                firstChild: const SizedBox.shrink(),
-                secondChild: Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    0,
-                    AppSpacing.md,
-                    AppSpacing.md,
-                  ),
-                  child: Column(
-                    children: [
-                      for (final message in messages)
-                        _ActivityStackRow(message: message),
-                    ],
-                  ),
-                ),
-                crossFadeState: _expanded
-                    ? CrossFadeState.showSecond
-                    : CrossFadeState.showFirst,
-                duration: AppMotion.quick,
-              ),
-            ],
-          ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
         ),
       ),
     );
@@ -508,16 +514,8 @@ class _ActivityStackRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(top: AppSpacing.sm),
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: CodexColors.ink2.withValues(alpha: 0.74),
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(
-          color: CodexColors.text.withValues(alpha: AppOpacity.hairline),
-        ),
-      ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -536,7 +534,7 @@ class _ActivityStackRow extends StatelessWidget {
                   Text(
                     message.text.trim(),
                     style: const TextStyle(
-                      color: CodexColors.muted,
+                      color: CodexColors.dim,
                       fontFamily: 'monospace',
                       height: 1.35,
                     ),
@@ -765,29 +763,8 @@ class _ActivityCardState extends State<_ActivityCard>
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.md,
-          ),
-          decoration: BoxDecoration(
-            color: CodexColors.panelHigh.withValues(alpha: AppOpacity.panel),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(
-              color: widget.active
-                  ? accent.withValues(alpha: AppOpacity.glow)
-                  : CodexColors.text.withValues(alpha: AppOpacity.hairline),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: accent.withValues(alpha: widget.active ? 0.06 : 0),
-                blurRadius: AppSpacing.xl,
-                offset: const Offset(0, AppSpacing.sm),
-              ),
-            ],
-          ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -831,7 +808,7 @@ class _ActivityCardState extends State<_ActivityCard>
                         maxLines: 4,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: CodexColors.muted,
+                          color: CodexColors.dim,
                           height: 1.35,
                         ),
                       ),
@@ -881,18 +858,7 @@ class _ActivityGlyph extends StatelessWidget {
             : 1.0;
         return Transform.scale(scale: scale, child: child);
       },
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: CodexColors.composer,
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-          border: Border.all(
-            color: effectiveColor.withValues(alpha: AppOpacity.border),
-          ),
-        ),
-        child: Center(child: iconWidget),
-      ),
+      child: SizedBox.square(dimension: 24, child: Center(child: iconWidget)),
     );
   }
 }

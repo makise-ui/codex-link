@@ -90,6 +90,7 @@ class AppController extends ChangeNotifier {
   String appFilePath = '';
   AppFsFileInfo? appPreviewFile;
   String accentName = 'neutral';
+  String themeName = 'dark';
 
   CodexSessionInfo? get activeSession {
     final id = activeSessionId;
@@ -202,6 +203,26 @@ class AppController extends ChangeNotifier {
         'Could not open update',
         _compactPreview(error.toString(), maxLines: 2, maxChars: 160),
         payload: 'update:open-error',
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<void> openProjectOnGitHub() async {
+    try {
+      final opened = await _updateService.openProjectPage();
+      if (!opened) {
+        _showNotice(
+          'Could not open GitHub',
+          'Open github.com/makise-ui/codex-link in your browser.',
+          payload: 'github:open-failed',
+        );
+      }
+    } catch (error) {
+      _showNotice(
+        'Could not open GitHub',
+        _compactPreview(error.toString(), maxLines: 2, maxChars: 160),
+        payload: 'github:open-error',
       );
     }
     notifyListeners();
@@ -552,6 +573,13 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setThemeName(String name) {
+    final normalized = name == 'light' ? 'light' : 'dark';
+    if (themeName == normalized) return;
+    themeName = normalized;
+    notifyListeners();
+  }
+
   void runCommand(CodexCommandInfo command) {
     switch (command.commandId) {
       case 'codex.stop':
@@ -843,6 +871,7 @@ class AppController extends ChangeNotifier {
               ),
             ),
           );
+        _ensurePlaygroundWorkspace();
         break;
       case 'workspace.file.search.results':
         _replaceFileSuggestions(message);
@@ -1429,13 +1458,22 @@ class AppController extends ChangeNotifier {
     phase = ConnectionPhase.offline;
     activeRunId = null;
     statusText = 'Offline. Showing cached chat while reconnecting…';
-    _showNotice(
-      'Bridge disconnected',
-      'Showing cached chat. Trying to reconnect.',
-      payload: 'connection:offline',
-    );
     _scheduleReconnect();
     notifyListeners();
+  }
+
+  void _ensurePlaygroundWorkspace() {
+    if (workspaces.any((workspace) => workspace.workspaceId == 'playground')) {
+      return;
+    }
+    workspaces.add(
+      const WorkspaceInfo(
+        workspaceId: 'playground',
+        label: 'Playground',
+        path: '~/.codex-link/playground',
+        active: false,
+      ),
+    );
   }
 
   void _scheduleReconnect() {

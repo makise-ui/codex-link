@@ -1224,6 +1224,67 @@ void main() {
     },
   );
 
+  test('disconnect churn does not send phone notifications', () async {
+    final socket = FakeBridgeSocketClient();
+    final notifier = FakeAppNotifier();
+    final controller = AppController(
+      socket: socket,
+      notifier: notifier,
+      store: FakeSecureCredentialsStore(
+        const BridgeCredentials(
+          url: 'wss://unit.trycloudflare.com',
+          deviceToken: 'token',
+          deviceId: 'phone',
+        ),
+      ),
+      autoReconnectDelay: const Duration(hours: 1),
+    );
+    controller.setAppForeground(false);
+    await controller.loadSavedCredentials();
+
+    await controller.reconnect();
+    await Future<void>.delayed(Duration.zero);
+    socket.emitMessage({
+      'type': 'auth.accepted',
+      'deviceToken': 'token',
+      'deviceId': 'phone',
+    });
+
+    expect(controller.phase, ConnectionPhase.connected);
+
+    socket.closeFromServer();
+
+    expect(controller.phase, ConnectionPhase.offline);
+    expect(controller.latestNotice?.payload, isNot('connection:offline'));
+    expect(notifier.notifications, isEmpty);
+  });
+
+  test('older host workspace lists still expose playground', () {
+    final controller = AppController()
+      ..handleBridgeMessageForTest({
+        'type': 'workspace.list',
+        'workspaces': [
+          {
+            'workspaceId': 'default',
+            'label': 'repo',
+            'path': '/tmp/repo',
+            'active': true,
+          },
+        ],
+      });
+
+    expect(
+      controller.workspaces.map((workspace) => workspace.workspaceId),
+      contains('playground'),
+    );
+    expect(
+      controller.workspaces
+          .firstWhere((workspace) => workspace.workspaceId == 'playground')
+          .displayName,
+      'Playground',
+    );
+  });
+
   test('update checks expose available release and in-app notice', () async {
     final update = AppUpdateInfo(
       currentVersion: '1.0.0',
@@ -1243,6 +1304,25 @@ void main() {
     expect(controller.availableUpdate, update);
     expect(controller.latestNotice?.title, 'Update available');
     expect(controller.latestNotice?.body, contains('1.0.1'));
+  });
+
+  test('private GitHub release failures use actionable update text', () async {
+    final controller = AppController(
+      updateService: ThrowingUpdateService(
+        const GitHubReleaseUnavailableException(
+          owner: 'makise-ui',
+          repo: 'codex-link',
+          statusCode: 404,
+        ),
+      ),
+    );
+
+    await controller.checkForUpdates();
+
+    expect(controller.updateStatus, UpdateCheckStatus.failed);
+    expect(controller.updateErrorText, contains('private'));
+    expect(controller.latestNotice?.title, 'Update check failed');
+    expect(controller.latestNotice?.body, contains('private'));
   });
 }
 
@@ -1283,6 +1363,9 @@ class FakeBridgeSocketClient extends BridgeSocketClient {
   final Object? connectError;
   final sentMessages = <Map<String, dynamic>>[];
   String? connectedUrl;
+  void Function(Map<String, dynamic> message)? onMessageCallback;
+  void Function(Object error)? onErrorCallback;
+  void Function()? onDoneCallback;
 
   @override
   Future<void> connect({
@@ -1293,6 +1376,9 @@ class FakeBridgeSocketClient extends BridgeSocketClient {
     Duration timeout = const Duration(seconds: 8),
   }) async {
     connectedUrl = normalizeBridgeWebSocketUrl(url);
+    onMessageCallback = onMessage;
+    onErrorCallback = onError;
+    onDoneCallback = onDone;
     final error = connectError;
     if (error != null) throw error;
     await (connectCompleter?.future ?? Future<void>.value());
@@ -1305,6 +1391,18 @@ class FakeBridgeSocketClient extends BridgeSocketClient {
 
   @override
   Future<void> close() async {}
+
+  void emitMessage(Map<String, dynamic> message) {
+    onMessageCallback?.call(message);
+  }
+
+  void emitError(Object error) {
+    onErrorCallback?.call(error);
+  }
+
+  void closeFromServer() {
+    onDoneCallback?.call();
+  }
 }
 
 class FakeDownloadSaver implements FileDownloadSaver {
@@ -1334,6 +1432,24 @@ class FakeUpdateService implements AppUpdateService {
     opened = update;
     return true;
   }
+
+  @override
+  Future<bool> openProjectPage() async => true;
+}
+
+class ThrowingUpdateService implements AppUpdateService {
+  const ThrowingUpdateService(this.error);
+
+  final Object error;
+
+  @override
+  Future<AppUpdateInfo> checkForUpdate() async => throw error;
+
+  @override
+  Future<bool> openUpdate(AppUpdateInfo update) async => true;
+
+  @override
+  Future<bool> openProjectPage() async => true;
 }
 
 class FakeSecureCredentialsStore extends SecureCredentialsStore {

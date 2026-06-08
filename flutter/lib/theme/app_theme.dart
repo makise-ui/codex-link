@@ -21,6 +21,20 @@ class CodexColors {
   static const danger = Color(0xFFFF4A4A);
 }
 
+class LightCodexColors {
+  static const ink = Color(0xFFF7F7F4);
+  static const ink2 = Color(0xFFFFFFFF);
+  static const panel = Color(0xEFFFFFFF);
+  static const panelHigh = Color(0xFFFFFFFF);
+  static const bubble = Color(0xFFE9E9E5);
+  static const composer = Color(0xF7FFFFFF);
+  static const border = Color(0xFFD2D2CC);
+  static const borderSoft = Color(0xFFE5E5DF);
+  static const text = Color(0xFF20211F);
+  static const muted = Color(0xFF686A66);
+  static const dim = Color(0xFF8D908A);
+}
+
 class AppSpacing {
   static const xxs = 2.0;
   static const xs = 4.0;
@@ -74,23 +88,38 @@ String accentLabelForName(String name) {
   };
 }
 
-ThemeData buildCodexTheme({Color accentColor = CodexColors.muted}) {
+ThemeData buildCodexTheme({
+  Color accentColor = CodexColors.muted,
+  Brightness brightness = Brightness.dark,
+}) {
+  final light = brightness == Brightness.light;
+  final surface = light ? LightCodexColors.ink : CodexColors.ink;
+  final text = light ? LightCodexColors.text : CodexColors.text;
+  final muted = light ? LightCodexColors.muted : CodexColors.muted;
+  final dim = light ? LightCodexColors.dim : CodexColors.dim;
+  final composer = light ? LightCodexColors.composer : CodexColors.composer;
+  final border = light ? LightCodexColors.border : CodexColors.border;
+  final borderSoft = light
+      ? LightCodexColors.borderSoft
+      : CodexColors.borderSoft;
+  final bubble = light ? LightCodexColors.bubble : CodexColors.bubble;
   final scheme = ColorScheme.fromSeed(
     seedColor: accentColor,
-    brightness: Brightness.dark,
-    surface: CodexColors.ink,
+    brightness: brightness,
+    surface: surface,
   );
 
   return ThemeData(
     useMaterial3: true,
-    brightness: Brightness.dark,
+    brightness: brightness,
     colorScheme: scheme.copyWith(
-      primary: CodexColors.text,
+      primary: text,
       secondary: accentColor,
-      surface: CodexColors.ink,
+      surface: surface,
+      onSurface: text,
       error: CodexColors.danger,
     ),
-    scaffoldBackgroundColor: CodexColors.ink,
+    scaffoldBackgroundColor: surface,
     fontFamily: 'Roboto',
     splashFactory: InkSparkle.splashFactory,
     textTheme: const TextTheme(
@@ -123,18 +152,18 @@ ThemeData buildCodexTheme({Color accentColor = CodexColors.muted}) {
         fontWeight: FontWeight.w700,
         letterSpacing: 0,
       ),
-    ).apply(bodyColor: CodexColors.text, displayColor: CodexColors.text),
+    ).apply(bodyColor: text, displayColor: text),
     cardTheme: CardThemeData(
-      color: CodexColors.panel,
+      color: light ? LightCodexColors.panel : CodexColors.panel,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: CodexColors.borderSoft),
+        side: BorderSide(color: borderSoft),
       ),
     ),
-    appBarTheme: const AppBarTheme(
+    appBarTheme: AppBarTheme(
       backgroundColor: Colors.transparent,
-      foregroundColor: CodexColors.text,
+      foregroundColor: text,
       elevation: 0,
       centerTitle: false,
     ),
@@ -144,41 +173,59 @@ ThemeData buildCodexTheme({Color accentColor = CodexColors.muted}) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: CodexColors.composer,
-      labelStyle: const TextStyle(color: CodexColors.muted),
-      hintStyle: const TextStyle(color: CodexColors.dim),
+      fillColor: composer,
+      labelStyle: TextStyle(color: muted),
+      hintStyle: TextStyle(color: dim),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: CodexColors.border),
+        borderSide: BorderSide(color: border),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: CodexColors.borderSoft),
+        borderSide: BorderSide(color: borderSoft),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: CodexColors.muted, width: 1.2),
+        borderSide: BorderSide(color: muted, width: 1.2),
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: CodexColors.text,
-        foregroundColor: CodexColors.ink,
-        disabledBackgroundColor: CodexColors.bubble,
-        disabledForegroundColor: CodexColors.dim,
+        backgroundColor: text,
+        foregroundColor: surface,
+        disabledBackgroundColor: bubble,
+        disabledForegroundColor: dim,
         textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: CodexColors.text,
-        side: const BorderSide(color: CodexColors.border),
+        foregroundColor: text,
+        side: BorderSide(color: border),
         textStyle: const TextStyle(fontWeight: FontWeight.w700),
       ),
     ),
   );
 }
+
+bool isCodexLight(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.light;
+
+Color codexTextColor(BuildContext context) =>
+    isCodexLight(context) ? LightCodexColors.text : CodexColors.text;
+
+Color codexMutedColor(BuildContext context) =>
+    isCodexLight(context) ? LightCodexColors.muted : CodexColors.muted;
+
+Color codexDimColor(BuildContext context) =>
+    isCodexLight(context) ? LightCodexColors.dim : CodexColors.dim;
+
+Color codexComposerColor(BuildContext context) =>
+    isCodexLight(context) ? LightCodexColors.composer : CodexColors.composer;
+
+Color codexPanelHighColor(BuildContext context) =>
+    isCodexLight(context) ? LightCodexColors.panelHigh : CodexColors.panelHigh;
 
 class AnimatedChatGptBackdrop extends StatelessWidget {
   const AnimatedChatGptBackdrop({super.key, required this.child});
@@ -187,21 +234,30 @@ class AnimatedChatGptBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final light = isCodexLight(context);
     return DecoratedBox(
-      decoration: const BoxDecoration(color: CodexColors.ink),
+      decoration: BoxDecoration(
+        color: light ? LightCodexColors.ink : CodexColors.ink,
+      ),
       child: Stack(
         fit: StackFit.expand,
         children: [
-          const DecoratedBox(
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF171719),
-                  Color(0xFF050506),
-                  Color(0xFF202023),
-                ],
+                colors: light
+                    ? const [
+                        Color(0xFFFFFFFF),
+                        Color(0xFFF4F4F0),
+                        Color(0xFFEDEDE8),
+                      ]
+                    : const [
+                        Color(0xFF171719),
+                        Color(0xFF050506),
+                        Color(0xFF202023),
+                      ],
                 stops: [0.0, 0.58, 1.0],
               ),
             ),
@@ -248,6 +304,8 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final light = isCodexLight(context);
+    final resolvedColor = color ?? (light ? LightCodexColors.panel : null);
     return Container(
       margin: margin,
       child: ClipRRect(
@@ -257,14 +315,18 @@ class GlassCard extends StatelessWidget {
           child: Container(
             padding: padding,
             decoration: BoxDecoration(
-              color: color ?? CodexColors.panel,
+              color: resolvedColor ?? CodexColors.panel,
               borderRadius: BorderRadius.circular(radius),
               border: showBorder
-                  ? Border.all(color: Colors.white.withValues(alpha: 0.11))
+                  ? Border.all(
+                      color: light
+                          ? Colors.black.withValues(alpha: 0.09)
+                          : Colors.white.withValues(alpha: 0.11),
+                    )
                   : null,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.24),
+                  color: Colors.black.withValues(alpha: light ? 0.08 : 0.24),
                   blurRadius: 18,
                   offset: const Offset(0, 10),
                 ),
@@ -297,12 +359,16 @@ class SoftPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final light = isCodexLight(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: CodexColors.panelHigh.withValues(alpha: 0.86),
+        color: (light ? LightCodexColors.panelHigh : CodexColors.panelHigh)
+            .withValues(alpha: 0.86),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.11)),
+        border: Border.all(
+          color: (light ? Colors.black : Colors.white).withValues(alpha: 0.11),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -341,20 +407,29 @@ class ChatGptCircleButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final light = isCodexLight(context);
+    final resolvedBackground = light ? LightCodexColors.panelHigh : background;
+    final resolvedForeground = light && foreground == CodexColors.text
+        ? LightCodexColors.text
+        : foreground;
     return SizedBox.square(
       dimension: size,
       child: ClipOval(
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
           child: Material(
-            color: background.withValues(alpha: 0.92),
+            color: resolvedBackground.withValues(alpha: 0.92),
             shape: CircleBorder(
-              side: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+              side: BorderSide(
+                color: (light ? Colors.black : Colors.white).withValues(
+                  alpha: 0.12,
+                ),
+              ),
             ),
             clipBehavior: Clip.antiAlias,
             child: IconButton(
               onPressed: onPressed,
-              icon: Icon(icon, color: foreground, size: size * 0.44),
+              icon: Icon(icon, color: resolvedForeground, size: size * 0.44),
             ),
           ),
         ),
@@ -370,6 +445,7 @@ class ChatGptActionPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final light = isCodexLight(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(999),
       child: BackdropFilter(
@@ -378,12 +454,17 @@ class ChatGptActionPill extends StatelessWidget {
           height: 44,
           padding: const EdgeInsets.symmetric(horizontal: 5),
           decoration: BoxDecoration(
-            color: CodexColors.panelHigh.withValues(alpha: 0.90),
+            color: (light ? LightCodexColors.panelHigh : CodexColors.panelHigh)
+                .withValues(alpha: 0.90),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+            border: Border.all(
+              color: (light ? Colors.black : Colors.white).withValues(
+                alpha: 0.12,
+              ),
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.24),
+                color: Colors.black.withValues(alpha: light ? 0.10 : 0.24),
                 blurRadius: 18,
                 offset: const Offset(0, 8),
               ),

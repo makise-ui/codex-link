@@ -57,6 +57,9 @@ class _CodexLanAppState extends State<CodexLanApp> with WidgetsBindingObserver {
             debugShowCheckedModeBanner: false,
             theme: buildCodexTheme(
               accentColor: accentColorForName(controller.accentName),
+              brightness: controller.themeName == 'light'
+                  ? Brightness.light
+                  : Brightness.dark,
             ),
             home: Builder(
               builder: (context) {

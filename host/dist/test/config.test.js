@@ -24,7 +24,19 @@ describe("resolveConfig", () => {
         expect(config.sessionMode).toBe("app-server");
         expect(config.codexCommand).toBe("codex");
         expect(config.sandbox).toBe("workspace-write");
-        expect(config.workspaces).toHaveLength(2);
+        expect(config.workspaces).toHaveLength(3);
+        expect(config.workspaces[2]).toMatchObject({
+            id: "playground",
+            label: "Playground",
+        });
+    });
+    it("adds a persistent playground workspace for throwaway chats", () => {
+        const config = resolveConfig(["node", "src/index.ts", "--insecure-ws-dev"]);
+        expect(config.workspaces.map((workspace) => workspace.id)).toContain("playground");
+        expect(config.workspaces.find((workspace) => workspace.id === "playground")).toMatchObject({
+            label: "Playground",
+        });
+        expect(config.workspaces.find((workspace) => workspace.id === "playground")?.path).toContain(".codex-link");
     });
     it("rejects the old cli session adapter mode", () => {
         expect(() => resolveConfig(["node", "src/index.ts", "--insecure-ws-dev", "--session-mode", "cli"])).toThrow(/mock or app-server/);

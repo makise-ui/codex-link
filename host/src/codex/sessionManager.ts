@@ -355,6 +355,7 @@ export class CodexSessionManager {
     const workspace = this.workspaceById(input.workspaceId ?? this.workspaces[0]?.id);
     const mode = input.mode ?? this.defaultMode();
     this.assertModeAllowed(mode);
+    await this.ensureWorkspaceReady(workspace);
 
     const now = new Date().toISOString();
     const record: SessionRecord = {
@@ -420,6 +421,7 @@ export class CodexSessionManager {
       throw new Error("Cannot switch workspace while a run is active.");
     }
     const workspace = this.workspaceById(workspaceId);
+    await this.ensureWorkspaceReady(workspace);
 
     await this.closeAdapter(sessionId);
     record.workspaceId = workspace.id;
@@ -932,6 +934,11 @@ export class CodexSessionManager {
     if (!workspace) throw new Error("No host workspaces are configured.");
     if (workspaceId && workspace.id !== workspaceId) throw new Error(`Unknown workspace: ${workspaceId}`);
     return workspace;
+  }
+
+  private async ensureWorkspaceReady(workspace: WorkspaceConfig): Promise<void> {
+    if (workspace.id !== "playground") return;
+    await mkdir(workspace.path, { recursive: true });
   }
 
   private assertModeAllowed(mode: RunMode): void {

@@ -295,6 +295,8 @@ class _WorkspacePicker extends StatelessWidget {
   const _WorkspacePicker({required this.controller});
 
   final AppController controller;
+  static const _addWorkspaceAction = '__add_workspace__';
+  static const _createWorkspaceAction = '__create_workspace__';
 
   @override
   Widget build(BuildContext context) {
@@ -310,6 +312,7 @@ class _WorkspacePicker extends StatelessWidget {
     if (controller.workspaces.isEmpty) return const SizedBox.shrink();
     final disabled = controller.isRunning;
     return PopupMenuButton<String>(
+      key: const ValueKey('workspace-picker'),
       tooltip: 'Switch workspace',
       enabled: !disabled,
       color: CodexColors.panelHigh.withValues(alpha: 0.98),
@@ -324,7 +327,7 @@ class _WorkspacePicker extends StatelessWidget {
           color: CodexColors.text.withValues(alpha: AppOpacity.border),
         ),
       ),
-      onSelected: controller.switchWorkspace,
+      onSelected: (value) => _handleSelection(context, value),
       itemBuilder: (context) => [
         for (final workspace in controller.workspaces)
           PopupMenuItem<String>(
@@ -335,6 +338,23 @@ class _WorkspacePicker extends StatelessWidget {
               active: workspace.workspaceId == activeWorkspace?.workspaceId,
             ),
           ),
+        const PopupMenuDivider(height: AppSpacing.sm),
+        const PopupMenuItem<String>(
+          value: _addWorkspaceAction,
+          height: 44,
+          child: _WorkspaceActionMenuItem(
+            icon: Icons.folder_open_rounded,
+            title: 'Add folder...',
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: _createWorkspaceAction,
+          height: 44,
+          child: _WorkspaceActionMenuItem(
+            icon: Icons.create_new_folder_rounded,
+            title: 'Create folder...',
+          ),
+        ),
       ],
       child: AnimatedOpacity(
         opacity: disabled ? 0.58 : 1,
@@ -393,6 +413,105 @@ class _WorkspacePicker extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _handleSelection(BuildContext context, String value) async {
+    if (value == _addWorkspaceAction) {
+      await _showWorkspaceDialog(context, create: false);
+      return;
+    }
+    if (value == _createWorkspaceAction) {
+      await _showWorkspaceDialog(context, create: true);
+      return;
+    }
+    controller.switchWorkspace(value);
+  }
+
+  Future<void> _showWorkspaceDialog(
+    BuildContext context, {
+    required bool create,
+  }) async {
+    final path = await showDialog<String>(
+      context: context,
+      builder: (_) => _WorkspacePathDialog(create: create),
+    );
+    if (!context.mounted || path == null || path.trim().isEmpty) return;
+    controller.addWorkspacePath(path, create: create);
+  }
+}
+
+class _WorkspaceActionMenuItem extends StatelessWidget {
+  const _WorkspaceActionMenuItem({required this.icon, required this.title});
+
+  final IconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 17, color: CodexColors.muted),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.labelLarge),
+        ),
+      ],
+    );
+  }
+}
+
+class _WorkspacePathDialog extends StatefulWidget {
+  const _WorkspacePathDialog({required this.create});
+
+  final bool create;
+
+  @override
+  State<_WorkspacePathDialog> createState() => _WorkspacePathDialogState();
+}
+
+class _WorkspacePathDialogState extends State<_WorkspacePathDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.create ? 'Create folder' : 'Add folder';
+    return AlertDialog(
+      title: Text(title),
+      content: TextField(
+        key: const ValueKey('workspace-path-input'),
+        controller: _controller,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: 'Path',
+          hintText: widget.create
+              ? '/home/kurisu/projects/new-task'
+              : '/home/kurisu/projects/existing',
+        ),
+        onSubmitted: _submit,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => _submit(_controller.text),
+          child: Text(widget.create ? 'Create' : 'Add'),
+        ),
+      ],
+    );
+  }
+
+  void _submit(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return;
+    Navigator.of(context).pop(trimmed);
   }
 }
 
