@@ -95,6 +95,79 @@ class HostInfo {
   }
 }
 
+class CodexAccountInfo {
+  const CodexAccountInfo({
+    required this.accountType,
+    required this.requiresOpenaiAuth,
+    this.email,
+    this.planType,
+    this.authMode,
+  });
+
+  final String? accountType;
+  final String? email;
+  final String? planType;
+  final String? authMode;
+  final bool requiresOpenaiAuth;
+
+  bool get isSignedIn => accountType != null || authMode != null;
+
+  String get displayLabel {
+    if (!isSignedIn) return 'Not signed in';
+    if (email?.trim().isNotEmpty == true) {
+      final plan = planType?.trim();
+      return plan == null || plan.isEmpty
+          ? email!.trim()
+          : '${email!.trim()} · $plan';
+    }
+    return switch (authMode ?? accountType) {
+      'apikey' || 'apiKey' => 'API key',
+      'chatgpt' || 'chatgptAuthTokens' => 'ChatGPT',
+      'amazonBedrock' => 'Amazon Bedrock',
+      _ => 'Codex account',
+    };
+  }
+
+  factory CodexAccountInfo.fromJson(Map<String, dynamic> json) {
+    return CodexAccountInfo(
+      accountType: json['accountType'] as String?,
+      email: json['email'] as String?,
+      planType: json['planType'] as String?,
+      authMode: json['authMode'] as String?,
+      requiresOpenaiAuth: json['requiresOpenaiAuth'] as bool? ?? false,
+    );
+  }
+}
+
+class CodexAccountLoginFlow {
+  const CodexAccountLoginFlow({
+    required this.type,
+    this.loginId,
+    this.authUrl,
+    this.verificationUrl,
+    this.userCode,
+  });
+
+  final String type;
+  final String? loginId;
+  final String? authUrl;
+  final String? verificationUrl;
+  final String? userCode;
+
+  bool get isDeviceCode => type == 'chatgptDeviceCode';
+  bool get isBrowserLogin => type == 'chatgpt';
+
+  factory CodexAccountLoginFlow.fromJson(Map<String, dynamic> json) {
+    return CodexAccountLoginFlow(
+      type: json['type'] as String? ?? '',
+      loginId: json['loginId'] as String?,
+      authUrl: json['authUrl'] as String?,
+      verificationUrl: json['verificationUrl'] as String?,
+      userCode: json['userCode'] as String?,
+    );
+  }
+}
+
 class CodexSessionInfo {
   const CodexSessionInfo({
     required this.sessionId,

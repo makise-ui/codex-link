@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
 export type MessageKind = "thinking" | "reasoning" | "executing" | "response" | "system";
@@ -9,6 +9,10 @@ export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type GoalStatus = "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
 export type ConnectionMode = "lan" | "tunnel";
 export type TunnelProvider = "ngrok" | "cloudflared" | "tailscale" | "other";
+export type CodexAccountType = "apiKey" | "chatgpt" | "amazonBedrock" | null;
+export type CodexAuthMode = "apikey" | "chatgpt" | "chatgptAuthTokens" | "agentIdentity" | null;
+export type CodexAccountLoginType = "apiKey" | "chatgpt" | "chatgptDeviceCode";
+export type CodexAccountLoginCancelStatus = "canceled" | "notFound";
 
 export type ClientMessage =
   | PairingClaimMessage
@@ -38,6 +42,10 @@ export type ClientMessage =
   | AppFsReadRequestMessage
   | AppFileSearchRequestMessage
   | AppReviewStartRequestMessage
+  | AppAccountReadRequestMessage
+  | AppAccountLoginStartRequestMessage
+  | AppAccountLoginCancelRequestMessage
+  | AppAccountLogoutRequestMessage
   | CommandListRequestMessage
   | CommandRunMessage
   | PromptSendMessage
@@ -207,6 +215,27 @@ export type AppReviewStartRequestMessage = {
   delivery?: "inline" | "detached";
 };
 
+export type AppAccountReadRequestMessage = {
+  type: "app.account.read";
+  refreshToken?: boolean;
+};
+
+export type AppAccountLoginStartRequestMessage = {
+  type: "app.account.login.start";
+  loginType: CodexAccountLoginType;
+  apiKey?: string;
+  codexStreamlinedLogin?: boolean;
+};
+
+export type AppAccountLoginCancelRequestMessage = {
+  type: "app.account.login.cancel";
+  loginId: string;
+};
+
+export type AppAccountLogoutRequestMessage = {
+  type: "app.account.logout";
+};
+
 export type CommandListRequestMessage = {
   type: "command.list";
 };
@@ -279,6 +308,11 @@ export type ServerMessage =
   | AppFsFileMessage
   | AppFileSearchResultsMessage
   | AppReviewStartedMessage
+  | AppAccountStatusMessage
+  | AppAccountLoginStartedMessage
+  | AppAccountLoginCancelledMessage
+  | AppAccountUpdatedMessage
+  | AppAccountLoginCompletedMessage
   | CommandListMessage
   | SessionGoalUpdatedMessage
   | SessionGoalClearedMessage
@@ -556,6 +590,48 @@ export type AppReviewStartedMessage = {
   sessionId: string;
   runId: string;
   reviewThreadId: string;
+};
+
+export type CodexAccountInfo = {
+  accountType: CodexAccountType;
+  email?: string;
+  planType?: string | null;
+  authMode?: CodexAuthMode;
+  requiresOpenaiAuth: boolean;
+};
+
+export type CodexAccountLoginFlow =
+  | { type: "apiKey" }
+  | { type: "chatgpt"; loginId: string; authUrl: string }
+  | { type: "chatgptDeviceCode"; loginId: string; verificationUrl: string; userCode: string }
+  | { type: "chatgptAuthTokens" };
+
+export type AppAccountStatusMessage = {
+  type: "app.account.status";
+  account: CodexAccountInfo;
+};
+
+export type AppAccountLoginStartedMessage = {
+  type: "app.account.login.started";
+  flow: CodexAccountLoginFlow;
+};
+
+export type AppAccountLoginCancelledMessage = {
+  type: "app.account.login.cancelled";
+  loginId: string;
+  status: CodexAccountLoginCancelStatus;
+};
+
+export type AppAccountUpdatedMessage = {
+  type: "app.account.updated";
+  account: CodexAccountInfo;
+};
+
+export type AppAccountLoginCompletedMessage = {
+  type: "app.account.login.completed";
+  loginId?: string | null;
+  success: boolean;
+  error?: string | null;
 };
 
 export type CommandListMessage = {

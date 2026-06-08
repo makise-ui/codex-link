@@ -236,6 +236,52 @@ export class CodexSessionManager {
             reviewThreadId: record.codexThreadId ?? record.sessionId,
         };
     }
+    async getCodexAccount(refreshToken = false) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.getAccount) {
+            throw new Error("The active Codex adapter does not support account auth.");
+        }
+        return adapter.getAccount(refreshToken);
+    }
+    async readCodexAccount(refreshToken = false) {
+        return {
+            type: "app.account.status",
+            account: await this.getCodexAccount(refreshToken),
+        };
+    }
+    async startCodexAccountLogin(input) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.startAccountLogin) {
+            throw new Error("The active Codex adapter does not support account login.");
+        }
+        return {
+            type: "app.account.login.started",
+            flow: await adapter.startAccountLogin(input),
+        };
+    }
+    async cancelCodexAccountLogin(loginId) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.cancelAccountLogin) {
+            throw new Error("The active Codex adapter does not support account login cancel.");
+        }
+        const result = await adapter.cancelAccountLogin(loginId);
+        return {
+            type: "app.account.login.cancelled",
+            loginId,
+            status: result.status,
+        };
+    }
+    async logoutCodexAccount() {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.logoutAccount) {
+            throw new Error("The active Codex adapter does not support account logout.");
+        }
+        await adapter.logoutAccount();
+        return {
+            type: "app.account.status",
+            account: await this.getCodexAccount(false),
+        };
+    }
     getWorkspaces(activeSessionId = this.activeSessionId) {
         const activeWorkspaceId = activeSessionId ? this.sessions.get(activeSessionId)?.workspaceId : undefined;
         return this.workspaces.map((workspace) => ({

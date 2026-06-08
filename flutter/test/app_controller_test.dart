@@ -951,6 +951,83 @@ void main() {
     });
   });
 
+  test('Codex account auth actions route through the host bridge', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Account',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.refreshCodexAccount(refreshToken: true);
+    controller.startCodexDeviceLogin();
+    controller.startCodexBrowserLogin();
+    controller.loginCodexWithApiKey(' sk-unit-secret ');
+    controller.cancelCodexLogin('login-device');
+    controller.logoutCodexAccount();
+
+    expect(socket.sentMessages, [
+      {'type': 'app.account.read', 'refreshToken': true},
+      {'type': 'app.account.login.start', 'loginType': 'chatgptDeviceCode'},
+      {'type': 'app.account.login.start', 'loginType': 'chatgpt'},
+      {
+        'type': 'app.account.login.start',
+        'loginType': 'apiKey',
+        'apiKey': 'sk-unit-secret',
+      },
+      {'type': 'app.account.login.cancel', 'loginId': 'login-device'},
+      {'type': 'app.account.logout'},
+    ]);
+
+    controller.handleBridgeMessageForTest({
+      'type': 'app.account.status',
+      'account': {
+        'accountType': 'chatgpt',
+        'email': 'unit@example.com',
+        'planType': 'pro',
+        'authMode': 'chatgpt',
+        'requiresOpenaiAuth': false,
+      },
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.account.login.started',
+      'flow': {
+        'type': 'chatgptDeviceCode',
+        'loginId': 'login-device',
+        'verificationUrl': 'https://auth.openai.com/activate',
+        'userCode': 'CODE-123',
+      },
+    });
+
+    expect(controller.codexAccount?.email, 'unit@example.com');
+    expect(controller.codexAccount?.displayLabel, contains('unit@example.com'));
+    expect(controller.activeCodexLogin?.type, 'chatgptDeviceCode');
+    expect(controller.activeCodexLogin?.userCode, 'CODE-123');
+
+    controller.handleBridgeMessageForTest({
+      'type': 'app.account.login.completed',
+      'loginId': 'login-device',
+      'success': true,
+      'error': null,
+    });
+
+    expect(controller.activeCodexLogin, isNull);
+    expect(controller.latestNotice?.title, 'Codex login complete');
+  });
+
   test(
     'file offer replaces the pending request row and image offers auto-download',
     () {

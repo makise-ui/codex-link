@@ -1,4 +1,4 @@
-import type { AppFsEntryRecord, AppFsFileRecord, AppModelRecord, AppProviderCapabilitiesRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, DiffAvailableMessage, MessageCompletedMessage, MessageDeltaMessage, MessageStartedMessage, OutputDeltaMessage, ReasoningEffort, RunCompletedMessage, RunStartedMessage, SessionGoalClearedMessage, SessionGoalRecord, SessionGoalUpdatedMessage, SessionPlanUpdatedMessage, SessionStartedMessage, SessionUpdatedMessage, StatusMessage, WorkspaceFileRecord } from "../protocol/messages.js";
+import type { AppAccountLoginCompletedMessage, AppAccountUpdatedMessage, AppFsEntryRecord, AppFsFileRecord, AppModelRecord, AppProviderCapabilitiesRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginCancelStatus, CodexAccountLoginFlow, DiffAvailableMessage, MessageCompletedMessage, MessageDeltaMessage, MessageStartedMessage, OutputDeltaMessage, ReasoningEffort, RunCompletedMessage, RunStartedMessage, SessionGoalClearedMessage, SessionGoalRecord, SessionGoalUpdatedMessage, SessionPlanUpdatedMessage, SessionStartedMessage, SessionUpdatedMessage, StatusMessage, WorkspaceFileRecord } from "../protocol/messages.js";
 
 export type CodexEvent =
   | SessionStartedMessage
@@ -12,6 +12,8 @@ export type CodexEvent =
   | ApprovalRequestedMessage
   | SessionGoalUpdatedMessage
   | SessionGoalClearedMessage
+  | AppAccountUpdatedMessage
+  | AppAccountLoginCompletedMessage
   | SessionPlanUpdatedMessage
   | StatusMessage
   | RunCompletedMessage;
@@ -68,6 +70,15 @@ export type AppReviewStartResult = {
   reviewThreadId: string;
 };
 
+export type AccountLoginStartInput =
+  | { type: "apiKey"; apiKey: string }
+  | { type: "chatgpt"; codexStreamlinedLogin?: boolean }
+  | { type: "chatgptDeviceCode" };
+
+export type AccountLoginCancelResult = {
+  status: CodexAccountLoginCancelStatus;
+};
+
 export interface CodexSession {
   readonly sessionId: string;
   start(): Promise<void>;
@@ -80,6 +91,10 @@ export interface CodexSession {
   readFile?(absolutePath: string): Promise<AppFsFileRecord>;
   searchFiles?(input: AppFileSearchInput): Promise<WorkspaceFileRecord[]>;
   startReview?(input: AppReviewStartInput): Promise<AppReviewStartResult>;
+  getAccount?(refreshToken?: boolean): Promise<CodexAccountInfo>;
+  startAccountLogin?(input: AccountLoginStartInput): Promise<CodexAccountLoginFlow>;
+  cancelAccountLogin?(loginId: string): Promise<AccountLoginCancelResult>;
+  logoutAccount?(): Promise<void>;
   setGoal?(input: GoalSetInput): Promise<SessionGoalRecord>;
   getGoal?(): Promise<SessionGoalRecord | null>;
   clearGoal?(): Promise<boolean>;

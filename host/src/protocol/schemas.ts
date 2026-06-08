@@ -4,6 +4,7 @@ const sessionIdSchema = z.string().trim().min(1);
 const runModeSchema = z.enum(["safe", "yolo"]);
 const reasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
 const goalStatusSchema = z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]);
+const accountLoginTypeSchema = z.enum(["apiKey", "chatgpt", "chatgptDeviceCode"]);
 const attachmentSchema = z.object({
   name: z.string().trim().min(1).max(160),
   mimeType: z.string().trim().min(1).max(120).optional(),
@@ -170,6 +171,27 @@ export const appReviewStartSchema = z.object({
   delivery: z.enum(["inline", "detached"]).optional(),
 });
 
+export const appAccountReadSchema = z.object({
+  type: z.literal("app.account.read"),
+  refreshToken: z.boolean().optional(),
+});
+
+export const appAccountLoginStartSchema = z.object({
+  type: z.literal("app.account.login.start"),
+  loginType: accountLoginTypeSchema,
+  apiKey: z.string().trim().min(1).max(4096).optional(),
+  codexStreamlinedLogin: z.boolean().optional(),
+});
+
+export const appAccountLoginCancelSchema = z.object({
+  type: z.literal("app.account.login.cancel"),
+  loginId: z.string().trim().min(1).max(240),
+});
+
+export const appAccountLogoutSchema = z.object({
+  type: z.literal("app.account.logout"),
+});
+
 export const commandListSchema = z.object({
   type: z.literal("command.list"),
 });
@@ -244,6 +266,10 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   appFsReadSchema,
   appFileSearchSchema,
   appReviewStartSchema,
+  appAccountReadSchema,
+  appAccountLoginStartSchema,
+  appAccountLoginCancelSchema,
+  appAccountLogoutSchema,
   commandListSchema,
   commandRunSchema,
   promptSendSchema,

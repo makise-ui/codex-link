@@ -77,6 +77,10 @@ class AppController extends ChangeNotifier {
   final List<ExternalSessionInfo> externalSessions = [];
   final List<AppModelInfo> appModels = [];
   AppProviderCapabilitiesInfo? appCapabilities;
+  CodexAccountInfo? codexAccount;
+  CodexAccountLoginFlow? activeCodexLogin;
+  bool codexAccountBusy = false;
+  String? codexAccountErrorText;
   final List<AppThreadInfo> appThreads = [];
   final List<AppSkillGroupInfo> appSkillGroups = [];
   final List<AppFsEntryInfo> appFileEntries = [];
@@ -410,6 +414,63 @@ class AppController extends ChangeNotifier {
         'sessionId': activeSession!.sessionId,
       if (includeHidden) 'includeHidden': true,
     });
+  }
+
+  void refreshCodexAccount({bool refreshToken = false}) {
+    codexAccountBusy = true;
+    codexAccountErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.account.read', if (refreshToken) 'refreshToken': true});
+  }
+
+  void startCodexDeviceLogin() {
+    codexAccountBusy = true;
+    codexAccountErrorText = null;
+    notifyListeners();
+    _send({
+      'type': 'app.account.login.start',
+      'loginType': 'chatgptDeviceCode',
+    });
+  }
+
+  void startCodexBrowserLogin() {
+    codexAccountBusy = true;
+    codexAccountErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.account.login.start', 'loginType': 'chatgpt'});
+  }
+
+  void loginCodexWithApiKey(String apiKey) {
+    final trimmed = apiKey.trim();
+    if (trimmed.isEmpty) {
+      codexAccountErrorText = 'API key is required.';
+      notifyListeners();
+      return;
+    }
+    codexAccountBusy = true;
+    codexAccountErrorText = null;
+    notifyListeners();
+    _send({
+      'type': 'app.account.login.start',
+      'loginType': 'apiKey',
+      'apiKey': trimmed,
+    });
+  }
+
+  void cancelCodexLogin(String loginId) {
+    final trimmed = loginId.trim();
+    if (trimmed.isEmpty) return;
+    codexAccountBusy = true;
+    codexAccountErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.account.login.cancel', 'loginId': trimmed});
+  }
+
+  void logoutCodexAccount() {
+    codexAccountBusy = true;
+    codexAccountErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.account.logout'});
   }
 
   void refreshAppThreads({String query = '', int limit = 40}) {
@@ -913,6 +974,21 @@ class AppController extends ChangeNotifier {
           );
         }
         break;
+      case 'app.account.status':
+        _applyCodexAccountStatus(message);
+        break;
+      case 'app.account.updated':
+        _applyCodexAccountUpdated(message);
+        break;
+      case 'app.account.login.started':
+        _applyCodexLoginStarted(message);
+        break;
+      case 'app.account.login.cancelled':
+        _applyCodexLoginCancelled(message);
+        break;
+      case 'app.account.login.completed':
+        _applyCodexLoginCompleted(message);
+        break;
       case 'app.thread.list':
         appThreads
           ..clear()
@@ -1100,6 +1176,101 @@ class AppController extends ChangeNotifier {
           ),
         ),
       );
+  }
+
+  void _applyCodexAccountStatus(Map<String, dynamic> message) {
+    final accountMap = message['account'];
+    if (accountMap is! Map) return;
+    codexAccount = CodexAccountInfo.fromJson(
+      Map<String, dynamic>.from(accountMap),
+    );
+    codexAccountBusy = false;
+    codexAccountErrorText = null;
+  }
+
+  void _applyCodexAccountUpdated(Map<String, dynamic> message) {
+    final accountMap = message['account'];
+    if (accountMap is! Map) return;
+    final next = CodexAccountInfo.fromJson(
+      Map<String, dynamic>.from(accountMap),
+    );
+    final previous = codexAccount;
+    codexAccount = CodexAccountInfo(
+      accountType: next.accountType,
+      email: next.isSignedIn ? next.email ?? previous?.email : next.email,
+      planType: next.isSignedIn
+          ? next.planType ?? previous?.planType
+          : next.planType,
+      authMode: next.authMode,
+      requiresOpenaiAuth: next.requiresOpenaiAuth,
+    );
+    codexAccountBusy = false;
+    codexAccountErrorText = null;
+  }
+
+  void _applyCodexLoginStarted(Map<String, dynamic> message) {
+    final flowMap = message['flow'];
+    if (flowMap is! Map) return;
+    activeCodexLogin = CodexAccountLoginFlow.fromJson(
+      Map<String, dynamic>.from(flowMap),
+    );
+    codexAccountBusy = false;
+    codexAccountErrorText = null;
+    final flow = activeCodexLogin;
+    if (flow?.type == 'apiKey') {
+      activeCodexLogin = null;
+      _showNotice(
+        'Codex API key saved',
+        'The host Codex account is configured.',
+        payload: 'codex-account:api-key',
+      );
+    } else if (flow?.isDeviceCode == true && flow?.userCode != null) {
+      _showNotice(
+        'Codex device code ready',
+        flow!.userCode!,
+        payload: 'codex-account:device-code',
+      );
+    }
+  }
+
+  void _applyCodexLoginCancelled(Map<String, dynamic> message) {
+    final loginId = message['loginId'] as String?;
+    if (loginId == null ||
+        activeCodexLogin?.loginId == null ||
+        activeCodexLogin?.loginId == loginId) {
+      activeCodexLogin = null;
+    }
+    codexAccountBusy = false;
+    codexAccountErrorText = null;
+    final status = message['status'] as String? ?? 'canceled';
+    _showNotice(
+      status == 'notFound' ? 'Codex login not found' : 'Codex login cancelled',
+      status == 'notFound'
+          ? 'The login request was no longer active.'
+          : 'The login request was cancelled.',
+      payload: 'codex-account:cancelled',
+    );
+  }
+
+  void _applyCodexLoginCompleted(Map<String, dynamic> message) {
+    final loginId = message['loginId'] as String?;
+    if (loginId == null || activeCodexLogin?.loginId == loginId) {
+      activeCodexLogin = null;
+    }
+    codexAccountBusy = false;
+    final success = message['success'] == true;
+    final error = message['error'] as String?;
+    codexAccountErrorText = success ? null : error ?? 'Codex login failed.';
+    _showNotice(
+      success ? 'Codex login complete' : 'Codex login failed',
+      success
+          ? 'The host Codex account is ready.'
+          : _compactPreview(codexAccountErrorText ?? 'Codex login failed.'),
+      payload: 'codex-account:completed',
+    );
+    if (success) {
+      refreshCodexAccount(refreshToken: true);
+    }
   }
 
   void _upsertSession(CodexSessionInfo session) {

@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
-import type { AppFsEntryRecord, AppFsFileRecord, AppModelRecord, AppProviderCapabilitiesRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, GoalStatus, MessageKind, ReasoningEffort, SandboxMode, SessionGoalRecord, StoredChatMessage, WorkspaceFileRecord } from "../protocol/messages.js";
-import type { AppFileSearchInput, AppModelListResult, AppReviewStartInput, AppReviewStartResult, AppSkillListInput, AppThreadListInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptOptions, SendPromptResult } from "./codexSession.js";
+import type { AppFsEntryRecord, AppFsFileRecord, AppModelRecord, AppProviderCapabilitiesRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginFlow, CodexAccountType, CodexAuthMode, GoalStatus, MessageKind, ReasoningEffort, SandboxMode, SessionGoalRecord, StoredChatMessage, WorkspaceFileRecord } from "../protocol/messages.js";
+import type { AccountLoginCancelResult, AccountLoginStartInput, AppFileSearchInput, AppModelListResult, AppReviewStartInput, AppReviewStartResult, AppSkillListInput, AppThreadListInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 import { mimeTypeFor } from "./fileTransferManager.js";
 
 type Listener = (event: CodexEvent) => void;
@@ -204,6 +204,40 @@ export class AppServerCodexSession implements CodexSession {
       runId: result.turn.id,
       reviewThreadId: result.reviewThreadId,
     };
+  }
+
+  async getAccount(refreshToken = false): Promise<CodexAccountInfo> {
+    await this.ensureInitialized();
+    const accountResult = await this.request<unknown>("account/read", { refreshToken });
+    let authStatus: unknown;
+    try {
+      authStatus = await this.request("getAuthStatus", { includeToken: false, refreshToken: false });
+    } catch {
+      authStatus = undefined;
+    }
+    return normalizeAccount(accountResult, authStatus);
+  }
+
+  async startAccountLogin(input: AccountLoginStartInput): Promise<CodexAccountLoginFlow> {
+    await this.ensureInitialized();
+    const params = input.type === "apiKey"
+      ? { type: "apiKey", apiKey: input.apiKey.trim() }
+      : input.type === "chatgpt"
+        ? { type: "chatgpt", ...(input.codexStreamlinedLogin === undefined ? {} : { codexStreamlinedLogin: input.codexStreamlinedLogin }) }
+        : { type: "chatgptDeviceCode" };
+    const result = await this.request<unknown>("account/login/start", params);
+    return normalizeLoginFlow(result);
+  }
+
+  async cancelAccountLogin(loginId: string): Promise<AccountLoginCancelResult> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("account/login/cancel", { loginId });
+    return normalizeCancelLogin(result);
+  }
+
+  async logoutAccount(): Promise<void> {
+    await this.ensureInitialized();
+    await this.request("account/logout", undefined);
   }
 
   async setGoal(input: GoalSetInput): Promise<SessionGoalRecord> {
@@ -464,6 +498,20 @@ export class AppServerCodexSession implements CodexSession {
         return;
       case "thread/goal/cleared":
         this.emit({ type: "session.goal.cleared", sessionId: this.sessionId });
+        return;
+      case "account/updated":
+        this.emit({
+          type: "app.account.updated",
+          account: normalizeAccountUpdate(params),
+        });
+        return;
+      case "account/login/completed":
+        this.emit({
+          type: "app.account.login.completed",
+          loginId: readString(params, "loginId") ?? null,
+          success: params.success === true,
+          error: readString(params, "error") ?? null,
+        });
         return;
       case "turn/started":
         this.handleTurnStarted(params);
@@ -912,6 +960,80 @@ function formatChanges(changes: Array<{ path: string; status: string; diff: stri
     ])
     .filter(Boolean)
     .join("\n");
+}
+
+function normalizeAccount(value: unknown, authStatusValue: unknown): CodexAccountInfo {
+  const record = safeRecord(value);
+  const account = safeRecord(record.account);
+  const authStatus = safeRecord(authStatusValue);
+  const accountType = normalizeAccountType(readString(account, "type"));
+  const authMode = normalizeAuthMode(readString(authStatus, "authMethod")) ?? authModeFromAccountType(accountType);
+  return {
+    accountType,
+    email: readString(account, "email"),
+    planType: readString(account, "planType") ?? null,
+    authMode,
+    requiresOpenaiAuth: record.requiresOpenaiAuth === true || authStatus.requiresOpenaiAuth === true,
+  };
+}
+
+function normalizeAccountUpdate(value: unknown): CodexAccountInfo {
+  const record = safeRecord(value);
+  const authMode = normalizeAuthMode(readString(record, "authMode"));
+  return {
+    accountType: accountTypeFromAuthMode(authMode),
+    planType: readString(record, "planType") ?? null,
+    authMode,
+    requiresOpenaiAuth: authMode === null,
+  };
+}
+
+function normalizeLoginFlow(value: unknown): CodexAccountLoginFlow {
+  const record = safeRecord(value);
+  const type = readString(record, "type");
+  if (type === "apiKey") return { type: "apiKey" };
+  if (type === "chatgpt") {
+    return {
+      type: "chatgpt",
+      loginId: readString(record, "loginId") ?? "",
+      authUrl: readString(record, "authUrl") ?? "",
+    };
+  }
+  if (type === "chatgptDeviceCode") {
+    return {
+      type: "chatgptDeviceCode",
+      loginId: readString(record, "loginId") ?? "",
+      verificationUrl: readString(record, "verificationUrl") ?? "",
+      userCode: readString(record, "userCode") ?? "",
+    };
+  }
+  if (type === "chatgptAuthTokens") return { type: "chatgptAuthTokens" };
+  throw new Error(`Unsupported account login response: ${type ?? "unknown"}`);
+}
+
+function normalizeCancelLogin(value: unknown): AccountLoginCancelResult {
+  const status = readString(safeRecord(value), "status");
+  return { status: status === "notFound" ? "notFound" : "canceled" };
+}
+
+function normalizeAccountType(value: string | undefined): CodexAccountType {
+  return value === "apiKey" || value === "chatgpt" || value === "amazonBedrock" ? value : null;
+}
+
+function normalizeAuthMode(value: string | undefined): CodexAuthMode {
+  return value === "apikey" || value === "chatgpt" || value === "chatgptAuthTokens" || value === "agentIdentity" ? value : null;
+}
+
+function authModeFromAccountType(accountType: CodexAccountType): CodexAuthMode {
+  if (accountType === "apiKey") return "apikey";
+  if (accountType === "chatgpt") return "chatgpt";
+  return null;
+}
+
+function accountTypeFromAuthMode(authMode: CodexAuthMode): CodexAccountType {
+  if (authMode === "apikey") return "apiKey";
+  if (authMode === "chatgpt" || authMode === "chatgptAuthTokens") return "chatgpt";
+  return null;
 }
 
 function normalizeGoal(value: unknown): SessionGoalRecord {

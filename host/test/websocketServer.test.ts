@@ -53,7 +53,7 @@ describe("startBridgeServer", () => {
     });
     const hostInfo = messages.find((message) => message.type === "host.info");
     expect(hostInfo).toMatchObject({
-      version: 7,
+      version: 8,
       connectionMode: "tunnel",
       tunnelProvider: "cloudflared",
       publicUrl: "wss://unit.trycloudflare.com",
@@ -255,6 +255,71 @@ describe("startBridgeServer", () => {
 
     ws.close();
   });
+
+  it("forwards Codex account auth messages to the session manager", async () => {
+    const port = await freePort();
+    const sessionManager = fakeSessionManager();
+    server = await startBridgeServer({
+      host: "127.0.0.1",
+      port,
+      url: `ws://127.0.0.1:${port}`,
+      pairingStore: new PairingStore({ password: "secret" }),
+      sessionManager,
+      auditLog: { record() {} } as unknown as AuditLog,
+      logger: { info() {} } as unknown as pino.Logger,
+      hostInfo: {
+        connectionMode: "tunnel",
+        tunnelProvider: "cloudflared",
+        publicUrl: "wss://unit.trycloudflare.com",
+        localUrl: `ws://127.0.0.1:${port}`,
+        hostLabel: "Codex Link",
+        yoloAllowed: false,
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+    });
+    messages.length = 0;
+    sessionManager.accountReads.length = 0;
+
+    ws.send(JSON.stringify({ type: "app.account.read", refreshToken: true }));
+    ws.send(JSON.stringify({ type: "app.account.login.start", loginType: "chatgptDeviceCode" }));
+    ws.send(JSON.stringify({ type: "app.account.login.start", loginType: "chatgpt" }));
+    ws.send(JSON.stringify({ type: "app.account.login.start", loginType: "apiKey", apiKey: "sk-unit-secret" }));
+    ws.send(JSON.stringify({ type: "app.account.login.cancel", loginId: "login-device" }));
+    ws.send(JSON.stringify({ type: "app.account.logout" }));
+
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "app.account.status")).toBe(true);
+      expect(messages.filter((message) => message.type === "app.account.login.started")).toHaveLength(3);
+      expect(messages.some((message) => message.type === "app.account.login.cancelled")).toBe(true);
+      expect(sessionManager.accountReads).toEqual([true]);
+      expect(sessionManager.accountLoginStarts).toEqual([
+        { type: "chatgptDeviceCode" },
+        { type: "chatgpt" },
+        { type: "apiKey", apiKey: "sk-unit-secret" },
+      ]);
+      expect(sessionManager.accountLoginCancels).toEqual(["login-device"]);
+      expect(sessionManager.accountLogouts).toBe(1);
+    });
+    expect(messages.find((message) => message.type === "app.account.status")).toMatchObject({
+      account: {
+        accountType: "chatgpt",
+        email: "unit@example.com",
+        planType: "pro",
+        authMode: "chatgpt",
+      },
+    });
+
+    ws.close();
+  });
 });
 
 function fakeSessionManager(): CodexSessionManager & {
@@ -265,6 +330,10 @@ function fakeSessionManager(): CodexSessionManager & {
   goalClears: string[];
   approvals: Array<{ sessionId: string; approvalId: string; decision: "approve" | "reject" }>;
   importedAppThreads: string[];
+  accountReads: boolean[];
+  accountLoginStarts: Array<Record<string, unknown>>;
+  accountLoginCancels: string[];
+  accountLogouts: number;
 } {
   const requestedFiles: Array<{ sessionId: string; path: string }> = [];
   const fileSearches: Array<{ sessionId: string; query?: string; limit?: number }> = [];
@@ -273,6 +342,10 @@ function fakeSessionManager(): CodexSessionManager & {
   const goalClears: string[] = [];
   const approvals: Array<{ sessionId: string; approvalId: string; decision: "approve" | "reject" }> = [];
   const importedAppThreads: string[] = [];
+  const accountReads: boolean[] = [];
+  const accountLoginStarts: Array<Record<string, unknown>> = [];
+  const accountLoginCancels: string[] = [];
+  let accountLogouts = 0;
   let listener: ((event: unknown) => void) | undefined;
   return {
     requestedFiles,
@@ -282,6 +355,12 @@ function fakeSessionManager(): CodexSessionManager & {
     goalClears,
     approvals,
     importedAppThreads,
+    accountReads,
+    accountLoginStarts,
+    accountLoginCancels,
+    get accountLogouts() {
+      return accountLogouts;
+    },
     onEvent: (callback: (event: unknown) => void) => {
       listener = callback;
       return () => {
@@ -400,6 +479,65 @@ function fakeSessionManager(): CodexSessionManager & {
       runId: "review-1",
       reviewThreadId: "thread-review",
     }),
+    getCodexAccount: async (refreshToken?: boolean) => {
+      accountReads.push(refreshToken === true);
+      return {
+        accountType: "chatgpt",
+        email: "unit@example.com",
+        planType: "pro",
+        authMode: "chatgpt",
+        requiresOpenaiAuth: false,
+      };
+    },
+    readCodexAccount: async (refreshToken?: boolean) => {
+      accountReads.push(refreshToken === true);
+      return {
+        type: "app.account.status",
+        account: {
+          accountType: "chatgpt",
+          email: "unit@example.com",
+          planType: "pro",
+          authMode: "chatgpt",
+          requiresOpenaiAuth: false,
+        },
+      };
+    },
+    startCodexAccountLogin: async (input: Record<string, unknown>) => {
+      accountLoginStarts.push({ ...input });
+      if (input.type === "chatgptDeviceCode") {
+        const flow = {
+          type: "chatgptDeviceCode",
+          loginId: "login-device",
+          verificationUrl: "https://auth.openai.com/activate",
+          userCode: "CODE-123",
+        };
+        listener?.({ type: "app.account.login.completed", loginId: "login-device", success: true, error: null });
+        return { type: "app.account.login.started", flow };
+      }
+      if (input.type === "chatgpt") {
+        return {
+          type: "app.account.login.started",
+          flow: {
+            type: "chatgpt",
+            loginId: "login-browser",
+            authUrl: "https://chatgpt.com/backend-api/codex/login?state=unit",
+          },
+        };
+      }
+      return { type: "app.account.login.started", flow: { type: "apiKey" } };
+    },
+    cancelCodexAccountLogin: async (loginId: string) => {
+      accountLoginCancels.push(loginId);
+      return { type: "app.account.login.cancelled", loginId, status: "canceled" };
+    },
+    logoutCodexAccount: async () => {
+      accountLogouts += 1;
+      listener?.({ type: "app.account.updated", account: { accountType: null, authMode: null, requiresOpenaiAuth: true } });
+      return {
+        type: "app.account.status",
+        account: { accountType: null, authMode: null, requiresOpenaiAuth: true },
+      };
+    },
     listSessions: () => [
       {
         sessionId: "s1",
@@ -424,6 +562,10 @@ function fakeSessionManager(): CodexSessionManager & {
     goalClears: string[];
     approvals: Array<{ sessionId: string; approvalId: string; decision: "approve" | "reject" }>;
     importedAppThreads: string[];
+    accountReads: boolean[];
+    accountLoginStarts: Array<Record<string, unknown>>;
+    accountLoginCancels: string[];
+    accountLogouts: number;
   };
 }
 

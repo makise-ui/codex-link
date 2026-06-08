@@ -272,6 +272,36 @@ export async function startBridgeServer(options) {
                 }));
                 return;
             }
+            case "app.account.read": {
+                send(ws, await options.sessionManager.readCodexAccount(message.refreshToken));
+                return;
+            }
+            case "app.account.login.start": {
+                if (message.loginType === "apiKey") {
+                    const apiKey = message.apiKey?.trim();
+                    if (!apiKey)
+                        throw new Error("API key is required for Codex API-key login.");
+                    send(ws, await options.sessionManager.startCodexAccountLogin({ type: "apiKey", apiKey }));
+                    return;
+                }
+                if (message.loginType === "chatgpt") {
+                    send(ws, await options.sessionManager.startCodexAccountLogin({
+                        type: "chatgpt",
+                        codexStreamlinedLogin: message.codexStreamlinedLogin,
+                    }));
+                    return;
+                }
+                send(ws, await options.sessionManager.startCodexAccountLogin({ type: "chatgptDeviceCode" }));
+                return;
+            }
+            case "app.account.login.cancel": {
+                send(ws, await options.sessionManager.cancelCodexAccountLogin(message.loginId));
+                return;
+            }
+            case "app.account.logout": {
+                send(ws, await options.sessionManager.logoutCodexAccount());
+                return;
+            }
             case "command.list": {
                 sendCommandList(ws);
                 return;
@@ -344,6 +374,7 @@ export async function startBridgeServer(options) {
         sendSessionList(ws);
         sendWorkspaceList(ws);
         sendCommandList(ws);
+        void sendCodexAccountStatus(ws).catch(() => undefined);
         const activeSessionId = options.sessionManager.getActiveSessionId();
         if (activeSessionId)
             sendSessionHistory(ws, activeSessionId);
@@ -372,6 +403,9 @@ export async function startBridgeServer(options) {
     }
     function sendCommandList(ws) {
         send(ws, { type: "command.list", commands: COMMAND_CATALOG });
+    }
+    async function sendCodexAccountStatus(ws) {
+        send(ws, await options.sessionManager.readCodexAccount(false));
     }
     function broadcast(message) {
         for (const [client, state] of clients) {

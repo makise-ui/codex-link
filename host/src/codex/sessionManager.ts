@@ -4,8 +4,8 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { AppFileSearchResultsMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppModelListMessage, AppModelRecord, AppProviderCapabilitiesRecord, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, StoredChatMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
-import type { CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptResult } from "./codexSession.js";
+import type { AppAccountLoginCancelledMessage, AppAccountLoginStartedMessage, AppAccountStatusMessage, AppFileSearchResultsMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppModelListMessage, AppModelRecord, AppProviderCapabilitiesRecord, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, CodexAccountInfo, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, StoredChatMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { AccountLoginStartInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptResult } from "./codexSession.js";
 import { AppServerCodexSession } from "./appServerCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
 import { FileTransferManager, mimeTypeFor } from "./fileTransferManager.js";
@@ -269,6 +269,57 @@ export class CodexSessionManager {
       sessionId: record.sessionId,
       runId: `mock-review-${Date.now()}`,
       reviewThreadId: record.codexThreadId ?? record.sessionId,
+    };
+  }
+
+  async getCodexAccount(refreshToken = false): Promise<CodexAccountInfo> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.getAccount) {
+      throw new Error("The active Codex adapter does not support account auth.");
+    }
+    return adapter.getAccount(refreshToken);
+  }
+
+  async readCodexAccount(refreshToken = false): Promise<AppAccountStatusMessage> {
+    return {
+      type: "app.account.status",
+      account: await this.getCodexAccount(refreshToken),
+    };
+  }
+
+  async startCodexAccountLogin(input: AccountLoginStartInput): Promise<AppAccountLoginStartedMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.startAccountLogin) {
+      throw new Error("The active Codex adapter does not support account login.");
+    }
+    return {
+      type: "app.account.login.started",
+      flow: await adapter.startAccountLogin(input),
+    };
+  }
+
+  async cancelCodexAccountLogin(loginId: string): Promise<AppAccountLoginCancelledMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.cancelAccountLogin) {
+      throw new Error("The active Codex adapter does not support account login cancel.");
+    }
+    const result = await adapter.cancelAccountLogin(loginId);
+    return {
+      type: "app.account.login.cancelled",
+      loginId,
+      status: result.status,
+    };
+  }
+
+  async logoutCodexAccount(): Promise<AppAccountStatusMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.logoutAccount) {
+      throw new Error("The active Codex adapter does not support account logout.");
+    }
+    await adapter.logoutAccount();
+    return {
+      type: "app.account.status",
+      account: await this.getCodexAccount(false),
     };
   }
 

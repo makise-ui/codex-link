@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "../src/protocol/messages.js";
 import { parseClientMessage } from "../src/protocol/schemas.js";
 describe("protocol schemas", () => {
-    it("uses protocol version 7", () => {
-        expect(PROTOCOL_VERSION).toBe(7);
+    it("uses protocol version 8", () => {
+        expect(PROTOCOL_VERSION).toBe(8);
     });
     it("accepts a valid prompt", () => {
         expect(parseClientMessage({
@@ -148,6 +148,26 @@ describe("protocol schemas", () => {
             sessionId: "s1",
             target: "uncommittedChanges",
             delivery: "inline",
+        });
+        expect(parseClientMessage({ type: "app.account.read", refreshToken: true })).toEqual({
+            type: "app.account.read",
+            refreshToken: true,
+        });
+        expect(parseClientMessage({ type: "app.account.login.start", loginType: "chatgptDeviceCode" })).toEqual({
+            type: "app.account.login.start",
+            loginType: "chatgptDeviceCode",
+        });
+        expect(parseClientMessage({ type: "app.account.login.start", loginType: "apiKey", apiKey: "sk-unit" })).toEqual({
+            type: "app.account.login.start",
+            loginType: "apiKey",
+            apiKey: "sk-unit",
+        });
+        expect(parseClientMessage({ type: "app.account.login.cancel", loginId: "login-1" })).toEqual({
+            type: "app.account.login.cancel",
+            loginId: "login-1",
+        });
+        expect(parseClientMessage({ type: "app.account.logout" })).toEqual({
+            type: "app.account.logout",
         });
     });
     it("accepts file request client messages", () => {

@@ -96,13 +96,17 @@ void main() {
     );
 
     expect(find.text('Connection'), findsOneWidget);
+    expect(find.text('Codex Account'), findsOneWidget);
     expect(find.text('Mode'), findsOneWidget);
-    expect(find.text('Model'), findsWidgets);
     expect(find.text('Workspace'), findsNothing);
     expect(find.text('Skills'), findsNothing);
     expect(find.text('Files'), findsNothing);
     expect(find.text('Review'), findsNothing);
     expect(find.text('External Codex sessions'), findsNothing);
+
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -640));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Model'), findsWidgets);
 
     await tester.scrollUntilVisible(
       find.text('Appearance'),
@@ -110,6 +114,132 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Appearance'), findsOneWidget);
+  });
+
+  testWidgets('settings renders Codex account login controls', (tester) async {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Account',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      })
+      ..handleBridgeMessageForTest({
+        'type': 'app.account.status',
+        'account': {
+          'accountType': 'chatgpt',
+          'email': 'unit@example.com',
+          'planType': 'pro',
+          'authMode': 'chatgpt',
+          'requiresOpenaiAuth': false,
+        },
+      })
+      ..handleBridgeMessageForTest({
+        'type': 'app.account.login.started',
+        'flow': {
+          'type': 'chatgptDeviceCode',
+          'loginId': 'login-device',
+          'verificationUrl': 'https://auth.openai.com/activate',
+          'userCode': 'CODE-123',
+        },
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildCodexTheme(),
+          home: const SettingsScreen(),
+        ),
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Codex Account'),
+      420,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('unit@example.com'), findsOneWidget);
+    expect(find.text('CODE-123'), findsOneWidget);
+    expect(find.text('Device code'), findsOneWidget);
+    await tester.tap(find.text('Device code'));
+    await tester.pump();
+
+    expect(socket.sentMessages.last, {
+      'type': 'app.account.login.start',
+      'loginType': 'chatgptDeviceCode',
+    });
+  });
+
+  testWidgets('api key dialog cancel closes without sending login', (
+    tester,
+  ) async {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Account',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildCodexTheme(),
+          home: const SettingsScreen(),
+        ),
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('API key'),
+      420,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('API key'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 240));
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 240));
+
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(
+      socket.sentMessages.where(
+        (message) => message['type'] == 'app.account.login.start',
+      ),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('settings can switch between dark and light modes', (

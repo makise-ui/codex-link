@@ -277,6 +277,56 @@ rl.on("line", (line) => {
     respond(message.id, { cleared: true });
     return;
   }
+  if (message.method === "account/read") {
+    respond(message.id, {
+      account: { type: "chatgpt", email: "unit@example.com", planType: "pro" },
+      requiresOpenaiAuth: false,
+    });
+    return;
+  }
+  if (message.method === "getAuthStatus") {
+    respond(message.id, {
+      authMethod: "chatgpt",
+      authToken: message.params.includeToken ? "redacted-token" : null,
+      requiresOpenaiAuth: false,
+    });
+    return;
+  }
+  if (message.method === "account/login/start") {
+    if (message.params.type === "chatgptDeviceCode") {
+      respond(message.id, {
+        type: "chatgptDeviceCode",
+        loginId: "login-device",
+        verificationUrl: "https://auth.openai.com/activate",
+        userCode: "CODE-123",
+      });
+      write({ method: "account/login/completed", params: { loginId: "login-device", success: true, error: null } });
+      write({ method: "account/updated", params: { authMode: "chatgpt", planType: "pro" } });
+      return;
+    }
+    if (message.params.type === "chatgpt") {
+      respond(message.id, {
+        type: "chatgpt",
+        loginId: "login-browser",
+        authUrl: "https://chatgpt.com/backend-api/codex/login?state=unit",
+      });
+      return;
+    }
+    if (message.params.type === "apiKey") {
+      respond(message.id, { type: "apiKey" });
+      write({ method: "account/updated", params: { authMode: "apikey", planType: null } });
+      return;
+    }
+  }
+  if (message.method === "account/login/cancel") {
+    respond(message.id, { status: message.params.loginId === "missing" ? "notFound" : "canceled" });
+    return;
+  }
+  if (message.method === "account/logout") {
+    respond(message.id, {});
+    write({ method: "account/updated", params: { authMode: null, planType: null } });
+    return;
+  }
   respond(message.id, {});
 });
 `;
@@ -339,6 +389,49 @@ describe("AppServerCodexSession", () => {
             type: "session.goal.cleared",
             sessionId: session.sessionId,
         });
+        await session.close();
+    });
+    it("reads account status and starts native account login flows", async () => {
+        const session = new AppServerCodexSession({
+            command: process.execPath,
+            argsPrefix: ["-e", fakeAppServerScript],
+            workdir: process.cwd(),
+        });
+        const events = [];
+        session.onEvent((event) => events.push(event));
+        const account = await session.getAccount();
+        const deviceFlow = await session.startAccountLogin({ type: "chatgptDeviceCode" });
+        const browserFlow = await session.startAccountLogin({ type: "chatgpt" });
+        const apiKeyFlow = await session.startAccountLogin({ type: "apiKey", apiKey: "sk-unit-secret" });
+        const cancel = await session.cancelAccountLogin("login-device");
+        await session.logoutAccount();
+        expect(account).toMatchObject({
+            accountType: "chatgpt",
+            email: "unit@example.com",
+            planType: "pro",
+            authMode: "chatgpt",
+            requiresOpenaiAuth: false,
+        });
+        expect(deviceFlow).toMatchObject({
+            type: "chatgptDeviceCode",
+            loginId: "login-device",
+            verificationUrl: "https://auth.openai.com/activate",
+            userCode: "CODE-123",
+        });
+        expect(browserFlow).toMatchObject({
+            type: "chatgpt",
+            loginId: "login-browser",
+            authUrl: "https://chatgpt.com/backend-api/codex/login?state=unit",
+        });
+        expect(apiKeyFlow).toMatchObject({ type: "apiKey" });
+        expect(cancel).toEqual({ status: "canceled" });
+        expect(events).toContainEqual({
+            type: "app.account.login.completed",
+            loginId: "login-device",
+            success: true,
+            error: null,
+        });
+        expect(events.some((event) => event.type === "app.account.updated")).toBe(true);
         await session.close();
     });
     it("exposes native app-server models, threads, skills, filesystem, fuzzy search, and review", async () => {

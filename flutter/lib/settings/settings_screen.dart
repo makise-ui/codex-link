@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app_controller.dart';
 import '../protocol/bridge_messages.dart';
 import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 
-enum SettingsSection { connection, updates, mode, model, appearance }
+enum SettingsSection { connection, account, updates, mode, model, appearance }
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.initialSection});
@@ -29,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       final controller = context.read<AppController>();
       controller.refreshAppModels();
+      controller.refreshCodexAccount();
       final target = widget.initialSection;
       final sectionContext = target == null
           ? null
@@ -122,6 +124,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                 ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                key: _sectionKeys[SettingsSection.account],
+                title: 'Codex Account',
+                children: [_CodexAccountSection(controller: controller)],
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
@@ -220,6 +228,255 @@ class _UpdateSection extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CodexAccountSection extends StatelessWidget {
+  const _CodexAccountSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final account = controller.codexAccount;
+    final login = controller.activeCodexLogin;
+    final signedIn = account?.isSignedIn == true;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.md,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingRow(
+            icon: signedIn
+                ? Icons.verified_user_rounded
+                : Icons.person_off_rounded,
+            title: account?.email?.trim().isNotEmpty == true
+                ? account!.email!.trim()
+                : account?.displayLabel ?? 'Not signed in',
+            subtitle: _accountSubtitle(account),
+            trailing: controller.codexAccountBusy
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : TextButton(
+                    onPressed: () =>
+                        controller.refreshCodexAccount(refreshToken: true),
+                    child: const Text('Refresh'),
+                  ),
+          ),
+          if (controller.codexAccountErrorText?.trim().isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.only(
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+                bottom: AppSpacing.sm,
+              ),
+              child: Text(
+                controller.codexAccountErrorText!.trim(),
+                style: const TextStyle(color: CodexColors.danger),
+              ),
+            ),
+          if (login != null) ...[
+            _ActiveLoginCard(controller: controller, login: login),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: controller.codexAccountBusy
+                    ? null
+                    : controller.startCodexDeviceLogin,
+                icon: const Icon(Icons.password_rounded, size: 17),
+                label: const Text('Device code'),
+              ),
+              OutlinedButton.icon(
+                onPressed: controller.codexAccountBusy
+                    ? null
+                    : controller.startCodexBrowserLogin,
+                icon: const Icon(Icons.open_in_browser_rounded, size: 17),
+                label: const Text('Browser'),
+              ),
+              OutlinedButton.icon(
+                onPressed: controller.codexAccountBusy
+                    ? null
+                    : () => _showApiKeyDialog(context, controller),
+                icon: const Icon(Icons.key_rounded, size: 17),
+                label: const Text('API key'),
+              ),
+              if (signedIn)
+                TextButton.icon(
+                  onPressed: controller.codexAccountBusy
+                      ? null
+                      : controller.logoutCodexAccount,
+                  icon: const Icon(Icons.logout_rounded, size: 17),
+                  label: const Text('Logout'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActiveLoginCard extends StatelessWidget {
+  const _ActiveLoginCard({required this.controller, required this.login});
+
+  final AppController controller;
+  final CodexAccountLoginFlow login;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = login.verificationUrl ?? login.authUrl;
+    final code = login.userCode;
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: codexComposerColor(context),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: CodexColors.borderSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                login.isDeviceCode
+                    ? Icons.password_rounded
+                    : Icons.open_in_browser_rounded,
+                size: 18,
+                color: codexMutedColor(context),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  login.isDeviceCode ? 'Device login' : 'Browser login',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (login.loginId?.isNotEmpty == true)
+                IconButton(
+                  tooltip: 'Cancel login',
+                  onPressed: () => controller.cancelCodexLogin(login.loginId!),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                ),
+            ],
+          ),
+          if (code?.isNotEmpty == true) ...[
+            const SizedBox(height: AppSpacing.sm),
+            SelectableText(
+              code!,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontFamily: 'monospace',
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+          if (url?.isNotEmpty == true) ...[
+            const SizedBox(height: AppSpacing.xs),
+            SelectableText(
+              url!,
+              style: TextStyle(
+                color: codexMutedColor(context),
+                fontFamily: 'monospace',
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _openUrl(url),
+                icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                label: const Text('Open'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _showApiKeyDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  final apiKey = await showDialog<String>(
+    context: context,
+    builder: (context) => const _ApiKeyDialog(),
+  );
+  if (apiKey == null) return;
+  controller.loginCodexWithApiKey(apiKey);
+}
+
+class _ApiKeyDialog extends StatefulWidget {
+  const _ApiKeyDialog();
+
+  @override
+  State<_ApiKeyDialog> createState() => _ApiKeyDialogState();
+}
+
+class _ApiKeyDialogState extends State<_ApiKeyDialog> {
+  final _keyController = TextEditingController();
+
+  @override
+  void dispose() {
+    _keyController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_keyController.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('API key'),
+      content: TextField(
+        controller: _keyController,
+        autofocus: true,
+        obscureText: true,
+        decoration: const InputDecoration(
+          prefixIcon: Icon(Icons.key_rounded),
+          labelText: 'OpenAI API key',
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+Future<void> _openUrl(String rawUrl) async {
+  final uri = Uri.tryParse(rawUrl);
+  if (uri == null) return;
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+String _accountSubtitle(CodexAccountInfo? account) {
+  if (account == null) return 'Host Codex account status is unknown.';
+  final parts = [
+    if (account.authMode?.trim().isNotEmpty == true) 'auth ${account.authMode}',
+    if (account.planType?.trim().isNotEmpty == true) 'plan ${account.planType}',
+    account.requiresOpenaiAuth ? 'auth required' : 'ready',
+  ];
+  return parts.join(' · ');
 }
 
 String _updateTitle(UpdateCheckStatus status, AppUpdateInfo? update) {

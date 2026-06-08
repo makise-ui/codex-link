@@ -144,6 +144,37 @@ export class AppServerCodexSession {
             reviewThreadId: result.reviewThreadId,
         };
     }
+    async getAccount(refreshToken = false) {
+        await this.ensureInitialized();
+        const accountResult = await this.request("account/read", { refreshToken });
+        let authStatus;
+        try {
+            authStatus = await this.request("getAuthStatus", { includeToken: false, refreshToken: false });
+        }
+        catch {
+            authStatus = undefined;
+        }
+        return normalizeAccount(accountResult, authStatus);
+    }
+    async startAccountLogin(input) {
+        await this.ensureInitialized();
+        const params = input.type === "apiKey"
+            ? { type: "apiKey", apiKey: input.apiKey.trim() }
+            : input.type === "chatgpt"
+                ? { type: "chatgpt", ...(input.codexStreamlinedLogin === undefined ? {} : { codexStreamlinedLogin: input.codexStreamlinedLogin }) }
+                : { type: "chatgptDeviceCode" };
+        const result = await this.request("account/login/start", params);
+        return normalizeLoginFlow(result);
+    }
+    async cancelAccountLogin(loginId) {
+        await this.ensureInitialized();
+        const result = await this.request("account/login/cancel", { loginId });
+        return normalizeCancelLogin(result);
+    }
+    async logoutAccount() {
+        await this.ensureInitialized();
+        await this.request("account/logout", undefined);
+    }
     async setGoal(input) {
         const threadId = await this.ensureThread();
         const result = await this.request("thread/goal/set", {
@@ -391,6 +422,20 @@ export class AppServerCodexSession {
                 return;
             case "thread/goal/cleared":
                 this.emit({ type: "session.goal.cleared", sessionId: this.sessionId });
+                return;
+            case "account/updated":
+                this.emit({
+                    type: "app.account.updated",
+                    account: normalizeAccountUpdate(params),
+                });
+                return;
+            case "account/login/completed":
+                this.emit({
+                    type: "app.account.login.completed",
+                    loginId: readString(params, "loginId") ?? null,
+                    success: params.success === true,
+                    error: readString(params, "error") ?? null,
+                });
                 return;
             case "turn/started":
                 this.handleTurnStarted(params);
@@ -836,6 +881,78 @@ function formatChanges(changes) {
     ])
         .filter(Boolean)
         .join("\n");
+}
+function normalizeAccount(value, authStatusValue) {
+    const record = safeRecord(value);
+    const account = safeRecord(record.account);
+    const authStatus = safeRecord(authStatusValue);
+    const accountType = normalizeAccountType(readString(account, "type"));
+    const authMode = normalizeAuthMode(readString(authStatus, "authMethod")) ?? authModeFromAccountType(accountType);
+    return {
+        accountType,
+        email: readString(account, "email"),
+        planType: readString(account, "planType") ?? null,
+        authMode,
+        requiresOpenaiAuth: record.requiresOpenaiAuth === true || authStatus.requiresOpenaiAuth === true,
+    };
+}
+function normalizeAccountUpdate(value) {
+    const record = safeRecord(value);
+    const authMode = normalizeAuthMode(readString(record, "authMode"));
+    return {
+        accountType: accountTypeFromAuthMode(authMode),
+        planType: readString(record, "planType") ?? null,
+        authMode,
+        requiresOpenaiAuth: authMode === null,
+    };
+}
+function normalizeLoginFlow(value) {
+    const record = safeRecord(value);
+    const type = readString(record, "type");
+    if (type === "apiKey")
+        return { type: "apiKey" };
+    if (type === "chatgpt") {
+        return {
+            type: "chatgpt",
+            loginId: readString(record, "loginId") ?? "",
+            authUrl: readString(record, "authUrl") ?? "",
+        };
+    }
+    if (type === "chatgptDeviceCode") {
+        return {
+            type: "chatgptDeviceCode",
+            loginId: readString(record, "loginId") ?? "",
+            verificationUrl: readString(record, "verificationUrl") ?? "",
+            userCode: readString(record, "userCode") ?? "",
+        };
+    }
+    if (type === "chatgptAuthTokens")
+        return { type: "chatgptAuthTokens" };
+    throw new Error(`Unsupported account login response: ${type ?? "unknown"}`);
+}
+function normalizeCancelLogin(value) {
+    const status = readString(safeRecord(value), "status");
+    return { status: status === "notFound" ? "notFound" : "canceled" };
+}
+function normalizeAccountType(value) {
+    return value === "apiKey" || value === "chatgpt" || value === "amazonBedrock" ? value : null;
+}
+function normalizeAuthMode(value) {
+    return value === "apikey" || value === "chatgpt" || value === "chatgptAuthTokens" || value === "agentIdentity" ? value : null;
+}
+function authModeFromAccountType(accountType) {
+    if (accountType === "apiKey")
+        return "apikey";
+    if (accountType === "chatgpt")
+        return "chatgpt";
+    return null;
+}
+function accountTypeFromAuthMode(authMode) {
+    if (authMode === "apikey")
+        return "apiKey";
+    if (authMode === "chatgpt" || authMode === "chatgptAuthTokens")
+        return "chatgpt";
+    return null;
 }
 function normalizeGoal(value) {
     const record = safeRecord(value);
