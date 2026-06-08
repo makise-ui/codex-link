@@ -128,6 +128,7 @@ class CodexSessionInfo {
     String? workdir,
     String? lastStatus,
     String? activeRunId,
+    bool clearActiveRunId = false,
     String? model,
     String? reasoningEffort,
   }) {
@@ -140,7 +141,7 @@ class CodexSessionInfo {
       lastStatus: lastStatus ?? this.lastStatus,
       mode: mode,
       sandbox: sandbox,
-      activeRunId: activeRunId ?? this.activeRunId,
+      activeRunId: clearActiveRunId ? null : activeRunId ?? this.activeRunId,
       codexThreadId: codexThreadId,
       model: model ?? this.model,
       reasoningEffort: reasoningEffort ?? this.reasoningEffort,

@@ -31,6 +31,9 @@ void main() {
 
     expect(find.text('Thinking'), findsOneWidget);
     expect(find.byKey(const ValueKey('thinking-inline-row')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thinking-wave-dot-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thinking-wave-dot-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thinking-wave-dot-2')), findsOneWidget);
     expect(find.byKey(const ValueKey('activity-card')), findsNothing);
   });
 

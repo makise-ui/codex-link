@@ -25,6 +25,7 @@ class AppController extends ChangeNotifier {
   String? activeRunId;
   String? _pendingUrl;
   int _connectGeneration = 0;
+  final Map<String, String> _activeRunIdsBySession = {};
 
   final List<CodexSessionInfo> sessions = [];
   final List<WorkspaceInfo> workspaces = [];
@@ -52,8 +53,12 @@ class AppController extends ChangeNotifier {
   bool get isOffline => phase == ConnectionPhase.offline;
   bool get canShowChat =>
       phase == ConnectionPhase.connected || phase == ConnectionPhase.offline;
-  bool get isRunning =>
-      isConnected && (activeSession?.isRunning == true || activeRunId != null);
+  bool get isRunning {
+    final session = activeSession;
+    if (!isConnected || session == null) return false;
+    return session.isRunning ||
+        _activeRunIdForSession(session.sessionId) != null;
+  }
 
   Future<void> loadSavedCredentials() async {
     credentials = await _store.load();
@@ -149,6 +154,7 @@ class AppController extends ChangeNotifier {
 
   void selectSession(String sessionId) {
     activeSessionId = sessionId;
+    _syncActiveRunId();
     clearFileSuggestions();
     _send({'type': 'session.start', 'sessionId': sessionId});
     _send({'type': 'workspace.list'});
@@ -361,7 +367,7 @@ class AppController extends ChangeNotifier {
 
   void cancelRun() {
     final sessionId = activeSession?.sessionId;
-    final runId = activeSession?.activeRunId ?? activeRunId;
+    final runId = _activeRunIdForSession(sessionId);
     if (sessionId == null || runId == null) return;
     _send({'type': 'run.cancel', 'sessionId': sessionId, 'runId': runId});
   }
@@ -446,6 +452,7 @@ class AppController extends ChangeNotifier {
             message['detail'] as String? ??
             message['status'] as String? ??
             statusText;
+        _applyStatusMessage(message);
         break;
       case 'host.info':
         hostInfo = HostInfo.fromJson(message);
@@ -506,10 +513,10 @@ class AppController extends ChangeNotifier {
           );
         break;
       case 'run.started':
-        activeRunId = message['runId'] as String?;
+        _markRunStarted(message);
         break;
       case 'run.completed':
-        activeRunId = null;
+        _markRunCompleted(message);
         break;
       case 'message.started':
         _startAgentMessage(message);
@@ -590,7 +597,17 @@ class AppController extends ChangeNotifier {
         (sessions.isEmpty ? null : sessions.first.sessionId);
     for (final session in sessions) {
       messagesBySession.putIfAbsent(session.sessionId, () => []);
+      if (session.activeRunId case final runId?) {
+        _activeRunIdsBySession[session.sessionId] = runId;
+      } else if (!session.isRunning) {
+        _activeRunIdsBySession.remove(session.sessionId);
+      }
     }
+    _activeRunIdsBySession.removeWhere(
+      (sessionId, _) =>
+          !sessions.any((session) => session.sessionId == sessionId),
+    );
+    _syncActiveRunId();
   }
 
   void _replaceMessageHistory(Map<String, dynamic> message) {
@@ -633,21 +650,28 @@ class AppController extends ChangeNotifier {
     } else {
       sessions.insert(0, session);
     }
+    if (session.activeRunId case final runId?) {
+      _activeRunIdsBySession[session.sessionId] = runId;
+    } else if (!session.isRunning) {
+      _activeRunIdsBySession.remove(session.sessionId);
+    }
     activeSessionId ??= session.sessionId;
+    _syncActiveRunId();
     messagesBySession.putIfAbsent(session.sessionId, () => []);
   }
 
   void _deleteLocalSession(String sessionId) {
     sessions.removeWhere((session) => session.sessionId == sessionId);
     messagesBySession.remove(sessionId);
+    _activeRunIdsBySession.remove(sessionId);
     if (activeSessionId == sessionId) {
       activeSessionId = sessions.isEmpty ? null : sessions.first.sessionId;
     }
+    _syncActiveRunId();
   }
 
   void _startAgentMessage(Map<String, dynamic> message) {
-    final sessionId =
-        message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId = _sessionIdForMessage(message);
     if (sessionId == null) return;
     final kind = kindFromWire(message['kind'] as String?);
     final id = message['messageId'] as String? ?? _uuid.v4();
@@ -671,8 +695,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _appendAgentDelta(Map<String, dynamic> message) {
-    final sessionId =
-        message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId = _sessionIdForMessage(message);
     if (sessionId == null) return;
     final messageId = message['messageId'] as String?;
     final text = message['text'] as String? ?? '';
@@ -701,8 +724,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _completeAgentMessage(Map<String, dynamic> message) {
-    final sessionId =
-        message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId = _sessionIdForMessage(message);
     if (sessionId == null) return;
     final messageId = message['messageId'] as String?;
     final list = messagesBySession[sessionId];
@@ -714,8 +736,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _handleLegacyOutput(Map<String, dynamic> message) {
-    final sessionId =
-        message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId = _sessionIdForMessage(message);
     if (sessionId == null) return;
     final stream = message['stream'] as String? ?? 'system';
     if (stream == 'assistant') return;
@@ -736,8 +757,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _appendFileChangeEvent(Map<String, dynamic> message) {
-    final sessionId =
-        message['sessionId'] as String? ?? activeSession?.sessionId;
+    final sessionId = _sessionIdForMessage(message);
     if (sessionId == null) return;
     final files = message['files'] as List<dynamic>? ?? const [];
     final lines = files
@@ -851,6 +871,107 @@ class AppController extends ChangeNotifier {
             createdAt: DateTime.now(),
           ),
         );
+  }
+
+  void _markRunStarted(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    final runId = message['runId'] as String?;
+    if (sessionId == null || runId == null || runId.isEmpty) return;
+    _activeRunIdsBySession[sessionId] = runId;
+    _updateSessionRunState(
+      sessionId,
+      activeRunId: runId,
+      lastStatus: 'running',
+    );
+    _syncActiveRunId();
+  }
+
+  void _markRunCompleted(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    if (sessionId == null) return;
+    _clearSessionRun(sessionId, message['runId'] as String?);
+  }
+
+  void _applyStatusMessage(Map<String, dynamic> message) {
+    final status = message['status'] as String?;
+    if (status == null) return;
+    final sessionId = _sessionIdForMessage(message);
+    if (sessionId == null) return;
+    final runId = message['runId'] as String?;
+    if ((status == 'running' || status == 'cancelling') &&
+        runId != null &&
+        runId.isNotEmpty) {
+      _activeRunIdsBySession[sessionId] = runId;
+      _updateSessionRunState(sessionId, activeRunId: runId, lastStatus: status);
+      _syncActiveRunId();
+      return;
+    }
+    if (status == 'completed' || status == 'failed' || status == 'cancelled') {
+      _clearSessionRun(sessionId, runId, lastStatus: status);
+    }
+  }
+
+  void _clearSessionRun(String sessionId, String? runId, {String? lastStatus}) {
+    final currentRunId = _activeRunIdsBySession[sessionId];
+    if (runId == null ||
+        runId.isEmpty ||
+        currentRunId == null ||
+        currentRunId == runId) {
+      _activeRunIdsBySession.remove(sessionId);
+      _updateSessionRunState(
+        sessionId,
+        clearActiveRunId: true,
+        lastStatus: lastStatus,
+      );
+      _syncActiveRunId();
+    }
+  }
+
+  void _updateSessionRunState(
+    String sessionId, {
+    String? activeRunId,
+    bool clearActiveRunId = false,
+    String? lastStatus,
+  }) {
+    final index = sessions.indexWhere(
+      (session) => session.sessionId == sessionId,
+    );
+    if (index < 0) return;
+    sessions[index] = sessions[index].copyWith(
+      activeRunId: activeRunId,
+      clearActiveRunId: clearActiveRunId,
+      lastStatus: lastStatus,
+    );
+  }
+
+  String? _sessionIdForMessage(Map<String, dynamic> message) {
+    final explicitSessionId = message['sessionId'] as String?;
+    if (explicitSessionId != null && explicitSessionId.isNotEmpty) {
+      return explicitSessionId;
+    }
+    final runId = message['runId'] as String?;
+    if (runId != null && runId.isNotEmpty) {
+      for (final entry in _activeRunIdsBySession.entries) {
+        if (entry.value == runId) return entry.key;
+      }
+      for (final session in sessions) {
+        if (session.activeRunId == runId) return session.sessionId;
+      }
+    }
+    return activeSession?.sessionId;
+  }
+
+  String? _activeRunIdForSession(String? sessionId) {
+    if (sessionId == null) return null;
+    return _activeRunIdsBySession[sessionId] ??
+        sessions
+            .where((session) => session.sessionId == sessionId)
+            .firstOrNull
+            ?.activeRunId;
+  }
+
+  void _syncActiveRunId() {
+    activeRunId = _activeRunIdForSession(activeSessionId);
   }
 }
 

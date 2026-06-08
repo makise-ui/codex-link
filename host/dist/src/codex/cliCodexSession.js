@@ -76,7 +76,7 @@ export class CliCodexSession {
         this.emit({ type: "status", status: "cancelling", sessionId: this.sessionId, runId });
         active.child.kill("SIGINT");
         setTimeout(() => {
-            if (!active.finished && !active.child.killed) {
+            if (!active.finished) {
                 active.child.kill("SIGTERM");
             }
         }, this.cancelGraceMs).unref();

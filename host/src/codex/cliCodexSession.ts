@@ -118,7 +118,7 @@ export class CliCodexSession implements CodexSession {
     active.child.kill("SIGINT");
 
     setTimeout(() => {
-      if (!active.finished && !active.child.killed) {
+      if (!active.finished) {
         active.child.kill("SIGTERM");
       }
     }, this.cancelGraceMs).unref();

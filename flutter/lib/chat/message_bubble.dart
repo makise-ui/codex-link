@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -436,8 +437,23 @@ class _ThinkingLineState extends State<_ThinkingLine>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: AppMotion.pulse)
-      ..repeat();
+    _controller = AnimationController(vsync: this, duration: AppMotion.pulse);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    final disableAnimations =
+        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (disableAnimations) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
   }
 
   @override
@@ -698,25 +714,67 @@ class _ThinkingDots extends StatelessWidget {
     return AnimatedBuilder(
       animation: animation,
       builder: (context, _) {
-        final activeDot = (animation.value * 3).floor().clamp(0, 2);
+        final disableAnimations =
+            MediaQuery.maybeDisableAnimationsOf(context) ?? false;
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (var index = 0; index < 3; index++)
-              Container(
-                width: 4,
-                height: 4,
-                margin: const EdgeInsets.only(right: AppSpacing.xs),
-                decoration: BoxDecoration(
-                  color: index == activeDot
-                      ? CodexColors.text
-                      : CodexColors.dim,
-                  shape: BoxShape.circle,
-                ),
+            for (var index = 0; index < 3; index++) ...[
+              _WaveDot(
+                key: ValueKey('thinking-wave-dot-$index'),
+                animationValue: animation.value,
+                index: index,
+                disableAnimations: disableAnimations,
               ),
+              if (index < 2) const SizedBox(width: AppSpacing.xs),
+            ],
           ],
         );
       },
+    );
+  }
+}
+
+class _WaveDot extends StatelessWidget {
+  const _WaveDot({
+    super.key,
+    required this.animationValue,
+    required this.index,
+    required this.disableAnimations,
+  });
+
+  final double animationValue;
+  final int index;
+  final bool disableAnimations;
+
+  @override
+  Widget build(BuildContext context) {
+    final phase = (animationValue + index * 0.18) % 1.0;
+    final wave = disableAnimations ? 0.0 : math.sin(phase * math.pi);
+    final waveAmount = wave.clamp(0.0, 1.0).toDouble();
+    final opacity = disableAnimations ? 0.72 : 0.36 + (waveAmount * 0.64);
+    return Transform.translate(
+      offset: Offset(0, -4 * wave),
+      child: Opacity(
+        opacity: opacity.clamp(0.32, 1.0).toDouble(),
+        child: Container(
+          width: 5,
+          height: 5,
+          decoration: BoxDecoration(
+            color: Color.lerp(CodexColors.dim, CodexColors.text, waveAmount),
+            shape: BoxShape.circle,
+            boxShadow: disableAnimations
+                ? null
+                : [
+                    BoxShadow(
+                      color: CodexColors.text.withValues(alpha: 0.08 * wave),
+                      blurRadius: 6,
+                      spreadRadius: 0.4,
+                    ),
+                  ],
+          ),
+        ),
+      ),
     );
   }
 }

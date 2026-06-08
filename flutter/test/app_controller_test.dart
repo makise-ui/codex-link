@@ -176,6 +176,107 @@ void main() {
     expect(controller.activeMessages.single.text, text);
   });
 
+  test('keeps active run state scoped to the selected session', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Running',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo-a',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+          {
+            'sessionId': 's2',
+            'title': 'Idle',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo-b',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'run.started',
+      'sessionId': 's1',
+      'runId': 'run-1',
+    });
+    expect(controller.isRunning, isTrue);
+
+    controller.selectSession('s2');
+
+    expect(controller.activeSessionId, 's2');
+    expect(controller.activeRunId, isNull);
+    expect(controller.isRunning, isFalse);
+
+    controller.cancelRun();
+
+    expect(
+      socket.sentMessages.where((message) => message['type'] == 'run.cancel'),
+      isEmpty,
+    );
+  });
+
+  test('routes run messages without session id by run id after switching', () {
+    final controller = AppController(socket: FakeBridgeSocketClient())
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Running',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo-a',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+          {
+            'sessionId': 's2',
+            'title': 'Idle',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo-b',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'run.started',
+      'sessionId': 's1',
+      'runId': 'run-1',
+    });
+    controller.selectSession('s2');
+    controller.handleBridgeMessageForTest({
+      'type': 'message.started',
+      'runId': 'run-1',
+      'messageId': 'thinking-1',
+      'kind': 'thinking',
+      'role': 'system',
+      'title': 'Thinking',
+    });
+
+    expect(controller.messagesBySession['s1'], hasLength(1));
+    expect(controller.messagesBySession['s2'], isEmpty);
+  });
+
   test('parses external Codex sessions', () {
     final controller = AppController()
       ..handleBridgeMessageForTest({

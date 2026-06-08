@@ -385,7 +385,7 @@ class _MessageListState extends State<_MessageList> {
     final items = _timelineItems(
       messages,
       isRunning: controller.isRunning,
-      runId: controller.activeRunId ?? controller.activeSession?.activeRunId,
+      runId: controller.activeRunId,
     );
     final timelineSignature = _timelineSignature(items);
     final timelineChanged = timelineSignature != _lastTimelineSignature;

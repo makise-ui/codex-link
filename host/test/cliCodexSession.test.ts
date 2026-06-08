@@ -30,6 +30,19 @@ setTimeout(() => {
 }, 20);
 `;
 
+const fakeSignalIgnoringScript = `
+process.stderr.write('ready\\n');
+process.on('SIGINT', () => {
+  process.stdout.write(JSON.stringify({ type: 'turn.started' }) + '\\n');
+});
+process.on('SIGTERM', () => {
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'terminated by fallback' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'turn.completed' }) + '\\n');
+  process.exit(143);
+});
+setInterval(() => {}, 1_000);
+`;
+
 describe("buildCodexArgs", () => {
   it("adds json, skip-git-repo-check, and workspace-write by default", () => {
     expect(buildCodexArgs("hello")).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write", "--", "hello"]);
@@ -173,6 +186,30 @@ describe("CliCodexSession", () => {
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("2 tests passed"))).toBe(true);
     expect(duplicatedSystemThinking).toBe(false);
   });
+
+  it("escalates cancel to SIGTERM when Codex ignores SIGINT", async () => {
+    const session = new CliCodexSession({
+      command: process.execPath,
+      argsPrefix: ["-e", fakeSignalIgnoringScript, "exec"],
+      workdir: process.cwd(),
+      cancelGraceMs: 20,
+    });
+    const events: CodexEvent[] = [];
+    session.onEvent((event) => events.push(event));
+
+    const { runId } = await session.sendPrompt("cancel stubborn run");
+    try {
+      await waitForOutput(events, "ready");
+      await session.cancel(runId);
+      await waitForCompletion(events, 1_000);
+    } finally {
+      await session.close();
+    }
+
+    expect(events.some((event) => event.type === "status" && event.status === "cancelling")).toBe(true);
+    expect(events.some((event) => event.type === "message.delta" && event.text.includes("terminated by fallback"))).toBe(true);
+    expect(events.some((event) => event.type === "run.completed" && event.runId === runId)).toBe(true);
+  });
 });
 
 function outputText(events: CodexEvent[], stream: "assistant" | "stderr"): string {
@@ -181,11 +218,21 @@ function outputText(events: CodexEvent[], stream: "assistant" | "stderr"): strin
     .join("");
 }
 
-async function waitForCompletion(events: CodexEvent[]): Promise<void> {
+async function waitForCompletion(events: CodexEvent[], timeoutMs = 5_000): Promise<void> {
   const startedAt = Date.now();
   while (!events.some((event) => event.type === "run.completed")) {
-    if (Date.now() - startedAt > 5_000) {
+    if (Date.now() - startedAt > timeoutMs) {
       throw new Error("Timed out waiting for CLI session completion");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForOutput(events: CodexEvent[], text: string, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!events.some((event) => event.type === "output.delta" && event.text.includes(text))) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for output: ${text}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
