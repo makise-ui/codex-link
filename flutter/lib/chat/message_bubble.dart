@@ -371,11 +371,7 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
   Widget build(BuildContext context) {
     final messages = widget.messages;
     final active = messages.any((message) => !message.complete);
-    final summary = active
-        ? 'Running ${messages.length} ${messages.length == 1 ? 'action' : 'actions'}'
-        : messages.length == 1
-        ? _singleSummary(messages.first)
-        : _stackSummary(messages);
+    final summary = _activitySummary(messages, active: active);
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -459,33 +455,78 @@ class _ActivityStackBubbleState extends State<ActivityStackBubble> {
       ),
     );
   }
+}
 
-  String _singleSummary(ChatMessage message) {
-    final title = message.title ?? 'Action';
-    final lower = title.toLowerCase();
-    if (lower.contains('reading')) {
-      final target = _activityTarget(message);
-      return target == null ? 'Read file' : 'Read $target';
+String _activitySummary(List<ChatMessage> messages, {required bool active}) {
+  if (messages.isEmpty) return active ? 'Running action...' : 'Action complete';
+  final commandMessages = messages.where(_isCommandActivity).toList();
+  if (commandMessages.length == messages.length) {
+    if (messages.length == 1) {
+      final command = _commandTarget(messages.first);
+      if (active) return 'Running: ${command ?? 'command'}...';
+      return command == null ? 'Ran command' : 'Ran: $command';
     }
-    if (lower.contains('skill')) {
-      final target = _skillTarget(message);
-      return target == null ? 'Using skill' : 'Using skill: $target';
-    }
-    if (lower.contains('editing')) return 'Edited files';
-    if (lower.contains('command')) return 'Ran command';
-    return '$title completed';
+    return active
+        ? 'Running ${messages.length} commands...'
+        : 'Ran ${messages.length} commands';
   }
+  if (active) {
+    return 'Running ${messages.length} ${messages.length == 1 ? 'action' : 'actions'}';
+  }
+  if (messages.length == 1) return _singleActivitySummary(messages.first);
+  final labels = <String>[];
+  for (final message in messages) {
+    final label = _singleActivitySummary(message);
+    if (!labels.contains(label)) labels.add(label);
+  }
+  final joined = labels.take(3).join(', ');
+  final extra = labels.length > 3 ? ' +${labels.length - 3}' : '';
+  return '$joined$extra';
+}
 
-  String _stackSummary(List<ChatMessage> messages) {
-    final labels = <String>[];
-    for (final message in messages) {
-      final label = _singleSummary(message);
-      if (!labels.contains(label)) labels.add(label);
-    }
-    final joined = labels.take(3).join(', ');
-    final extra = labels.length > 3 ? ' +${labels.length - 3}' : '';
-    return '$joined$extra';
+String _singleActivitySummary(ChatMessage message) {
+  final title = message.title ?? 'Action';
+  final lower = title.toLowerCase();
+  if (lower.contains('reading')) {
+    final target = _activityTarget(message);
+    return target == null ? 'Read file' : 'Read $target';
   }
+  if (lower.contains('skill')) {
+    final target = _skillTarget(message);
+    return target == null ? 'Using skill' : 'Using skill: $target';
+  }
+  if (lower.contains('editing')) return 'Edited files';
+  if (_isCommandActivity(message)) {
+    final command = _commandTarget(message);
+    return command == null ? 'Ran command' : 'Ran: $command';
+  }
+  return '$title completed';
+}
+
+bool _isCommandActivity(ChatMessage message) {
+  final title = message.title?.toLowerCase() ?? '';
+  return title.contains('command') ||
+      title.contains('terminal') ||
+      title.contains('shell');
+}
+
+String? _commandTarget(ChatMessage message) {
+  for (final rawLine in message.text.split(RegExp(r'\r?\n'))) {
+    var line = rawLine.trim();
+    if (line.isEmpty) continue;
+    if (line.toLowerCase().startsWith('command:')) {
+      line = line.substring('command:'.length).trim();
+    }
+    if (line.isEmpty) continue;
+    return _compactCommandLine(line);
+  }
+  return null;
+}
+
+String _compactCommandLine(String line) {
+  const maxLength = 44;
+  if (line.length <= maxLength) return line;
+  return '${line.substring(0, maxLength - 1).trimRight()}…';
 }
 
 String? _activityTarget(ChatMessage message) {
@@ -967,59 +1008,50 @@ class _FileChangeCardState extends State<_FileChangeCard> {
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620),
-        child: Container(
-          decoration: BoxDecoration(
-            color: CodexColors.panelHigh.withValues(alpha: 0.74),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(
-              color: CodexColors.green.withValues(alpha: 0.24),
-            ),
-          ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               InkWell(
                 key: const ValueKey('file-activity-toggle'),
-                borderRadius: BorderRadius.circular(AppRadius.lg),
+                borderRadius: BorderRadius.circular(AppRadius.md),
                 onTap: () => setState(() => _expanded = !_expanded),
                 child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Row(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.xs,
+                    vertical: AppSpacing.xs,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.description_outlined,
-                        color: CodexColors.greenSoft,
-                        size: 17,
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: Text(
-                          widget.message.title ?? 'File activity',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: CodexColors.text,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
+                      Row(
+                        children: [
+                          Icon(
+                            _expanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            color: codexMutedColor(context),
+                            size: 19,
                           ),
-                        ),
-                      ),
-                      Text(
-                        '${files.length} ${files.length == 1 ? 'file' : 'files'}',
-                        style: const TextStyle(
-                          color: CodexColors.dim,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Icon(
-                        _expanded
-                            ? Icons.expand_less_rounded
-                            : Icons.expand_more_rounded,
-                        color: CodexColors.muted,
-                        size: 20,
+                          const SizedBox(width: AppSpacing.xs),
+                          Expanded(
+                            child: files.length == 1
+                                ? _CompactFileChangeLine(file: files.first)
+                                : Text(
+                                    _fileActivitySummary(files),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(
+                                          color: codexMutedColor(context),
+                                        ),
+                                  ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1031,11 +1063,9 @@ class _FileChangeCardState extends State<_FileChangeCard> {
                 alignment: Alignment.topCenter,
                 child: _expanded
                     ? Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          AppSpacing.md,
-                          0,
-                          AppSpacing.md,
-                          AppSpacing.md,
+                        padding: const EdgeInsets.only(
+                          left: AppSpacing.lg,
+                          top: AppSpacing.xs,
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1048,6 +1078,8 @@ class _FileChangeCardState extends State<_FileChangeCard> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    _CompactFileChangeLine(file: file),
+                                    const SizedBox(height: AppSpacing.xs),
                                     _FileRow(
                                       file: file,
                                       controller: controller,
@@ -1078,6 +1110,35 @@ class _FileChangeCardState extends State<_FileChangeCard> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _CompactFileChangeLine extends StatelessWidget {
+  const _CompactFileChangeLine({required this.file});
+
+  final _FileChange file;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _fileChangeColor(context, file.status);
+    return Row(
+      children: [
+        Icon(_fileChangeIcon(file.status), color: color, size: 14),
+        const SizedBox(width: AppSpacing.xs),
+        Expanded(
+          child: Text(
+            '${_fileChangeVerb(file.status)}:${file.path}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: codexTextColor(context),
+              fontFamily: 'monospace',
+              height: 1.25,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1131,6 +1192,55 @@ class _FileRow extends StatelessWidget {
       ],
     );
   }
+}
+
+String _fileActivitySummary(List<_FileChange> files) {
+  final editCount = files.where((file) => _isEditStatus(file.status)).length;
+  final fileCount = files.length;
+  if (editCount == fileCount) {
+    return 'Edited $editCount ${editCount == 1 ? 'file' : 'files'}';
+  }
+  if (editCount == 0) {
+    return 'Agent attached $fileCount ${fileCount == 1 ? 'file' : 'files'}';
+  }
+  return '$editCount edits · ${fileCount - editCount} files';
+}
+
+bool _isEditStatus(String status) {
+  return status == 'added' ||
+      status == 'modified' ||
+      status == 'deleted' ||
+      status == 'renamed';
+}
+
+String _fileChangeVerb(String status) {
+  if (_isEditStatus(status)) return 'Edit';
+  return switch (status) {
+    'downloaded' => 'Saved',
+    'requested' => 'File',
+    'generated' => 'File',
+    'attachment' => 'Attach',
+    _ => 'File',
+  };
+}
+
+IconData _fileChangeIcon(String status) {
+  return switch (status) {
+    'deleted' => Icons.remove_circle_outline_rounded,
+    'renamed' => Icons.drive_file_rename_outline_rounded,
+    'downloaded' => Icons.download_done_rounded,
+    'requested' || 'generated' => Icons.insert_drive_file_outlined,
+    _ => Icons.edit_document,
+  };
+}
+
+Color _fileChangeColor(BuildContext context, String status) {
+  return switch (status) {
+    'deleted' => CodexColors.danger,
+    'renamed' => CodexColors.blue,
+    'requested' || 'generated' || 'downloaded' => codexMutedColor(context),
+    _ => Theme.of(context).colorScheme.secondary,
+  };
 }
 
 class _ImageFilePreview extends StatelessWidget {

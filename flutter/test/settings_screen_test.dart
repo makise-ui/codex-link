@@ -1,5 +1,5 @@
 import 'package:codex_lan_flutter/app_controller.dart';
-import 'package:codex_lan_flutter/commands/command_center_screen.dart';
+import 'package:codex_lan_flutter/app_server/app_server_actions_screen.dart';
 import 'package:codex_lan_flutter/protocol/bridge_messages.dart';
 import 'package:codex_lan_flutter/services/bridge_socket_client.dart';
 import 'package:codex_lan_flutter/services/app_notifier.dart';
@@ -286,7 +286,7 @@ void main() {
     expect(find.byKey(const ValueKey('theme-mode-dark')), findsOneWidget);
   });
 
-  testWidgets('command center owns workspace files history and commands', (
+  testWidgets('app-server actions screen owns interactive integrations', (
     tester,
   ) async {
     final socket = FakeBridgeSocketClient();
@@ -333,6 +333,47 @@ void main() {
                 'active': true,
               },
             ],
+          })
+          ..handleBridgeMessageForTest({
+            'type': 'app.plugin.list',
+            'marketplaces': [
+              {
+                'name': 'openai-curated',
+                'displayName': 'OpenAI curated',
+                'path': '/tmp/marketplace',
+                'plugins': [
+                  {
+                    'name': 'github',
+                    'displayName': 'GitHub',
+                    'description': 'Work with GitHub issues.',
+                    'installed': false,
+                    'enabled': true,
+                  },
+                ],
+              },
+            ],
+          })
+          ..handleBridgeMessageForTest({
+            'type': 'app.mcp.status.list',
+            'servers': [
+              {
+                'name': 'github',
+                'status': 'enabled',
+                'authStatus': 'unauthenticated',
+                'toolCount': 2,
+                'tools': ['search_issues'],
+                'resourceCount': 0,
+              },
+            ],
+          })
+          ..handleBridgeMessageForTest({
+            'type': 'app.remote.status',
+            'status': {
+              'enabled': false,
+              'connectionStatus': 'disabled',
+              'serverName': 'archlinux',
+              'environmentId': null,
+            },
           });
 
     await tester.pumpWidget(
@@ -340,30 +381,108 @@ void main() {
         value: controller,
         child: MaterialApp(
           theme: buildCodexTheme(),
-          home: const CommandCenterScreen(),
+          home: const AppServerActionsScreen(),
         ),
       ),
     );
 
-    expect(find.text('Commands'), findsWidgets);
-    expect(find.text('/goal'), findsOneWidget);
-    expect(find.text('/doctor'), findsOneWidget);
-    expect(find.text('Workspace'), findsOneWidget);
+    expect(find.text('App Server Actions'), findsOneWidget);
+    expect(find.text('Plugins'), findsOneWidget);
+    expect(find.text('GitHub'), findsOneWidget);
 
     await tester.scrollUntilVisible(
-      find.text('App-server sessions'),
+      find.text('MCP Servers'),
       360,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('App-server sessions'), findsOneWidget);
+    expect(find.text('MCP Servers'), findsOneWidget);
+    expect(find.textContaining('search_issues'), findsOneWidget);
 
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -420));
     await tester.pumpAndSettle();
-    expect(find.text('External Codex sessions'), findsOneWidget);
+    expect(find.text('Remote Control'), findsOneWidget);
+    expect(find.textContaining('archlinux'), findsOneWidget);
+    expect(find.textContaining('disabled'), findsOneWidget);
+    expect(find.text('Enable & pair'), findsOneWidget);
 
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -520));
+    await tester.tap(find.text('GitHub'));
+    await tester.pump();
+    expect(socket.sentMessages.last, {
+      'type': 'app.plugin.read',
+      'pluginName': 'github',
+      'marketplacePath': '/tmp/marketplace',
+    });
+  });
+
+  testWidgets('app-server actions plugin list uses load more for long lists', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Plugins',
+            'updatedAt': '2026-06-09T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      })
+      ..handleBridgeMessageForTest({
+        'type': 'app.plugin.list',
+        'marketplaces': [
+          {
+            'name': 'openai-curated',
+            'displayName': 'OpenAI curated',
+            'path': '/tmp/marketplace',
+            'plugins': List.generate(
+              12,
+              (index) => {
+                'name': 'plugin_$index',
+                'displayName': 'Plugin $index',
+                'description': 'Plugin $index description',
+                'installed': false,
+                'enabled': true,
+              },
+            ),
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildCodexTheme(),
+          home: const AppServerActionsScreen(),
+        ),
+      ),
+    );
+
+    expect(find.text('Plugin 0'), findsOneWidget);
+    expect(find.text('Plugin 8'), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('Load more'),
+      360,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Load more'));
     await tester.pumpAndSettle();
-    expect(find.text('Files'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Plugin 8'),
+      360,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('Plugin 8'), findsOneWidget);
   });
 
   testWidgets('settings shows available app update', (tester) async {

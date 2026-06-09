@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { AppAccountLoginCancelledMessage, AppAccountLoginStartedMessage, AppAccountStatusMessage, AppFileSearchResultsMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppModelListMessage, AppModelRecord, AppProviderCapabilitiesRecord, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, CodexAccountInfo, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, StoredChatMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
-import type { AccountLoginStartInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptResult } from "./codexSession.js";
+import type { AppAccountLoginCancelledMessage, AppAccountLoginStartedMessage, AppAccountRateLimitsMessage, AppAccountStatusMessage, AppFileSearchResultsMessage, AppFsDirectoryCreatedMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppFsWriteResultMessage, AppMcpOauthLoginStartedMessage, AppMcpStatusListMessage, AppModelListMessage, AppModelRecord, AppPluginDetailMessage, AppPluginInstallResultMessage, AppPluginListMessage, AppPluginUninstallResultMessage, AppProviderCapabilitiesRecord, AppRemotePairingStartedMessage, AppRemoteStatusMessage, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, CodexAccountInfo, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, StoredChatMessage, WorkspaceEnvUpdatedMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { AccountLoginStartInput, AppPluginLocatorInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptResult } from "./codexSession.js";
 import { AppServerCodexSession } from "./appServerCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
 import { FileTransferManager, mimeTypeFor } from "./fileTransferManager.js";
@@ -237,6 +238,46 @@ export class CodexSessionManager {
     return { type: "app.fs.file", sessionId: record.sessionId, file };
   }
 
+  async writeAppFile(sessionId: string, requestedPath: string, dataBase64: string): Promise<AppFsWriteResultMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const absolutePath = this.resolveWorkspacePath(record, requestedPath);
+    const parentPath = path.dirname(absolutePath);
+    const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    if (adapter.createDirectory) {
+      await adapter.createDirectory(parentPath);
+    } else {
+      await mkdir(parentPath, { recursive: true });
+    }
+    const file = adapter.writeFile
+      ? await adapter.writeFile(absolutePath, dataBase64)
+      : await this.writeFileFallback(record, absolutePath, dataBase64);
+    const result: AppFsWriteResultMessage = {
+      type: "app.fs.write.result",
+      sessionId: record.sessionId,
+      file,
+    };
+    return result;
+  }
+
+  async createAppDirectory(sessionId: string, requestedPath: string): Promise<AppFsDirectoryCreatedMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const absolutePath = this.resolveWorkspacePath(record, requestedPath);
+    const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    if (adapter.createDirectory) {
+      await adapter.createDirectory(absolutePath);
+    } else {
+      await mkdir(absolutePath, { recursive: true });
+    }
+    const result: AppFsDirectoryCreatedMessage = {
+      type: "app.fs.directory.created",
+      sessionId: record.sessionId,
+      path: toPosixPath(path.relative(record.workdir, absolutePath)),
+    };
+    return result;
+  }
+
   async searchAppFiles(sessionId: string, query: string, limit = 40): Promise<AppFileSearchResultsMessage> {
     const record = this.requireSession(sessionId);
     this.activeSessionId = sessionId;
@@ -323,6 +364,95 @@ export class CodexSessionManager {
     };
   }
 
+  async readAppRateLimits(): Promise<AppAccountRateLimitsMessage> {
+    const adapter = this.optionalAdapter();
+    return {
+      type: "app.account.rateLimits",
+      limits: adapter?.readRateLimits ? await adapter.readRateLimits() : [],
+    };
+  }
+
+  async listAppPlugins(sessionId?: string): Promise<AppPluginListMessage> {
+    const record = this.optionalRecord(sessionId);
+    const adapter = record ? this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record) : undefined;
+    return {
+      type: "app.plugin.list",
+      marketplaces: adapter?.listPlugins ? (await adapter.listPlugins({ cwd: record?.workdir })).marketplaces : [],
+    };
+  }
+
+  async readAppPlugin(input: AppPluginLocatorInput): Promise<AppPluginDetailMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.readPlugin) {
+      throw new Error("The active Codex adapter does not support plugin details.");
+    }
+    return {
+      type: "app.plugin.detail",
+      plugin: await adapter.readPlugin(input),
+    };
+  }
+
+  async installAppPlugin(input: AppPluginLocatorInput): Promise<AppPluginInstallResultMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.installPlugin) {
+      throw new Error("The active Codex adapter does not support plugin install.");
+    }
+    return {
+      type: "app.plugin.install.result",
+      ...(await adapter.installPlugin(input)),
+    };
+  }
+
+  async uninstallAppPlugin(pluginName: string): Promise<AppPluginUninstallResultMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.uninstallPlugin) {
+      throw new Error("The active Codex adapter does not support plugin uninstall.");
+    }
+    return {
+      type: "app.plugin.uninstall.result",
+      ...(await adapter.uninstallPlugin(pluginName)),
+    };
+  }
+
+  async listAppMcpServers(sessionId?: string, detail: "full" | "toolsAndAuthOnly" = "toolsAndAuthOnly"): Promise<AppMcpStatusListMessage> {
+    const record = this.optionalRecord(sessionId);
+    const adapter = record ? this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record) : undefined;
+    return {
+      type: "app.mcp.status.list",
+      servers: adapter?.listMcpServers ? await adapter.listMcpServers({ detail }) : [],
+    };
+  }
+
+  async startAppMcpOauthLogin(serverName: string): Promise<AppMcpOauthLoginStartedMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.startMcpOauthLogin) {
+      throw new Error("The active Codex adapter does not support MCP OAuth login.");
+    }
+    return {
+      type: "app.mcp.oauth.login.started",
+      ...(await adapter.startMcpOauthLogin(serverName)),
+    };
+  }
+
+  async readAppRemoteControlStatus(): Promise<AppRemoteStatusMessage> {
+    const adapter = this.optionalAdapter();
+    return {
+      type: "app.remote.status",
+      status: adapter?.readRemoteControlStatus ? await adapter.readRemoteControlStatus() : { enabled: false },
+    };
+  }
+
+  async startAppRemotePairing(manualPairingCode?: string): Promise<AppRemotePairingStartedMessage> {
+    const adapter = this.optionalAdapter();
+    if (!adapter?.startRemoteControlPairing) {
+      throw new Error("The active Codex adapter does not support remote pairing.");
+    }
+    return {
+      type: "app.remote.pairing.started",
+      pairing: await adapter.startRemoteControlPairing({ manualPairingCode }),
+    };
+  }
+
   getWorkspaces(activeSessionId = this.activeSessionId): WorkspaceRecord[] {
     const activeWorkspaceId = activeSessionId ? this.sessions.get(activeSessionId)?.workspaceId : undefined;
     return this.workspaces.map((workspace) => ({
@@ -334,8 +464,11 @@ export class CodexSessionManager {
   }
 
   async addWorkspace(workspacePath: string, sessionId?: string, options: { create?: boolean } = {}): Promise<WorkspaceRecord> {
-    const resolvedPath = path.resolve(workspacePath);
-    if (options.create) {
+    const input = workspacePath.trim();
+    const resolvedPath = isGitWorkspaceReference(input)
+      ? await this.cloneGitWorkspace(input)
+      : path.resolve(input);
+    if (options.create && !isGitWorkspaceReference(input)) {
       await mkdir(resolvedPath, { recursive: true });
     }
     const stats = await stat(resolvedPath);
@@ -502,7 +635,7 @@ export class CodexSessionManager {
     return record;
   }
 
-  async setSessionConfig(sessionId: string, config: { model?: string; reasoningEffort?: ReasoningEffort }): Promise<SessionRecord> {
+  async setSessionConfig(sessionId: string, config: { model?: string; reasoningEffort?: ReasoningEffort; serviceTier?: string | null }): Promise<SessionRecord> {
     const record = this.requireSession(sessionId);
     if (record.activeRunId) {
       throw new Error("Cannot change model settings while a run is active.");
@@ -515,6 +648,10 @@ export class CodexSessionManager {
     }
     if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort")) {
       record.reasoningEffort = config.reasoningEffort;
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "serviceTier")) {
+      const serviceTier = config.serviceTier?.trim();
+      record.serviceTier = serviceTier || undefined;
     }
     record.updatedAt = new Date().toISOString();
     this.activeSessionId = sessionId;
@@ -630,10 +767,11 @@ export class CodexSessionManager {
   async offerRequestedFile(sessionId: string, filePath: string): Promise<FileOfferMessage> {
     const record = this.requireSession(sessionId);
     this.activeSessionId = sessionId;
+    const relativePath = await this.resolveRequestedFilePath(record, filePath.trim());
     const offer = await this.fileTransfers.offerWorkspaceFile({
       sessionId: record.sessionId,
       workspaceRoot: record.workdir,
-      relativePath: filePath.trim(),
+      relativePath,
       reason: "requested",
     });
     this.appendHistory(record.sessionId, {
@@ -661,6 +799,33 @@ export class CodexSessionManager {
       query: normalizedQuery,
       files: await scanWorkspaceFiles(record.workdir, normalizedQuery, effectiveLimit),
     };
+  }
+
+  async setWorkspaceEnv(sessionId: string, content: string, targetPath = ".env.local"): Promise<WorkspaceEnvUpdatedMessage> {
+    const record = this.requireSession(sessionId);
+    this.activeSessionId = sessionId;
+    const envPath = targetPath === ".env" ? ".env" : ".env.local";
+    const parsed = parseEnvAssignments(content);
+    if (parsed.assignments.length === 0) {
+      throw new Error("No valid env assignments were found. Use NAME=value lines.");
+    }
+    const absolutePath = this.resolveWorkspacePath(record, envPath);
+    await this.assertFallbackWritePath(record, absolutePath);
+    const existing = await readFile(absolutePath, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    await writeFile(absolutePath, mergeEnvFile(existing, parsed.assignments), { mode: 0o600 });
+    await chmod(absolutePath, 0o600);
+    const result: WorkspaceEnvUpdatedMessage = {
+      type: "workspace.env.updated",
+      sessionId: record.sessionId,
+      path: envPath,
+      variableNames: parsed.assignments.map((assignment) => assignment.name),
+      skippedLineCount: parsed.skippedLineCount,
+    };
+    this.emit(result);
+    return result;
   }
 
   onEvent(listener: Listener): () => void {
@@ -719,6 +884,7 @@ export class CodexSessionManager {
           sandbox: record.sandbox,
           model: record.model,
           reasoningEffort: record.reasoningEffort,
+          serviceTier: record.serviceTier,
           codexThreadId: record.codexThreadId,
           onThreadStarted: (threadId) => {
             void this.updateThreadId(record.sessionId, threadId).catch((error) => {
@@ -912,14 +1078,20 @@ export class CodexSessionManager {
   }
 
   private optionalAdapter(sessionId?: string): CodexSession | undefined {
+    const record = this.optionalRecord(sessionId);
+    if (!record) return undefined;
+    this.activeSessionId = record.sessionId;
+    return this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+  }
+
+  private optionalRecord(sessionId?: string): SessionRecord | undefined {
     const record = sessionId
       ? this.requireSession(sessionId)
       : this.activeSessionId
         ? this.sessions.get(this.activeSessionId)
         : this.listSessions()[0];
-    if (!record) return undefined;
-    this.activeSessionId = record.sessionId;
-    return this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    if (record) this.activeSessionId = record.sessionId;
+    return record;
   }
 
   private resolveWorkspacePath(record: SessionRecord, requestedPath: string): string {
@@ -929,6 +1101,44 @@ export class CodexSessionManager {
       throw new Error(`Path is outside the active workspace: ${requestedPath}`);
     }
     return target;
+  }
+
+  private async cloneGitWorkspace(gitUrl: string): Promise<string> {
+    const parent = path.resolve(os.homedir(), ".codex-link", "workspaces");
+    await mkdir(parent, { recursive: true });
+    const baseName = safeGitWorkspaceName(gitUrl);
+    let target = path.join(parent, baseName);
+    let suffix = 2;
+    while (await pathExists(target)) {
+      if (await isGitCheckout(target) && await gitRemoteMatches(target, gitUrl)) return target;
+      target = path.join(parent, `${baseName}-${suffix++}`);
+    }
+    await execFileAsync("git", ["clone", "--depth", "1", gitUrl, target], {
+      timeout: 180_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return target;
+  }
+
+  private async resolveRequestedFilePath(record: SessionRecord, requestedPath: string): Promise<string> {
+    const normalized = normalizeFileQuery(requestedPath);
+    if (!normalized) return requestedPath;
+    const exactPath = this.resolveWorkspacePath(record, normalized);
+    const exactStats = await stat(exactPath).catch(() => undefined);
+    if (exactStats?.isFile()) {
+      return toPosixPath(path.relative(record.workdir, exactPath));
+    }
+    if (normalized.includes("/")) return normalized;
+
+    const matches = await scanWorkspaceFiles(record.workdir, normalized, 20);
+    const lower = normalized.toLowerCase();
+    const exactMatches = matches.filter((file) => file.name.toLowerCase() === lower || file.path.toLowerCase() === lower);
+    const candidates = exactMatches.length > 0 ? exactMatches : matches;
+    if (candidates.length === 1) return candidates[0].path;
+    if (candidates.length > 1) {
+      throw new Error(`Multiple files match ${requestedPath}: ${candidates.slice(0, 5).map((file) => file.path).join(", ")}`);
+    }
+    return normalized;
   }
 
   private async listDirectoryFallback(record: SessionRecord, absolutePath: string): Promise<AppFsEntryRecord[]> {
@@ -962,6 +1172,28 @@ export class CodexSessionManager {
       text: isLikelyTextFile(bytes, relativePath) ? bytes.toString("utf8") : undefined,
       dataBase64: isLikelyTextFile(bytes, relativePath) ? undefined : bytes.toString("base64"),
     };
+  }
+
+  private async writeFileFallback(record: SessionRecord, absolutePath: string, dataBase64: string): Promise<AppFsFileMessage["file"]> {
+    const bytes = Buffer.from(dataBase64, "base64");
+    await this.assertFallbackWritePath(record, absolutePath);
+    await writeFile(absolutePath, bytes);
+    return this.readFileFallback(record, absolutePath);
+  }
+
+  private async assertFallbackWritePath(record: SessionRecord, absolutePath: string): Promise<void> {
+    const root = await realpath(record.workdir);
+    const parent = await realpath(path.dirname(absolutePath));
+    if (parent !== root && !parent.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`Path is outside the active workspace: ${path.relative(record.workdir, absolutePath)}`);
+    }
+    const targetStats = await lstat(absolutePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (targetStats?.isSymbolicLink()) {
+      throw new Error(`Refusing to write through a symlink: ${path.relative(record.workdir, absolutePath)}`);
+    }
   }
 
   private async closeAdapter(sessionId: string): Promise<void> {
@@ -1084,6 +1316,75 @@ function isImageAttachment(attachment: PromptAttachment): boolean {
   const mimeType = attachment.mimeType?.toLowerCase() ?? "";
   if (mimeType.startsWith("image/")) return true;
   return /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(attachment.name);
+}
+
+type EnvAssignment = {
+  name: string;
+  value: string;
+};
+
+function parseEnvAssignments(content: string): { assignments: EnvAssignment[]; skippedLineCount: number } {
+  const assignments: EnvAssignment[] = [];
+  let skippedLineCount = 0;
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      if (trimmed.startsWith("#")) skippedLineCount += 1;
+      continue;
+    }
+    const body = trimmed.startsWith("export ") ? trimmed.slice("export ".length).trim() : trimmed;
+    const separator = body.indexOf("=");
+    if (separator <= 0) {
+      skippedLineCount += 1;
+      continue;
+    }
+    const name = body.slice(0, separator).trim();
+    const value = body.slice(separator + 1).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      skippedLineCount += 1;
+      continue;
+    }
+    assignments.push({ name, value });
+  }
+  return { assignments: uniqueEnvAssignments(assignments), skippedLineCount };
+}
+
+function uniqueEnvAssignments(assignments: EnvAssignment[]): EnvAssignment[] {
+  const byName = new Map<string, EnvAssignment>();
+  for (const assignment of assignments) {
+    byName.set(assignment.name, assignment);
+  }
+  return [...byName.values()];
+}
+
+function mergeEnvFile(existing: string, assignments: EnvAssignment[]): string {
+  const pending = new Map(assignments.map((assignment) => [assignment.name, assignment]));
+  const seen = new Set<string>();
+  const lines = existing.split(/\r?\n/);
+  if (lines.at(-1) === "") lines.pop();
+  const output = lines.map((line) => {
+    const name = envLineName(line);
+    if (!name || !pending.has(name)) return line;
+    const assignment = pending.get(name)!;
+    seen.add(name);
+    return `${assignment.name}=${assignment.value}`;
+  });
+  for (const assignment of assignments) {
+    if (seen.has(assignment.name)) continue;
+    output.push(`${assignment.name}=${assignment.value}`);
+    seen.add(assignment.name);
+  }
+  return `${output.join("\n")}\n`;
+}
+
+function envLineName(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return undefined;
+  const body = trimmed.startsWith("export ") ? trimmed.slice("export ".length).trim() : trimmed;
+  const separator = body.indexOf("=");
+  if (separator <= 0) return undefined;
+  const name = body.slice(0, separator).trim();
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : undefined;
 }
 
 function isThinkingNoise(text: string): boolean {
@@ -1270,6 +1571,8 @@ const DEFAULT_APP_MODELS: AppModelRecord[] = [
     defaultReasoningEffort: "medium",
     inputModalities: ["text", "image"],
     supportsPersonality: true,
+    serviceTiers: [],
+    defaultServiceTier: null,
     isDefault: true,
   },
   {
@@ -1282,6 +1585,8 @@ const DEFAULT_APP_MODELS: AppModelRecord[] = [
     defaultReasoningEffort: "medium",
     inputModalities: ["text", "image"],
     supportsPersonality: true,
+    serviceTiers: [],
+    defaultServiceTier: null,
     isDefault: false,
   },
 ];
@@ -1375,6 +1680,56 @@ async function scanWorkspaceFiles(workdir: string, query: string, limit: number)
 
 function normalizeFileQuery(query: string): string {
   return query.trim().replace(/^@+/, "").replace(/\\/g, "/");
+}
+
+function isGitWorkspaceReference(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/^git@[^:]+:.+\.git$/i.test(trimmed)) return true;
+  if (/^ssh:\/\/.+/i.test(trimmed)) return true;
+  if (/^file:\/\/.+/i.test(trimmed)) return true;
+  if (/^https?:\/\/.+/i.test(trimmed)) {
+    return /\.git(?:[#?].*)?$/i.test(trimmed) || /github\.com|gitlab\.com|bitbucket\.org/i.test(trimmed);
+  }
+  return false;
+}
+
+function safeGitWorkspaceName(gitUrl: string): string {
+  let candidate = gitUrl.trim();
+  try {
+    const parsed = new URL(candidate);
+    candidate = parsed.pathname.split("/").filter(Boolean).pop() ?? candidate;
+  } catch {
+    candidate = candidate.split(/[/:]/).filter(Boolean).pop() ?? candidate;
+  }
+  candidate = candidate.replace(/\.git$/i, "").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+|-+$/g, "");
+  return candidate || "git-workspace";
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  return stat(candidate).then(() => true, () => false);
+}
+
+async function isGitCheckout(candidate: string): Promise<boolean> {
+  const dotGit = path.join(candidate, ".git");
+  return stat(dotGit).then((stats) => stats.isDirectory() || stats.isFile(), () => false);
+}
+
+async function gitRemoteMatches(candidate: string, gitUrl: string): Promise<boolean> {
+  const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], {
+    cwd: candidate,
+    timeout: 10_000,
+    maxBuffer: 128 * 1024,
+  }).catch(() => ({ stdout: "" }));
+  return normalizeGitRemote(stdout) === normalizeGitRemote(gitUrl);
+}
+
+function normalizeGitRemote(value: string): string {
+  let remote = value.trim().replace(/\/+$/g, "");
+  if (remote.toLowerCase().endsWith(".git")) {
+    remote = remote.slice(0, -4);
+  }
+  return remote;
 }
 
 function shouldSkipWorkspaceDirectory(name: string): boolean {

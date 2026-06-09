@@ -591,6 +591,7 @@ void main() {
             'sandbox': 'workspace-write',
             'model': 'gpt-5-codex',
             'reasoningEffort': 'high',
+            'serviceTier': 'priority',
             'goal': {
               'threadId': 'thread-1',
               'objective': 'Keep polish high',
@@ -606,6 +607,7 @@ void main() {
 
     expect(controller.activeSession?.model, 'gpt-5-codex');
     expect(controller.activeSession?.reasoningEffort, 'high');
+    expect(controller.activeSession?.serviceTier, 'priority');
     expect(controller.activeSession?.goal?.objective, 'Keep polish high');
   });
 
@@ -736,6 +738,36 @@ void main() {
     });
   });
 
+  test('slash send only uses the first unquoted file token', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Files',
+            'updatedAt': '2026-06-07T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.sendPrompt('/send @lib/report.txt after checking it');
+
+    expect(socket.sentMessages.single, {
+      'type': 'file.offer.request',
+      'sessionId': 's1',
+      'path': 'lib/report.txt',
+    });
+  });
+
   test('searches and stores workspace file suggestions', () {
     final socket = FakeBridgeSocketClient();
     final controller = AppController(socket: socket)
@@ -784,6 +816,51 @@ void main() {
     expect(controller.fileSuggestions.single.path, 'lib/main.dart');
   });
 
+  test('sets workspace env secrets without storing secret values', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Env',
+            'updatedAt': '2026-06-07T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.setWorkspaceEnvSecrets(
+      'OPENAI_API_KEY=sk-unit\nLIST=value1,value2',
+    );
+
+    expect(controller.envSecretsBusy, isTrue);
+    expect(socket.sentMessages.single, {
+      'type': 'workspace.env.set',
+      'sessionId': 's1',
+      'content': 'OPENAI_API_KEY=sk-unit\nLIST=value1,value2',
+    });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'workspace.env.updated',
+      'sessionId': 's1',
+      'path': '.env.local',
+      'variableNames': ['OPENAI_API_KEY', 'LIST'],
+      'skippedLineCount': 0,
+    });
+
+    expect(controller.envSecretsBusy, isFalse);
+    expect(controller.envSecretsStatusText, contains('OPENAI_API_KEY'));
+    expect(controller.envSecretsStatusText, isNot(contains('sk-unit')));
+  });
+
   test('stores native app-server capability messages and routes actions', () {
     final socket = FakeBridgeSocketClient();
     final controller = AppController(socket: socket)
@@ -810,10 +887,13 @@ void main() {
     controller.refreshAppSkills(forceReload: true);
     controller.listAppDirectory('lib');
     controller.readAppFile('README.md');
+    controller.writeAppFile('lib/generated.dart', 'dm9pZCBtYWluKCkge30K');
+    controller.createAppDirectory('lib/widgets');
+    controller.setSessionConfig(serviceTier: 'priority');
     controller.searchAppFiles('@main', limit: 8);
     controller.startReview(instructions: 'review this');
 
-    expect(socket.sentMessages.take(7).toList(), [
+    expect(socket.sentMessages.take(10).toList(), [
       {'type': 'app.model.list', 'sessionId': 's1'},
       {
         'type': 'app.thread.list',
@@ -824,6 +904,22 @@ void main() {
       {'type': 'app.skill.list', 'sessionId': 's1', 'forceReload': true},
       {'type': 'app.fs.list', 'sessionId': 's1', 'path': 'lib'},
       {'type': 'app.fs.read', 'sessionId': 's1', 'path': 'README.md'},
+      {
+        'type': 'app.fs.write',
+        'sessionId': 's1',
+        'path': 'lib/generated.dart',
+        'dataBase64': 'dm9pZCBtYWluKCkge30K',
+      },
+      {
+        'type': 'app.fs.createDirectory',
+        'sessionId': 's1',
+        'path': 'lib/widgets',
+      },
+      {
+        'type': 'session.config.set',
+        'sessionId': 's1',
+        'serviceTier': 'priority',
+      },
       {
         'type': 'app.file.search',
         'sessionId': 's1',
@@ -850,6 +946,14 @@ void main() {
           'supportedReasoningEfforts': ['low', 'high'],
           'inputModalities': ['text', 'image'],
           'supportsPersonality': true,
+          'serviceTiers': [
+            {
+              'id': 'priority',
+              'name': 'Priority',
+              'description': 'Faster responses for more credits',
+            },
+          ],
+          'defaultServiceTier': null,
           'isDefault': true,
         },
       ],
@@ -914,6 +1018,22 @@ void main() {
       },
     });
     controller.handleBridgeMessageForTest({
+      'type': 'app.fs.write.result',
+      'sessionId': 's1',
+      'file': {
+        'path': 'lib/generated.dart',
+        'name': 'generated.dart',
+        'sizeBytes': 13,
+        'mimeType': 'text/plain',
+        'text': 'void main() {}\n',
+      },
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.fs.directory.created',
+      'sessionId': 's1',
+      'path': 'lib/widgets',
+    });
+    controller.handleBridgeMessageForTest({
       'type': 'app.file.search.results',
       'sessionId': 's1',
       'query': 'main',
@@ -931,6 +1051,7 @@ void main() {
     });
 
     expect(controller.appModels.single.displayName, 'GPT Test');
+    expect(controller.appModels.single.serviceTiers.single.id, 'priority');
     expect(controller.appCapabilities?.webSearch, isTrue);
     expect(controller.appThreads.single.threadId, 'thread-1');
     expect(
@@ -938,7 +1059,8 @@ void main() {
       'flutter-design-system',
     );
     expect(controller.appFileEntries.single.path, 'lib/main.dart');
-    expect(controller.appPreviewFile?.text, '# Unit\n');
+    expect(controller.appPreviewFile?.text, 'void main() {}\n');
+    expect(controller.appFsStatusText, 'Created lib/widgets.');
     expect(controller.appFileSearchResults.single.name, 'main.dart');
     expect(controller.activeMessages.last.kind, AgentMessageKind.approval);
 
@@ -1026,6 +1148,168 @@ void main() {
 
     expect(controller.activeCodexLogin, isNull);
     expect(controller.latestNotice?.title, 'Codex login complete');
+  });
+
+  test('interactive app-server actions route and store bridge results', () {
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Actions',
+            'updatedAt': '2026-06-09T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    controller.refreshAppServerActions();
+    controller.readAppPlugin('github', marketplacePath: '/tmp/marketplace');
+    controller.installAppPlugin('github', marketplacePath: '/tmp/marketplace');
+    controller.uninstallAppPlugin('github');
+    controller.startAppMcpOauthLogin('github');
+    controller.startRemotePairing(manualPairingCode: '123456');
+
+    expect(socket.sentMessages, [
+      {'type': 'app.plugin.list', 'sessionId': 's1'},
+      {
+        'type': 'app.mcp.status.list',
+        'sessionId': 's1',
+        'detail': 'toolsAndAuthOnly',
+      },
+      {'type': 'app.remote.status.read'},
+      {'type': 'app.account.rateLimits.read'},
+      {
+        'type': 'app.plugin.read',
+        'pluginName': 'github',
+        'marketplacePath': '/tmp/marketplace',
+      },
+      {
+        'type': 'app.plugin.install',
+        'pluginName': 'github',
+        'marketplacePath': '/tmp/marketplace',
+      },
+      {'type': 'app.plugin.uninstall', 'pluginName': 'github'},
+      {'type': 'app.mcp.oauth.login', 'serverName': 'github'},
+      {'type': 'app.remote.pairing.start', 'manualPairingCode': '123456'},
+    ]);
+
+    controller.handleBridgeMessageForTest({
+      'type': 'app.plugin.list',
+      'marketplaces': [
+        {
+          'name': 'openai-curated',
+          'displayName': 'OpenAI curated',
+          'path': '/tmp/marketplace',
+          'plugins': [
+            {
+              'name': 'github',
+              'displayName': 'GitHub',
+              'description': 'Work with GitHub issues.',
+              'installed': false,
+              'enabled': true,
+            },
+          ],
+        },
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.plugin.detail',
+      'plugin': {
+        'name': 'github',
+        'displayName': 'GitHub',
+        'description': 'Work with GitHub issues.',
+        'skills': [
+          {'name': 'github-prs', 'description': 'Review pull requests.'},
+        ],
+        'apps': [
+          {
+            'name': 'github',
+            'authStatus': 'unauthenticated',
+            'installUrl': 'https://github.com/apps/codex',
+          },
+        ],
+        'mcpServers': [
+          {'name': 'github', 'authStatus': 'unauthenticated', 'toolCount': 8},
+        ],
+      },
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.plugin.install.result',
+      'pluginName': 'github',
+      'installed': true,
+      'appsNeedingAuth': [
+        {'name': 'github', 'installUrl': 'https://github.com/apps/codex'},
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.mcp.status.list',
+      'servers': [
+        {
+          'name': 'github',
+          'status': 'enabled',
+          'authStatus': 'unauthenticated',
+          'toolCount': 2,
+          'tools': ['search_issues', 'create_issue'],
+          'resourceCount': 1,
+        },
+      ],
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.mcp.oauth.login.started',
+      'serverName': 'github',
+      'loginUrl': 'https://github.com/login/oauth/authorize',
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.remote.status',
+      'status': {
+        'enabled': true,
+        'connectionStatus': 'connected',
+        'serverName': 'unit-host',
+        'environmentId': 'env-1',
+      },
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.remote.pairing.started',
+      'pairing': {
+        'pairingCode': 'PAIR-123',
+        'manualPairingCode': '123456',
+        'environmentId': 'env-1',
+      },
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'app.account.rateLimits',
+      'limits': [
+        {
+          'limitId': 'codex',
+          'planType': 'pro',
+          'usedPercent': 5,
+          'remainingPercent': 95,
+          'windowDurationMins': 43200,
+        },
+      ],
+    });
+
+    expect(
+      controller.appPluginMarketplaces.single.plugins.single.name,
+      'github',
+    );
+    expect(controller.appSelectedPlugin?.skills.single.name, 'github-prs');
+    expect(controller.appPluginInstallResult?.installed, isTrue);
+    expect(controller.appMcpServers.single.tools, contains('create_issue'));
+    expect(controller.appMcpOauthLogin?.loginUrl, contains('github.com'));
+    expect(controller.appRemoteStatus?.serverName, 'unit-host');
+    expect(controller.appRemoteStatus?.connectionStatus, 'connected');
+    expect(controller.appRemotePairing?.manualPairingCode, '123456');
+    expect(controller.appRateLimits.single.remainingPercent, 95);
   });
 
   test(
@@ -1152,7 +1436,7 @@ void main() {
     expect(controller.latestErrorText, contains('Very long host error'));
   });
 
-  test('new mobile commands route to native app controls', () {
+  test('remaining mobile commands route to native app controls', () {
     final socket = FakeBridgeSocketClient();
     final controller = AppController(socket: socket)
       ..phase = ConnectionPhase.connected
@@ -1173,31 +1457,16 @@ void main() {
         ],
       });
 
-    for (final commandId in [
-      'codex.workspace',
-      'codex.skills',
-      'codex.files',
-      'codex.history',
-      'codex.approvals',
-      'codex.tunnel',
-      'codex.review',
-    ]) {
-      controller.runCommand(
-        CodexCommandInfo(
-          commandId: commandId,
-          title: commandId.split('.').last,
-          description: 'unit',
-          category: 'session',
-        ),
-      );
-    }
+    controller.runCommand(
+      const CodexCommandInfo(
+        commandId: 'codex.review',
+        title: 'review',
+        description: 'unit',
+        category: 'agent',
+      ),
+    );
 
     expect(socket.sentMessages, [
-      {'type': 'workspace.list'},
-      {'type': 'app.skill.list', 'sessionId': 's1', 'forceReload': true},
-      {'type': 'app.fs.list', 'sessionId': 's1', 'path': ''},
-      {'type': 'app.thread.list', 'sessionId': 's1', 'limit': 40},
-      {'type': 'external.session.list'},
       {
         'type': 'app.review.start',
         'sessionId': 's1',
@@ -1278,7 +1547,7 @@ void main() {
               'role': 'assistant',
               'kind': 'response',
               'title': 'Response',
-              'text': 'Done with the command center\nTests are next',
+              'text': 'Done with app-server actions\nTests are next',
               'createdAt': '2026-06-08T00:00:01.000Z',
               'complete': true,
             },
@@ -1295,7 +1564,7 @@ void main() {
       expect(controller.latestNotice?.title, 'Task finished');
       expect(
         controller.latestNotice?.body,
-        contains('Done with the command center'),
+        contains('Done with app-server actions'),
       );
       expect(notifier.notifications.single.title, 'Task finished');
     },

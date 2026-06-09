@@ -13,6 +13,7 @@ The Flutter app is the primary Codex Link client. It is built for Android and op
 - File download cards and inline image previews.
 - `@` workspace file mentions.
 - Slash commands for native host actions.
+- App Server Actions screen for plugins, MCP OAuth, remote pairing, usage limits, and pending interactive requests.
 - Dark and light appearance modes plus accent selection.
 - GitHub release update checks.
 
@@ -31,7 +32,7 @@ The chat composer shows slash command suggestions inline above the input. Common
 - `/doctor` to inspect host/session status.
 - `/status` and related app commands when exposed by the host.
 
-The command center contains broader operational panels for workspaces, sessions, files, skills, review, diagnostics, and approvals.
+Interactive app-server operations live in App Server Actions. Workspace and session browsing stay in the sidebar, while account, model, theme, connection, and env-secret controls stay in Settings.
 
 ## File Mentions
 

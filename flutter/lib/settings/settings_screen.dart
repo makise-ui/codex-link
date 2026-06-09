@@ -7,7 +7,15 @@ import '../protocol/bridge_messages.dart';
 import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 
-enum SettingsSection { connection, account, updates, mode, model, appearance }
+enum SettingsSection {
+  connection,
+  account,
+  env,
+  updates,
+  mode,
+  model,
+  appearance,
+}
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.initialSection});
@@ -151,6 +159,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _ThemeModePicker(controller: controller),
                   _AccentPicker(controller: controller),
                 ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                key: _sectionKeys[SettingsSection.env],
+                title: 'Env Secrets',
+                children: [_EnvSecretsSection(controller: controller)],
               ),
               const SizedBox(height: AppSpacing.lg),
               _Section(
@@ -463,6 +477,109 @@ class _ApiKeyDialogState extends State<_ApiKeyDialog> {
   }
 }
 
+class _EnvSecretsSection extends StatelessWidget {
+  const _EnvSecretsSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final workspace = controller.activeSession?.workdir ?? 'No workspace';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.md,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingRow(
+            icon: Icons.enhanced_encryption_rounded,
+            title: '.env.local',
+            subtitle: controller.envSecretsStatusText ?? workspace,
+            trailing: controller.envSecretsBusy
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : FilledButton.tonalIcon(
+                    onPressed: controller.isConnected
+                        ? () => _showEnvSecretsDialog(context, controller)
+                        : null,
+                    icon: const Icon(Icons.add_rounded, size: 17),
+                    label: const Text('Add'),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _showEnvSecretsDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  final content = await showDialog<String>(
+    context: context,
+    builder: (context) => const _EnvSecretsDialog(),
+  );
+  if (content == null || content.trim().isEmpty) return;
+  controller.setWorkspaceEnvSecrets(content);
+}
+
+class _EnvSecretsDialog extends StatefulWidget {
+  const _EnvSecretsDialog();
+
+  @override
+  State<_EnvSecretsDialog> createState() => _EnvSecretsDialogState();
+}
+
+class _EnvSecretsDialogState extends State<_EnvSecretsDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_controller.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Env secrets'),
+      content: SizedBox(
+        width: 420,
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          minLines: 6,
+          maxLines: 10,
+          keyboardType: TextInputType.multiline,
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.key_rounded),
+            labelText: 'NAME=value',
+            hintText: 'OPENAI_API_KEY=...\nALLOWED_HOSTS=one,two',
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
 Future<void> _openUrl(String rawUrl) async {
   final uri = Uri.tryParse(rawUrl);
   if (uri == null) return;
@@ -474,6 +591,7 @@ String _accountSubtitle(CodexAccountInfo? account) {
   final parts = [
     if (account.authMode?.trim().isNotEmpty == true) 'auth ${account.authMode}',
     if (account.planType?.trim().isNotEmpty == true) 'plan ${account.planType}',
+    'limits unavailable',
     account.requiresOpenaiAuth ? 'auth required' : 'ready',
   ];
   return parts.join(' · ');

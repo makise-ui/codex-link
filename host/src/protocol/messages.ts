@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 12;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
 export type MessageKind = "thinking" | "reasoning" | "executing" | "response" | "system";
@@ -32,6 +32,7 @@ export type ClientMessage =
   | WorkspaceAddMessage
   | WorkspaceSwitchMessage
   | WorkspaceFileSearchMessage
+  | WorkspaceEnvSetMessage
   | ExternalSessionListRequestMessage
   | ExternalSessionImportMessage
   | AppModelListRequestMessage
@@ -40,12 +41,23 @@ export type ClientMessage =
   | AppSkillListRequestMessage
   | AppFsListRequestMessage
   | AppFsReadRequestMessage
+  | AppFsWriteRequestMessage
+  | AppFsCreateDirectoryRequestMessage
   | AppFileSearchRequestMessage
   | AppReviewStartRequestMessage
   | AppAccountReadRequestMessage
   | AppAccountLoginStartRequestMessage
   | AppAccountLoginCancelRequestMessage
   | AppAccountLogoutRequestMessage
+  | AppAccountRateLimitsReadRequestMessage
+  | AppPluginListRequestMessage
+  | AppPluginReadRequestMessage
+  | AppPluginInstallRequestMessage
+  | AppPluginUninstallRequestMessage
+  | AppMcpStatusListRequestMessage
+  | AppMcpOauthLoginRequestMessage
+  | AppRemoteStatusReadRequestMessage
+  | AppRemotePairingStartRequestMessage
   | CommandListRequestMessage
   | CommandRunMessage
   | PromptSendMessage
@@ -110,6 +122,7 @@ export type SessionConfigSetMessage = {
   sessionId: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: string | null;
 };
 
 export type SessionGoalSetMessage = {
@@ -152,6 +165,13 @@ export type WorkspaceFileSearchMessage = {
   sessionId: string;
   query?: string;
   limit?: number;
+};
+
+export type WorkspaceEnvSetMessage = {
+  type: "workspace.env.set";
+  sessionId: string;
+  content: string;
+  path?: string;
 };
 
 export type ExternalSessionListRequestMessage = {
@@ -200,6 +220,19 @@ export type AppFsReadRequestMessage = {
   path: string;
 };
 
+export type AppFsWriteRequestMessage = {
+  type: "app.fs.write";
+  sessionId: string;
+  path: string;
+  dataBase64: string;
+};
+
+export type AppFsCreateDirectoryRequestMessage = {
+  type: "app.fs.createDirectory";
+  sessionId: string;
+  path: string;
+};
+
 export type AppFileSearchRequestMessage = {
   type: "app.file.search";
   sessionId: string;
@@ -234,6 +267,54 @@ export type AppAccountLoginCancelRequestMessage = {
 
 export type AppAccountLogoutRequestMessage = {
   type: "app.account.logout";
+};
+
+export type AppAccountRateLimitsReadRequestMessage = {
+  type: "app.account.rateLimits.read";
+};
+
+export type AppPluginListRequestMessage = {
+  type: "app.plugin.list";
+  sessionId?: string;
+};
+
+export type AppPluginReadRequestMessage = {
+  type: "app.plugin.read";
+  pluginName: string;
+  marketplacePath?: string;
+  remoteMarketplaceName?: string;
+};
+
+export type AppPluginInstallRequestMessage = {
+  type: "app.plugin.install";
+  pluginName: string;
+  marketplacePath?: string;
+  remoteMarketplaceName?: string;
+};
+
+export type AppPluginUninstallRequestMessage = {
+  type: "app.plugin.uninstall";
+  pluginName: string;
+};
+
+export type AppMcpStatusListRequestMessage = {
+  type: "app.mcp.status.list";
+  sessionId?: string;
+  detail?: "full" | "toolsAndAuthOnly";
+};
+
+export type AppMcpOauthLoginRequestMessage = {
+  type: "app.mcp.oauth.login";
+  serverName: string;
+};
+
+export type AppRemoteStatusReadRequestMessage = {
+  type: "app.remote.status.read";
+};
+
+export type AppRemotePairingStartRequestMessage = {
+  type: "app.remote.pairing.start";
+  manualPairingCode?: string;
 };
 
 export type CommandListRequestMessage = {
@@ -300,12 +381,15 @@ export type ServerMessage =
   | WorkspaceListMessage
   | WorkspaceUpdatedMessage
   | WorkspaceFileSearchResultsMessage
+  | WorkspaceEnvUpdatedMessage
   | ExternalSessionListMessage
   | AppModelListMessage
   | AppThreadListMessage
   | AppSkillListMessage
   | AppFsListMessage
   | AppFsFileMessage
+  | AppFsWriteResultMessage
+  | AppFsDirectoryCreatedMessage
   | AppFileSearchResultsMessage
   | AppReviewStartedMessage
   | AppAccountStatusMessage
@@ -313,6 +397,15 @@ export type ServerMessage =
   | AppAccountLoginCancelledMessage
   | AppAccountUpdatedMessage
   | AppAccountLoginCompletedMessage
+  | AppAccountRateLimitsMessage
+  | AppPluginListMessage
+  | AppPluginDetailMessage
+  | AppPluginInstallResultMessage
+  | AppPluginUninstallResultMessage
+  | AppMcpStatusListMessage
+  | AppMcpOauthLoginStartedMessage
+  | AppRemoteStatusMessage
+  | AppRemotePairingStartedMessage
   | CommandListMessage
   | SessionGoalUpdatedMessage
   | SessionGoalClearedMessage
@@ -345,6 +438,7 @@ export type SessionRecord = {
   sandbox: SandboxMode;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: string | null;
   goal?: SessionGoalRecord;
 };
 
@@ -417,7 +511,15 @@ export type AppModelRecord = {
   defaultReasoningEffort?: ReasoningEffort;
   inputModalities: string[];
   supportsPersonality: boolean;
+  serviceTiers: AppModelServiceTierRecord[];
+  defaultServiceTier?: string | null;
   isDefault: boolean;
+};
+
+export type AppModelServiceTierRecord = {
+  id: string;
+  name: string;
+  description?: string;
 };
 
 export type AppThreadRecord = {
@@ -470,6 +572,103 @@ export type AppFsFileRecord = {
   mimeType?: string;
   text?: string;
   dataBase64?: string;
+};
+
+export type AppPluginAuthAppRecord = {
+  name: string;
+  authStatus?: string;
+  installUrl?: string;
+};
+
+export type AppPluginMcpServerRecord = {
+  name: string;
+  authStatus?: string;
+  toolCount?: number;
+};
+
+export type AppPluginSkillRecord = {
+  name: string;
+  description?: string;
+};
+
+export type AppPluginSummaryRecord = {
+  id?: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  version?: string;
+  installed: boolean;
+  enabled: boolean;
+  category?: string;
+  marketplacePath?: string;
+  remoteMarketplaceName?: string;
+  authType?: string;
+};
+
+export type AppPluginMarketplaceRecord = {
+  name: string;
+  displayName?: string;
+  path?: string;
+  plugins: AppPluginSummaryRecord[];
+};
+
+export type AppPluginDetailRecord = AppPluginSummaryRecord & {
+  skills: AppPluginSkillRecord[];
+  apps: AppPluginAuthAppRecord[];
+  mcpServers: AppPluginMcpServerRecord[];
+};
+
+export type AppPluginInstallResultRecord = {
+  pluginName: string;
+  installed: boolean;
+  message?: string;
+  appsNeedingAuth: AppPluginAuthAppRecord[];
+};
+
+export type AppPluginUninstallResultRecord = {
+  pluginName: string;
+  uninstalled: boolean;
+  message?: string;
+};
+
+export type AppMcpServerRecord = {
+  name: string;
+  status?: string;
+  authStatus?: string;
+  toolCount: number;
+  tools: string[];
+  resourceCount: number;
+};
+
+export type AppMcpOauthLoginRecord = {
+  serverName: string;
+  loginUrl?: string;
+  status?: string;
+  message?: string;
+};
+
+export type AppRemoteControlStatusRecord = {
+  enabled: boolean;
+  connectionStatus?: "disabled" | "connecting" | "connected" | "errored" | string;
+  serverName?: string;
+  environmentId?: string;
+  installationId?: string;
+};
+
+export type AppRemotePairingRecord = {
+  pairingCode?: string;
+  manualPairingCode?: string;
+  environmentId?: string;
+  expiresAt?: number;
+};
+
+export type AppRateLimitRecord = {
+  limitId: string;
+  planType?: string;
+  usedPercent: number;
+  remainingPercent: number;
+  windowDurationMins?: number;
+  resetsAt?: number;
 };
 
 export type PairingAcceptedMessage = {
@@ -544,6 +743,14 @@ export type WorkspaceFileSearchResultsMessage = {
   files: WorkspaceFileRecord[];
 };
 
+export type WorkspaceEnvUpdatedMessage = {
+  type: "workspace.env.updated";
+  sessionId: string;
+  path: string;
+  variableNames: string[];
+  skippedLineCount: number;
+};
+
 export type ExternalSessionListMessage = {
   type: "external.session.list";
   sessions: ExternalSessionRecord[];
@@ -576,6 +783,18 @@ export type AppFsFileMessage = {
   type: "app.fs.file";
   sessionId: string;
   file: AppFsFileRecord;
+};
+
+export type AppFsWriteResultMessage = {
+  type: "app.fs.write.result";
+  sessionId: string;
+  file: AppFsFileRecord;
+};
+
+export type AppFsDirectoryCreatedMessage = {
+  type: "app.fs.directory.created";
+  sessionId: string;
+  path: string;
 };
 
 export type AppFileSearchResultsMessage = {
@@ -632,6 +851,48 @@ export type AppAccountLoginCompletedMessage = {
   loginId?: string | null;
   success: boolean;
   error?: string | null;
+};
+
+export type AppAccountRateLimitsMessage = {
+  type: "app.account.rateLimits";
+  limits: AppRateLimitRecord[];
+};
+
+export type AppPluginListMessage = {
+  type: "app.plugin.list";
+  marketplaces: AppPluginMarketplaceRecord[];
+};
+
+export type AppPluginDetailMessage = {
+  type: "app.plugin.detail";
+  plugin: AppPluginDetailRecord;
+};
+
+export type AppPluginInstallResultMessage = {
+  type: "app.plugin.install.result";
+} & AppPluginInstallResultRecord;
+
+export type AppPluginUninstallResultMessage = {
+  type: "app.plugin.uninstall.result";
+} & AppPluginUninstallResultRecord;
+
+export type AppMcpStatusListMessage = {
+  type: "app.mcp.status.list";
+  servers: AppMcpServerRecord[];
+};
+
+export type AppMcpOauthLoginStartedMessage = {
+  type: "app.mcp.oauth.login.started";
+} & AppMcpOauthLoginRecord;
+
+export type AppRemoteStatusMessage = {
+  type: "app.remote.status";
+  status: AppRemoteControlStatusRecord;
+};
+
+export type AppRemotePairingStartedMessage = {
+  type: "app.remote.pairing.started";
+  pairing: AppRemotePairingRecord;
 };
 
 export type CommandListMessage = {

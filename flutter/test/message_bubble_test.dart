@@ -142,7 +142,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Ran command'), findsOneWidget);
+    expect(find.text('Ran 2 commands'), findsOneWidget);
     expect(find.text('pnpm test'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('activity-stack-toggle')));
@@ -150,6 +150,69 @@ void main() {
 
     expect(find.textContaining('pnpm test'), findsOneWidget);
     expect(find.textContaining('flutter analyze'), findsOneWidget);
+  });
+
+  testWidgets('single running command names the command in the summary', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: ActivityStackBubble(
+            messages: [
+              ChatMessage(
+                id: 'cmd-1',
+                role: ChatRole.system,
+                kind: AgentMessageKind.executing,
+                text: 'flutter pub get\nResolving dependencies...',
+                createdAt: DateTime(2026),
+                title: 'Running command',
+                complete: false,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Running: flutter pub get...'), findsOneWidget);
+  });
+
+  testWidgets('multiple running commands collapse to command count', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: ActivityStackBubble(
+            messages: [
+              ChatMessage(
+                id: 'cmd-1',
+                role: ChatRole.system,
+                kind: AgentMessageKind.executing,
+                text: 'flutter pub get',
+                createdAt: DateTime(2026),
+                title: 'Running command',
+                complete: false,
+              ),
+              ChatMessage(
+                id: 'cmd-2',
+                role: ChatRole.system,
+                kind: AgentMessageKind.executing,
+                text: 'flutter analyze',
+                createdAt: DateTime(2026),
+                title: 'Running command',
+                complete: false,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Running 2 commands...'), findsOneWidget);
   });
 
   testWidgets('shows read filename in collapsed activity summary', (
@@ -200,14 +263,16 @@ void main() {
       ),
     );
 
-    expect(find.text('Files changed'), findsOneWidget);
-    expect(find.text('2 files'), findsOneWidget);
-    expect(find.text('lib/new_file.dart'), findsNothing);
+    expect(find.text('Edited 2 files'), findsOneWidget);
+    expect(find.text('Edit:lib/new_file.dart'), findsNothing);
+    expect(find.text('Edit:lib/chat.dart'), findsNothing);
     expect(find.text('+class NewFile {}'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
     await tester.pumpAndSettle();
 
+    expect(find.text('Edit:lib/new_file.dart'), findsOneWidget);
+    expect(find.text('Edit:lib/chat.dart'), findsOneWidget);
     expect(find.text('lib/new_file.dart'), findsOneWidget);
     expect(find.text('lib/chat.dart'), findsOneWidget);
     expect(find.text('added'), findsOneWidget);
@@ -215,6 +280,63 @@ void main() {
     expect(find.text('+class NewFile {}'), findsOneWidget);
     expect(find.text('-old'), findsOneWidget);
     expect(find.text('+new'), findsOneWidget);
+  });
+
+  testWidgets('single file edit shows the edited path directly', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'files-1',
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              text: 'modified lib/chat.dart\n-old\n+new',
+              createdAt: DateTime(2026),
+              title: 'Files changed',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Edit:lib/chat.dart'), findsOneWidget);
+    expect(find.text('Edited 1 file'), findsNothing);
+  });
+
+  testWidgets('multiple generated files show as agent attachments', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'file-offers',
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              text:
+                  'generated build/app-release.apk\nsize 12\nfileId file-1\ngenerated screenshots/home.png\nsize 68\nfileId file-2',
+              createdAt: DateTime(2026),
+              title: 'File available',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Agent attached 2 files'), findsOneWidget);
+    expect(find.text('File:build/app-release.apk'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('File:build/app-release.apk'), findsOneWidget);
+    expect(find.text('File:screenshots/home.png'), findsOneWidget);
   });
 
   testWidgets('assistant response does not show a visible copy button', (

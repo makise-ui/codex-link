@@ -237,42 +237,14 @@ class AnimatedChatGptBackdrop extends StatelessWidget {
     final light = isCodexLight(context);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: light ? LightCodexColors.ink : CodexColors.ink,
+        color: light ? LightCodexColors.ink : CodexColors.ink2,
       ),
       child: Stack(
         fit: StackFit.expand,
         children: [
           DecoratedBox(
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: light
-                    ? const [
-                        Color(0xFFFFFFFF),
-                        Color(0xFFF4F4F0),
-                        Color(0xFFEDEDE8),
-                      ]
-                    : const [
-                        Color(0xFF171719),
-                        Color(0xFF050506),
-                        Color(0xFF202023),
-                      ],
-                stops: [0.0, 0.58, 1.0],
-              ),
-            ),
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.white.withValues(alpha: 0.055),
-                  Colors.transparent,
-                  Colors.white.withValues(alpha: 0.025),
-                ],
-              ),
+              color: light ? LightCodexColors.ink : CodexColors.ink2,
             ),
           ),
           child,

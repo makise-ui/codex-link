@@ -6,6 +6,7 @@ const fakeAppServerScript = String.raw`
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
 const threadId = "thread-test";
+let remoteControlEnabled = false;
 const makeThread = () => ({
   id: threadId,
   sessionId: "session-test",
@@ -98,7 +99,7 @@ rl.on("line", (line) => {
           inputModalities: ["text", "image"],
           supportsPersonality: true,
           additionalSpeedTiers: [],
-          serviceTiers: [],
+          serviceTiers: [{ id: "priority", name: "Priority", description: "Faster responses for more credits" }],
           defaultServiceTier: null,
           isDefault: true,
           upgrade: null,
@@ -210,6 +211,48 @@ rl.on("line", (line) => {
         startedAtMs: 1,
         item: {
           type: "commandExecution",
+          id: "cmd-skill",
+          command: "sed -n '1,80p' /home/unit/.codex/skills/flutter-design-system/SKILL.md",
+          cwd: process.cwd(),
+          processId: "proc-skill",
+          source: "exec",
+          status: "inProgress",
+          commandActions: [{ type: "read", command: "sed", name: "SKILL.md", path: "/home/unit/.codex/skills/flutter-design-system/SKILL.md" }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      },
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId,
+        completedAtMs: 1,
+        item: {
+          type: "commandExecution",
+          id: "cmd-skill",
+          command: "sed -n '1,80p' /home/unit/.codex/skills/flutter-design-system/SKILL.md",
+          cwd: process.cwd(),
+          processId: "proc-skill",
+          source: "exec",
+          status: "completed",
+          commandActions: [{ type: "read", command: "sed", name: "SKILL.md", path: "/home/unit/.codex/skills/flutter-design-system/SKILL.md" }],
+          aggregatedOutput: "",
+          exitCode: 0,
+          durationMs: 8,
+        },
+      },
+    });
+    write({
+      method: "item/started",
+      params: {
+        threadId,
+        turnId,
+        startedAtMs: 1,
+        item: {
+          type: "commandExecution",
           id: "cmd-1",
           command: "sed -n '1,20p' notes.txt",
           cwd: process.cwd(),
@@ -286,6 +329,20 @@ rl.on("line", (line) => {
     });
     return;
   }
+  if (message.method === "account/rateLimits/read") {
+    respond(message.id, {
+      rateLimits: {
+        limitId: "codex",
+        planType: "pro",
+        primary: {
+          usedPercent: 5,
+          windowDurationMins: 43200,
+          resetsAt: 1719900000,
+        },
+      },
+    });
+    return;
+  }
   if (message.method === "getAuthStatus") {
     respond(message.id, {
       authMethod: "chatgpt",
@@ -329,6 +386,113 @@ rl.on("line", (line) => {
     write({ method: "account/updated", params: { authMode: null, planType: null } });
     return;
   }
+  if (message.method === "plugin/list") {
+    respond(message.id, {
+      marketplaces: [
+        {
+          name: "openai-curated",
+          displayName: "OpenAI curated",
+          path: "/tmp/marketplace/openai-curated",
+          plugins: [
+            {
+              id: "github",
+              name: "github",
+              displayName: "GitHub",
+              description: "Work with GitHub issues and pull requests.",
+              version: "1.0.0",
+              installed: false,
+              enabled: true,
+              categories: ["Development"],
+              auth: { type: "oauth" },
+            },
+          ],
+        },
+      ],
+    });
+    return;
+  }
+  if (message.method === "plugin/read") {
+    respond(message.id, {
+      plugin: {
+        id: message.params.pluginName,
+        name: message.params.pluginName,
+        displayName: "GitHub",
+        description: "Work with GitHub issues and pull requests.",
+        version: "1.0.0",
+        installed: false,
+        enabled: true,
+        skills: [{ name: "github-prs", description: "Review pull requests." }],
+        apps: [{ name: "github", authStatus: "unauthenticated", installUrl: "https://github.com/apps/codex" }],
+        mcpServers: [{ name: "github", authStatus: "unauthenticated", toolCount: 8 }],
+      },
+    });
+    return;
+  }
+  if (message.method === "plugin/install") {
+    respond(message.id, {
+      pluginName: message.params.pluginName,
+      installed: true,
+      appsNeedingAuth: [{ name: "github", installUrl: "https://github.com/apps/codex" }],
+    });
+    return;
+  }
+  if (message.method === "plugin/uninstall") {
+    respond(message.id, { pluginName: message.params.pluginName, uninstalled: true });
+    return;
+  }
+  if (message.method === "mcpServerStatus/list") {
+    respond(message.id, {
+      servers: [
+        {
+          name: "github",
+          status: "enabled",
+          authStatus: "unauthenticated",
+          tools: [{ name: "search_issues" }, { name: "create_issue" }],
+          resources: [{ uri: "repo://issues", name: "Issues" }],
+        },
+      ],
+    });
+    return;
+  }
+  if (message.method === "mcpServer/oauth/login") {
+    respond(message.id, {
+      serverName: message.params.name,
+      loginUrl: "https://github.com/login/oauth/authorize?client_id=unit",
+    });
+    return;
+  }
+  if (message.method === "remoteControl/status/read") {
+    respond(message.id, {
+      status: remoteControlEnabled ? "connected" : "disabled",
+      serverName: "unit-host",
+      environmentId: remoteControlEnabled ? "env-1" : null,
+      installationId: "install-1",
+    });
+    return;
+  }
+  if (message.method === "remoteControl/enable") {
+    remoteControlEnabled = true;
+    respond(message.id, {
+      status: "connected",
+      serverName: "unit-host",
+      environmentId: "env-1",
+      installationId: "install-1",
+    });
+    return;
+  }
+  if (message.method === "remoteControl/pairing/start") {
+    if (!remoteControlEnabled) {
+      write({ id: message.id, error: { code: -32600, message: "remote control pairing requires remote control to be enabled" } });
+      return;
+    }
+    respond(message.id, {
+      pairingCode: "PAIR-123",
+      manualPairingCode: message.params.manualCode ? "PAIR-123" : null,
+      environmentId: "env-1",
+      expiresAt: 1719900300,
+    });
+    return;
+  }
   respond(message.id, {});
 });
 `;
@@ -355,6 +519,7 @@ describe("AppServerCodexSession", () => {
     expect(savedThreadId).toBe("thread-test");
     expect(events.some((event) => event.type === "run.started" && event.runId === "turn-1")).toBe(true);
     expect(events.some((event) => event.type === "message.started" && event.title === "Reading file")).toBe(true);
+    expect(events.some((event) => event.type === "message.started" && event.title === "Using skill")).toBe(true);
     expect(events.some((event) => event.type === "message.started" && event.title === "Thinking summary")).toBe(true);
     expect(events).toContainEqual({
       type: "session.plan.updated",
@@ -366,6 +531,7 @@ describe("AppServerCodexSession", () => {
     expect(events.some((event) => event.type === "message.started" && event.title === "Plan")).toBe(false);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("Checked repository shape"))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("Reading project metadata"))).toBe(true);
+    expect(events.some((event) => event.type === "message.delta" && event.text.includes("Using skill: flutter-design-system"))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("Terminal input"))).toBe(true);
     expect(events.some((event) => event.type === "message.delta" && event.text.includes("notes content"))).toBe(true);
     expect(events.some((event) => event.type === "diff.available" && event.files.some((file) => file.path === "notes.txt" && file.patch?.includes("+new")))).toBe(true);
@@ -449,6 +615,55 @@ describe("AppServerCodexSession", () => {
     await session.close();
   });
 
+  it("exposes interactive app-server actions for plugins, MCP, remote control, and rate limits", async () => {
+    const session = new AppServerCodexSession({
+      command: process.execPath,
+      argsPrefix: ["-e", fakeAppServerScript],
+      workdir: process.cwd(),
+    });
+
+    const plugins = await session.listPlugins({ cwd: process.cwd() });
+    const plugin = await session.readPlugin({ pluginName: "github", marketplacePath: "/tmp/marketplace/openai-curated" });
+    const install = await session.installPlugin({ pluginName: "github", marketplacePath: "/tmp/marketplace/openai-curated" });
+    const uninstall = await session.uninstallPlugin("github");
+    const mcpServers = await session.listMcpServers({ detail: "toolsAndAuthOnly" });
+    const oauth = await session.startMcpOauthLogin("github");
+    const remoteStatus = await session.readRemoteControlStatus();
+    const pairing = await session.startRemoteControlPairing({ manualPairingCode: "123456" });
+    const rateLimits = await session.readRateLimits();
+
+    expect(plugins.marketplaces[0]).toMatchObject({
+      name: "openai-curated",
+      plugins: [expect.objectContaining({ name: "github", displayName: "GitHub" })],
+    });
+    expect(plugin).toMatchObject({
+      name: "github",
+      displayName: "GitHub",
+      apps: [expect.objectContaining({ name: "github", installUrl: expect.stringContaining("github.com") })],
+    });
+    expect(install).toMatchObject({
+      pluginName: "github",
+      installed: true,
+      appsNeedingAuth: [expect.objectContaining({ name: "github" })],
+    });
+    expect(uninstall).toEqual({ pluginName: "github", uninstalled: true });
+    expect(mcpServers).toEqual([expect.objectContaining({ name: "github", toolCount: 2, tools: ["search_issues", "create_issue"] })]);
+    expect(oauth).toMatchObject({ serverName: "github", loginUrl: expect.stringContaining("github.com") });
+    expect(remoteStatus).toMatchObject({ enabled: false, connectionStatus: "disabled", serverName: "unit-host" });
+    expect(pairing).toMatchObject({ pairingCode: "PAIR-123", manualPairingCode: "PAIR-123", environmentId: "env-1" });
+    expect(rateLimits).toEqual([
+      expect.objectContaining({
+        limitId: "codex",
+        planType: "pro",
+        usedPercent: 5,
+        remainingPercent: 95,
+        windowDurationMins: 43200,
+      }),
+    ]);
+
+    await session.close();
+  });
+
   it("exposes native app-server models, threads, skills, filesystem, fuzzy search, and review", async () => {
     const session = new AppServerCodexSession({
       command: process.execPath,
@@ -466,7 +681,7 @@ describe("AppServerCodexSession", () => {
     const review = await session.startReview({ target: { type: "uncommittedChanges" }, delivery: "inline" });
 
     expect(models).toMatchObject({
-      models: [expect.objectContaining({ id: "gpt-test", displayName: "GPT Test", supportedReasoningEfforts: ["low", "high"] })],
+      models: [expect.objectContaining({ id: "gpt-test", displayName: "GPT Test", supportedReasoningEfforts: ["low", "high"], serviceTiers: [expect.objectContaining({ id: "priority", name: "Priority" })] })],
       capabilities: { namespaceTools: true, imageGeneration: true, webSearch: true },
     });
     expect(threads).toEqual([expect.objectContaining({ threadId: "native-thread", title: "Native app-server history", workdir: process.cwd() })]);

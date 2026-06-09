@@ -66,6 +66,7 @@ export const sessionConfigSetSchema = z.object({
   sessionId: sessionIdSchema,
   model: z.string().trim().max(120).optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
+  serviceTier: z.string().trim().max(80).nullable().optional(),
 });
 
 export const sessionGoalSetSchema = z.object({
@@ -108,6 +109,13 @@ export const workspaceFileSearchSchema = z.object({
   sessionId: sessionIdSchema,
   query: z.string().trim().max(240).optional(),
   limit: z.number().int().min(1).max(80).optional(),
+});
+
+export const workspaceEnvSetSchema = z.object({
+  type: z.literal("workspace.env.set"),
+  sessionId: sessionIdSchema,
+  content: z.string().min(1).max(64 * 1024),
+  path: z.enum([".env", ".env.local"]).optional(),
 });
 
 export const externalSessionListSchema = z.object({
@@ -156,6 +164,19 @@ export const appFsReadSchema = z.object({
   path: z.string().trim().min(1).max(4096),
 });
 
+export const appFsWriteSchema = z.object({
+  type: z.literal("app.fs.write"),
+  sessionId: sessionIdSchema,
+  path: z.string().trim().min(1).max(4096),
+  dataBase64: z.string().min(1).max(8 * 1024 * 1024),
+});
+
+export const appFsCreateDirectorySchema = z.object({
+  type: z.literal("app.fs.createDirectory"),
+  sessionId: sessionIdSchema,
+  path: z.string().trim().min(1).max(4096),
+});
+
 export const appFileSearchSchema = z.object({
   type: z.literal("app.file.search"),
   sessionId: sessionIdSchema,
@@ -190,6 +211,56 @@ export const appAccountLoginCancelSchema = z.object({
 
 export const appAccountLogoutSchema = z.object({
   type: z.literal("app.account.logout"),
+});
+
+export const appAccountRateLimitsReadSchema = z.object({
+  type: z.literal("app.account.rateLimits.read"),
+});
+
+export const appPluginListSchema = z.object({
+  type: z.literal("app.plugin.list"),
+  sessionId: sessionIdSchema.optional(),
+});
+
+const appPluginLocatorSchema = {
+  pluginName: z.string().trim().min(1).max(160),
+  marketplacePath: z.string().trim().min(1).max(4096).optional(),
+  remoteMarketplaceName: z.string().trim().min(1).max(160).optional(),
+};
+
+export const appPluginReadSchema = z.object({
+  type: z.literal("app.plugin.read"),
+  ...appPluginLocatorSchema,
+});
+
+export const appPluginInstallSchema = z.object({
+  type: z.literal("app.plugin.install"),
+  ...appPluginLocatorSchema,
+});
+
+export const appPluginUninstallSchema = z.object({
+  type: z.literal("app.plugin.uninstall"),
+  pluginName: z.string().trim().min(1).max(160),
+});
+
+export const appMcpStatusListSchema = z.object({
+  type: z.literal("app.mcp.status.list"),
+  sessionId: sessionIdSchema.optional(),
+  detail: z.enum(["full", "toolsAndAuthOnly"]).optional(),
+});
+
+export const appMcpOauthLoginSchema = z.object({
+  type: z.literal("app.mcp.oauth.login"),
+  serverName: z.string().trim().min(1).max(160),
+});
+
+export const appRemoteStatusReadSchema = z.object({
+  type: z.literal("app.remote.status.read"),
+});
+
+export const appRemotePairingStartSchema = z.object({
+  type: z.literal("app.remote.pairing.start"),
+  manualPairingCode: z.string().trim().min(1).max(160).optional(),
 });
 
 export const commandListSchema = z.object({
@@ -256,6 +327,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   workspaceAddSchema,
   workspaceSwitchSchema,
   workspaceFileSearchSchema,
+  workspaceEnvSetSchema,
   externalSessionListSchema,
   externalSessionImportSchema,
   appModelListSchema,
@@ -264,12 +336,23 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   appSkillListSchema,
   appFsListSchema,
   appFsReadSchema,
+  appFsWriteSchema,
+  appFsCreateDirectorySchema,
   appFileSearchSchema,
   appReviewStartSchema,
   appAccountReadSchema,
   appAccountLoginStartSchema,
   appAccountLoginCancelSchema,
   appAccountLogoutSchema,
+  appAccountRateLimitsReadSchema,
+  appPluginListSchema,
+  appPluginReadSchema,
+  appPluginInstallSchema,
+  appPluginUninstallSchema,
+  appMcpStatusListSchema,
+  appMcpOauthLoginSchema,
+  appRemoteStatusReadSchema,
+  appRemotePairingStartSchema,
   commandListSchema,
   commandRunSchema,
   promptSendSchema,

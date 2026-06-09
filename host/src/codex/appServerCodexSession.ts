@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
-import type { AppFsEntryRecord, AppFsFileRecord, AppModelRecord, AppProviderCapabilitiesRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginFlow, CodexAccountType, CodexAuthMode, GoalStatus, MessageKind, ReasoningEffort, SandboxMode, SessionGoalRecord, StoredChatMessage, WorkspaceFileRecord } from "../protocol/messages.js";
-import type { AccountLoginCancelResult, AccountLoginStartInput, AppFileSearchInput, AppModelListResult, AppReviewStartInput, AppReviewStartResult, AppSkillListInput, AppThreadListInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptOptions, SendPromptResult } from "./codexSession.js";
+import type { AppFsEntryRecord, AppFsFileRecord, AppMcpOauthLoginRecord, AppMcpServerRecord, AppModelRecord, AppPluginDetailRecord, AppPluginInstallResultRecord, AppPluginMarketplaceRecord, AppPluginSummaryRecord, AppPluginUninstallResultRecord, AppProviderCapabilitiesRecord, AppRateLimitRecord, AppRemoteControlStatusRecord, AppRemotePairingRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginFlow, CodexAccountType, CodexAuthMode, GoalStatus, MessageKind, ReasoningEffort, SandboxMode, SessionGoalRecord, StoredChatMessage, WorkspaceFileRecord } from "../protocol/messages.js";
+import type { AccountLoginCancelResult, AccountLoginStartInput, AppFileSearchInput, AppMcpStatusListInput, AppModelListResult, AppPluginListInput, AppPluginLocatorInput, AppRemotePairingInput, AppReviewStartInput, AppReviewStartResult, AppSkillListInput, AppThreadListInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 import { mimeTypeFor } from "./fileTransferManager.js";
 
 type Listener = (event: CodexEvent) => void;
@@ -15,6 +15,7 @@ export type AppServerCodexSessionOptions = {
   sandbox?: SandboxMode;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: string | null;
   codexThreadId?: string;
   onThreadStarted?: (threadId: string) => void | Promise<void>;
 };
@@ -101,6 +102,7 @@ export class AppServerCodexSession implements CodexSession {
       input,
       cwd: path.resolve(this.options.workdir),
       model: trimmedOrNull(this.options.model),
+      serviceTier: trimmedOrNull(this.options.serviceTier ?? undefined),
       effort: this.options.reasoningEffort ?? null,
     });
     return { runId: result.turn.id };
@@ -180,6 +182,29 @@ export class AppServerCodexSession implements CodexSession {
     };
   }
 
+  async writeFile(absolutePath: string, dataBase64: string): Promise<AppFsFileRecord> {
+    await this.ensureInitialized();
+    const resolved = path.resolve(absolutePath);
+    await this.request("fs/writeFile", { path: resolved, dataBase64 });
+    const bytes = Buffer.from(dataBase64, "base64");
+    return {
+      path: relativeToWorkdir(resolved, this.options.workdir),
+      name: path.basename(resolved),
+      sizeBytes: bytes.byteLength,
+      mimeType: mimeTypeFor(resolved),
+      text: isLikelyText(bytes, resolved) ? bytes.toString("utf8") : undefined,
+      dataBase64: isLikelyText(bytes, resolved) ? undefined : dataBase64,
+    };
+  }
+
+  async createDirectory(absolutePath: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.request("fs/createDirectory", {
+      path: path.resolve(absolutePath),
+      recursive: true,
+    });
+  }
+
   async searchFiles(input: AppFileSearchInput): Promise<WorkspaceFileRecord[]> {
     await this.ensureInitialized();
     const result = await this.request<{ files: unknown[] }>("fuzzyFileSearch", {
@@ -238,6 +263,76 @@ export class AppServerCodexSession implements CodexSession {
   async logoutAccount(): Promise<void> {
     await this.ensureInitialized();
     await this.request("account/logout", undefined);
+  }
+
+  async readRateLimits(): Promise<AppRateLimitRecord[]> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("account/rateLimits/read", {});
+    return normalizeRateLimits(result);
+  }
+
+  async listPlugins(input: AppPluginListInput = {}): Promise<{ marketplaces: AppPluginMarketplaceRecord[] }> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("plugin/list", {
+      cwds: [path.resolve(input.cwd ?? this.options.workdir)],
+      marketplaceKinds: null,
+    });
+    return { marketplaces: normalizePluginMarketplaces(result) };
+  }
+
+  async readPlugin(input: AppPluginLocatorInput): Promise<AppPluginDetailRecord> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("plugin/read", pluginLocatorParams(input));
+    const plugin = normalizePluginDetail(result, input);
+    if (!plugin) {
+      throw new Error(`App-server did not return a readable plugin: ${input.pluginName}`);
+    }
+    return plugin;
+  }
+
+  async installPlugin(input: AppPluginLocatorInput): Promise<AppPluginInstallResultRecord> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("plugin/install", pluginLocatorParams(input));
+    return normalizePluginInstallResult(result, input.pluginName);
+  }
+
+  async uninstallPlugin(pluginName: string): Promise<AppPluginUninstallResultRecord> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("plugin/uninstall", { pluginName });
+    return normalizePluginUninstallResult(result, pluginName);
+  }
+
+  async listMcpServers(input: AppMcpStatusListInput = {}): Promise<AppMcpServerRecord[]> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("mcpServerStatus/list", {
+      limit: 80,
+      detail: input.detail ?? "toolsAndAuthOnly",
+    });
+    return normalizeMcpServers(result);
+  }
+
+  async startMcpOauthLogin(serverName: string): Promise<AppMcpOauthLoginRecord> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("mcpServer/oauth/login", { name: serverName });
+    return normalizeMcpOauthLogin(result, serverName);
+  }
+
+  async readRemoteControlStatus(): Promise<AppRemoteControlStatusRecord> {
+    await this.ensureInitialized();
+    const result = await this.request<unknown>("remoteControl/status/read", {});
+    return normalizeRemoteControlStatus(result);
+  }
+
+  async startRemoteControlPairing(input: AppRemotePairingInput = {}): Promise<AppRemotePairingRecord> {
+    await this.ensureInitialized();
+    const status = await this.readRemoteControlStatus();
+    if (!status.enabled) {
+      await this.request("remoteControl/enable", undefined);
+    }
+    const result = await this.request<unknown>("remoteControl/pairing/start", {
+      ...(input.manualPairingCode ? { manualCode: true } : {}),
+    });
+    return normalizeRemotePairing(result);
   }
 
   async setGoal(input: GoalSetInput): Promise<SessionGoalRecord> {
@@ -313,6 +408,7 @@ export class AppServerCodexSession implements CodexSession {
           threadId: this.codexThreadId,
           cwd: path.resolve(this.options.workdir),
           model: trimmedOrNull(this.options.model),
+          serviceTier: trimmedOrNull(this.options.serviceTier ?? undefined),
           sandbox: this.options.sandbox ?? "workspace-write",
           approvalPolicy: approvalPolicyForSandbox(this.options.sandbox),
           approvalsReviewer: "user",
@@ -328,6 +424,7 @@ export class AppServerCodexSession implements CodexSession {
     const result = await this.request<{ thread: { id: string } }>("thread/start", {
       cwd: path.resolve(this.options.workdir),
       model: trimmedOrNull(this.options.model),
+      serviceTier: trimmedOrNull(this.options.serviceTier ?? undefined),
       sandbox: this.options.sandbox ?? "workspace-write",
       approvalPolicy: approvalPolicyForSandbox(this.options.sandbox),
       approvalsReviewer: "user",
@@ -923,6 +1020,18 @@ function commandPresentation(item: Record<string, unknown>): { kind: MessageKind
     .find((action) => readString(action, "type") === "read");
   if (readAction || isReadCommand(command)) {
     const filePath = readString(readAction ?? {}, "path") ?? readCommandPath(command);
+    const skillName = filePath ? skillNameFromPath(filePath) : undefined;
+    if (skillName) {
+      return {
+        kind: "executing",
+        title: "Using skill",
+        text: [
+          `Using skill: ${skillName}`,
+          filePath ? `File: ${filePath}` : undefined,
+          command ? `Command: ${command}` : undefined,
+        ].filter(Boolean).join("\n"),
+      };
+    }
     return {
       kind: "executing",
       title: "Reading file",
@@ -1016,6 +1125,251 @@ function normalizeCancelLogin(value: unknown): AccountLoginCancelResult {
   return { status: status === "notFound" ? "notFound" : "canceled" };
 }
 
+function pluginLocatorParams(input: AppPluginLocatorInput): Record<string, unknown> {
+  return {
+    pluginName: input.pluginName.trim(),
+    ...(input.marketplacePath?.trim() ? { marketplacePath: input.marketplacePath.trim() } : {}),
+    ...(!input.marketplacePath?.trim() && input.remoteMarketplaceName?.trim() ? { remoteMarketplaceName: input.remoteMarketplaceName.trim() } : {}),
+  };
+}
+
+function normalizeRateLimits(value: unknown): AppRateLimitRecord[] {
+  const record = safeRecord(value);
+  const limits = Array.isArray(record.rateLimits)
+    ? record.rateLimits
+    : Object.keys(safeRecord(record.rateLimits)).length > 0
+      ? [record.rateLimits]
+    : Array.isArray(record.data)
+      ? record.data
+      : Object.keys(safeRecord(record.rateLimitsByLimitId)).length > 0
+        ? Object.values(safeRecord(record.rateLimitsByLimitId))
+      : Array.isArray(value)
+        ? value
+        : [];
+  return limits.map(normalizeRateLimit).filter((limit): limit is AppRateLimitRecord => limit !== undefined);
+}
+
+function normalizeRateLimit(value: unknown): AppRateLimitRecord | undefined {
+  const record = safeRecord(value);
+  const primary = safeRecord(record.primary);
+  const usedPercent = clampPercent(readNumber(primary, "usedPercent") ?? readNumber(record, "usedPercent") ?? 0);
+  const remainingPercent = clampPercent(readNumber(record, "remainingPercent") ?? (100 - usedPercent));
+  const limitId = readString(record, "limitId") ?? readString(record, "id") ?? "codex";
+  return {
+    limitId,
+    planType: readString(record, "planType"),
+    usedPercent,
+    remainingPercent,
+    windowDurationMins: readNumber(primary, "windowDurationMins") ?? readNumber(record, "windowDurationMins"),
+    resetsAt: readNumber(primary, "resetsAt") ?? readNumber(record, "resetsAt"),
+  };
+}
+
+function normalizePluginMarketplaces(value: unknown): AppPluginMarketplaceRecord[] {
+  const record = safeRecord(value);
+  const marketplaces = Array.isArray(record.marketplaces)
+    ? record.marketplaces
+    : Array.isArray(record.data)
+      ? record.data
+      : Array.isArray(value)
+        ? value
+        : [];
+  return marketplaces
+    .map(normalizePluginMarketplace)
+    .filter((marketplace): marketplace is AppPluginMarketplaceRecord => marketplace !== undefined);
+}
+
+function normalizePluginMarketplace(value: unknown): AppPluginMarketplaceRecord | undefined {
+  const record = safeRecord(value);
+  const name = readString(record, "name") ?? readString(record, "id");
+  if (!name) return undefined;
+  const marketplacePath = readString(record, "path") ?? readString(record, "marketplacePath");
+  const remoteMarketplaceName = readString(record, "remoteMarketplaceName");
+  const plugins = Array.isArray(record.plugins)
+    ? record.plugins
+    : Array.isArray(record.items)
+      ? record.items
+      : [];
+  return {
+    name,
+    displayName: readString(record, "displayName") ?? readString(record, "title"),
+    path: marketplacePath,
+    plugins: plugins
+      .map((plugin) => normalizePluginSummary(plugin, { marketplacePath, remoteMarketplaceName }))
+      .filter((plugin): plugin is AppPluginSummaryRecord => plugin !== undefined),
+  };
+}
+
+function normalizePluginSummary(value: unknown, defaults: { marketplacePath?: string; remoteMarketplaceName?: string } = {}): AppPluginSummaryRecord | undefined {
+  const record = safeRecord(value);
+  const name = readString(record, "name") ?? readString(record, "id") ?? readString(record, "pluginName");
+  if (!name) return undefined;
+  const categories = Array.isArray(record.categories) ? record.categories.filter((item): item is string => typeof item === "string") : [];
+  return {
+    id: readString(record, "id"),
+    name,
+    displayName: readString(record, "displayName") ?? readString(record, "title") ?? name,
+    description: readString(record, "description") ?? readString(record, "shortDescription"),
+    version: readString(record, "version"),
+    installed: record.installed === true || record.isInstalled === true,
+    enabled: record.enabled !== false,
+    category: readString(record, "category") ?? categories[0],
+    marketplacePath: readString(record, "marketplacePath") ?? defaults.marketplacePath,
+    remoteMarketplaceName: readString(record, "remoteMarketplaceName") ?? defaults.remoteMarketplaceName,
+    authType: readString(safeRecord(record.auth), "type") ?? readString(record, "authType"),
+  };
+}
+
+function normalizePluginDetail(value: unknown, input: AppPluginLocatorInput): AppPluginDetailRecord | undefined {
+  const envelope = safeRecord(value);
+  const record = safeRecord(envelope.plugin && typeof envelope.plugin === "object" ? envelope.plugin : value);
+  const summary = normalizePluginSummary(record, {
+    marketplacePath: input.marketplacePath,
+    remoteMarketplaceName: input.remoteMarketplaceName,
+  }) ?? {
+    name: input.pluginName,
+    displayName: input.pluginName,
+    installed: false,
+    enabled: true,
+    marketplacePath: input.marketplacePath,
+    remoteMarketplaceName: input.remoteMarketplaceName,
+  };
+  return {
+    ...summary,
+    skills: normalizePluginSkills(record.skills),
+    apps: normalizePluginAuthApps(record.apps ?? record.authApps),
+    mcpServers: normalizePluginMcpServers(record.mcpServers ?? record.mcp_servers),
+  };
+}
+
+function normalizePluginSkills(value: unknown): AppPluginDetailRecord["skills"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = safeRecord(item);
+    const name = readString(record, "name");
+    if (!name) return [];
+    return [{ name, description: readString(record, "description") }];
+  });
+}
+
+function normalizePluginAuthApps(value: unknown): AppPluginDetailRecord["apps"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = safeRecord(item);
+    const name = readString(record, "name") ?? readString(record, "id");
+    if (!name) return [];
+    return [{
+      name,
+      authStatus: readString(record, "authStatus") ?? readString(record, "status"),
+      installUrl: readString(record, "installUrl") ?? readString(record, "url"),
+    }];
+  });
+}
+
+function normalizePluginMcpServers(value: unknown): AppPluginDetailRecord["mcpServers"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = safeRecord(item);
+    const name = readString(record, "name") ?? readString(record, "id");
+    if (!name) return [];
+    return [{
+      name,
+      authStatus: readString(record, "authStatus") ?? readString(record, "status"),
+      toolCount: readNumber(record, "toolCount") ?? (Array.isArray(record.tools) ? record.tools.length : undefined),
+    }];
+  });
+}
+
+function normalizePluginInstallResult(value: unknown, pluginName: string): AppPluginInstallResultRecord {
+  const record = safeRecord(value);
+  return {
+    pluginName: readString(record, "pluginName") ?? readString(record, "name") ?? pluginName,
+    installed: record.installed !== false,
+    message: readString(record, "message"),
+    appsNeedingAuth: normalizePluginAuthApps(record.appsNeedingAuth ?? record.apps),
+  };
+}
+
+function normalizePluginUninstallResult(value: unknown, pluginName: string): AppPluginUninstallResultRecord {
+  const record = safeRecord(value);
+  return {
+    pluginName: readString(record, "pluginName") ?? readString(record, "name") ?? pluginName,
+    uninstalled: record.uninstalled !== false,
+    message: readString(record, "message"),
+  };
+}
+
+function normalizeMcpServers(value: unknown): AppMcpServerRecord[] {
+  const record = safeRecord(value);
+  const servers = Array.isArray(record.servers)
+    ? record.servers
+    : Array.isArray(record.data)
+      ? record.data
+      : Array.isArray(value)
+        ? value
+        : [];
+  return servers.map(normalizeMcpServer).filter((server): server is AppMcpServerRecord => server !== undefined);
+}
+
+function normalizeMcpServer(value: unknown): AppMcpServerRecord | undefined {
+  const record = safeRecord(value);
+  const name = readString(record, "name") ?? readString(record, "id");
+  if (!name) return undefined;
+  const tools = normalizeToolNames(record.tools);
+  const resources = Array.isArray(record.resources) ? record.resources : [];
+  return {
+    name,
+    status: readString(record, "status") ?? readString(safeRecord(record.connection), "status"),
+    authStatus: readString(record, "authStatus") ?? readString(safeRecord(record.auth), "status"),
+    toolCount: readNumber(record, "toolCount") ?? tools.length,
+    tools,
+    resourceCount: readNumber(record, "resourceCount") ?? resources.length,
+  };
+}
+
+function normalizeToolNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => typeof item === "string" ? item : readString(safeRecord(item), "name"))
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function normalizeMcpOauthLogin(value: unknown, serverName: string): AppMcpOauthLoginRecord {
+  const record = safeRecord(value);
+  return {
+    serverName: readString(record, "serverName") ?? readString(record, "name") ?? serverName,
+    loginUrl: readString(record, "loginUrl") ?? readString(record, "authUrl") ?? readString(record, "url"),
+    status: readString(record, "status"),
+    message: readString(record, "message"),
+  };
+}
+
+function normalizeRemoteControlStatus(value: unknown): AppRemoteControlStatusRecord {
+  const record = safeRecord(value);
+  const status = safeRecord(record.status);
+  const source = Object.keys(status).length > 0 ? status : record;
+  const connectionStatus = readString(source, "status");
+  return {
+    enabled: source.enabled === true || connectionStatus === "connecting" || connectionStatus === "connected" || connectionStatus === "errored",
+    connectionStatus,
+    serverName: readString(source, "serverName") ?? readString(source, "name"),
+    environmentId: readString(source, "environmentId"),
+    installationId: readString(source, "installationId"),
+  };
+}
+
+function normalizeRemotePairing(value: unknown): AppRemotePairingRecord {
+  const record = safeRecord(value);
+  const pairing = safeRecord(record.pairing);
+  const source = Object.keys(pairing).length > 0 ? pairing : record;
+  return {
+    pairingCode: readString(source, "pairingCode"),
+    manualPairingCode: readString(source, "manualPairingCode"),
+    environmentId: readString(source, "environmentId"),
+    expiresAt: readNumber(source, "expiresAt"),
+  };
+}
+
 function normalizeAccountType(value: string | undefined): CodexAccountType {
   return value === "apiKey" || value === "chatgpt" || value === "amazonBedrock" ? value : null;
 }
@@ -1062,6 +1416,18 @@ function normalizeModel(value: unknown): AppModelRecord | undefined {
         .filter(isReasoningEffort)
     : [];
   const defaultEffort = readString(record, "defaultReasoningEffort");
+  const serviceTiers = Array.isArray(record.serviceTiers)
+    ? record.serviceTiers
+        .map(normalizeModelServiceTier)
+        .filter((tier): tier is NonNullable<ReturnType<typeof normalizeModelServiceTier>> => tier !== undefined)
+    : Array.isArray(record.additionalSpeedTiers)
+      ? record.additionalSpeedTiers
+          .map((tier) => {
+            const id = typeof tier === "string" ? tier : undefined;
+            return id ? { id, name: id } : undefined;
+          })
+          .filter((tier): tier is AppModelRecord["serviceTiers"][number] => tier !== undefined)
+      : [];
   return {
     id,
     model,
@@ -1072,7 +1438,20 @@ function normalizeModel(value: unknown): AppModelRecord | undefined {
     defaultReasoningEffort: isReasoningEffort(defaultEffort) ? defaultEffort : undefined,
     inputModalities: Array.isArray(record.inputModalities) ? record.inputModalities.filter((item): item is string => typeof item === "string") : ["text"],
     supportsPersonality: record.supportsPersonality === true,
+    serviceTiers,
+    defaultServiceTier: readString(record, "defaultServiceTier") ?? null,
     isDefault: record.isDefault === true,
+  };
+}
+
+function normalizeModelServiceTier(value: unknown): AppModelRecord["serviceTiers"][number] | undefined {
+  const record = safeRecord(value);
+  const id = readString(record, "id");
+  if (!id) return undefined;
+  return {
+    id,
+    name: readString(record, "name") ?? id,
+    description: readString(record, "description"),
   };
 }
 
@@ -1346,6 +1725,15 @@ function readString(record: Record<string, unknown>, key: string): string | unde
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function readNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function trimmedOrNull(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -1381,6 +1769,16 @@ function readCommandPath(command: string): string | undefined {
   if (cat?.[1]) return stripShellQuotes(cat[1]);
   const headTail = command.match(/(?:^|\s)(?:head|tail)(?:\s+-n\s+\d+)?\s+(.+?)\s*$/);
   return headTail?.[1] ? stripShellQuotes(headTail[1]) : undefined;
+}
+
+function skillNameFromPath(filePath: string): string | undefined {
+  const normalized = filePath.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  const fileName = parts.at(-1)?.toLowerCase();
+  if (fileName !== "skill.md" && fileName !== "skills.md") return undefined;
+  const parent = parts.at(-2);
+  if (!parent || parent === "." || parent === "..") return fileName;
+  return parent;
 }
 
 function stripShellQuotes(value: string): string {

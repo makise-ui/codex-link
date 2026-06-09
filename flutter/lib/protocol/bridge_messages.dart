@@ -182,6 +182,7 @@ class CodexSessionInfo {
     this.codexThreadId,
     this.model,
     this.reasoningEffort,
+    this.serviceTier,
     this.goal,
   });
 
@@ -197,6 +198,7 @@ class CodexSessionInfo {
   final String? codexThreadId;
   final String? model;
   final String? reasoningEffort;
+  final String? serviceTier;
   final CodexGoalInfo? goal;
 
   bool get isRunning =>
@@ -215,6 +217,7 @@ class CodexSessionInfo {
     bool clearActiveRunId = false,
     String? model,
     String? reasoningEffort,
+    String? serviceTier,
     CodexGoalInfo? goal,
     bool clearGoal = false,
   }) {
@@ -231,6 +234,7 @@ class CodexSessionInfo {
       codexThreadId: codexThreadId,
       model: model ?? this.model,
       reasoningEffort: reasoningEffort ?? this.reasoningEffort,
+      serviceTier: serviceTier ?? this.serviceTier,
       goal: clearGoal ? null : goal ?? this.goal,
     );
   }
@@ -249,6 +253,7 @@ class CodexSessionInfo {
       codexThreadId: json['codexThreadId'] as String?,
       model: json['model'] as String?,
       reasoningEffort: json['reasoningEffort'] as String?,
+      serviceTier: json['serviceTier'] as String?,
       goal: json['goal'] is Map
           ? CodexGoalInfo.fromJson(
               Map<String, dynamic>.from(json['goal'] as Map),
@@ -405,9 +410,11 @@ class AppModelInfo {
     required this.supportedReasoningEfforts,
     required this.inputModalities,
     required this.supportsPersonality,
+    required this.serviceTiers,
     required this.isDefault,
     this.description,
     this.defaultReasoningEffort,
+    this.defaultServiceTier,
   });
 
   final String id;
@@ -419,6 +426,8 @@ class AppModelInfo {
   final String? defaultReasoningEffort;
   final List<String> inputModalities;
   final bool supportsPersonality;
+  final List<AppModelServiceTierInfo> serviceTiers;
+  final String? defaultServiceTier;
   final bool isDefault;
 
   factory AppModelInfo.fromJson(Map<String, dynamic> json) {
@@ -438,7 +447,36 @@ class AppModelInfo {
           .whereType<String>()
           .toList(growable: false),
       supportsPersonality: json['supportsPersonality'] as bool? ?? false,
+      serviceTiers: (json['serviceTiers'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) => AppModelServiceTierInfo.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .toList(growable: false),
+      defaultServiceTier: json['defaultServiceTier'] as String?,
       isDefault: json['isDefault'] as bool? ?? false,
+    );
+  }
+}
+
+class AppModelServiceTierInfo {
+  const AppModelServiceTierInfo({
+    required this.id,
+    required this.name,
+    this.description,
+  });
+
+  final String id;
+  final String name;
+  final String? description;
+
+  factory AppModelServiceTierInfo.fromJson(Map<String, dynamic> json) {
+    return AppModelServiceTierInfo(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? json['id'] as String? ?? 'Tier',
+      description: json['description'] as String?,
     );
   }
 }
@@ -600,6 +638,378 @@ class AppFsFileInfo {
       mimeType: json['mimeType'] as String?,
       text: json['text'] as String?,
       dataBase64: json['dataBase64'] as String?,
+    );
+  }
+}
+
+class AppPluginMarketplaceInfo {
+  const AppPluginMarketplaceInfo({
+    required this.name,
+    required this.plugins,
+    this.displayName,
+    this.path,
+  });
+
+  final String name;
+  final String? displayName;
+  final String? path;
+  final List<AppPluginSummaryInfo> plugins;
+
+  factory AppPluginMarketplaceInfo.fromJson(Map<String, dynamic> json) {
+    final path = json['path'] as String?;
+    final remote = json['remoteMarketplaceName'] as String?;
+    return AppPluginMarketplaceInfo(
+      name: json['name'] as String? ?? '',
+      displayName: json['displayName'] as String?,
+      path: path,
+      plugins: (json['plugins'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AppPluginSummaryInfo.fromJson(
+              Map<String, dynamic>.from(item as Map),
+              fallbackMarketplacePath: path,
+              fallbackRemoteMarketplaceName: remote,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AppPluginSummaryInfo {
+  const AppPluginSummaryInfo({
+    required this.name,
+    required this.displayName,
+    required this.installed,
+    required this.enabled,
+    this.id,
+    this.description,
+    this.version,
+    this.category,
+    this.marketplacePath,
+    this.remoteMarketplaceName,
+    this.authType,
+  });
+
+  final String? id;
+  final String name;
+  final String displayName;
+  final String? description;
+  final String? version;
+  final bool installed;
+  final bool enabled;
+  final String? category;
+  final String? marketplacePath;
+  final String? remoteMarketplaceName;
+  final String? authType;
+
+  factory AppPluginSummaryInfo.fromJson(
+    Map<String, dynamic> json, {
+    String? fallbackMarketplacePath,
+    String? fallbackRemoteMarketplaceName,
+  }) {
+    final name = json['name'] as String? ?? json['id'] as String? ?? '';
+    return AppPluginSummaryInfo(
+      id: json['id'] as String?,
+      name: name,
+      displayName: json['displayName'] as String? ?? name,
+      description: json['description'] as String?,
+      version: json['version'] as String?,
+      installed: json['installed'] as bool? ?? false,
+      enabled: json['enabled'] as bool? ?? true,
+      category: json['category'] as String?,
+      marketplacePath:
+          json['marketplacePath'] as String? ?? fallbackMarketplacePath,
+      remoteMarketplaceName:
+          json['remoteMarketplaceName'] as String? ??
+          fallbackRemoteMarketplaceName,
+      authType: json['authType'] as String?,
+    );
+  }
+}
+
+class AppPluginDetailInfo {
+  const AppPluginDetailInfo({
+    required this.name,
+    required this.displayName,
+    required this.installed,
+    required this.enabled,
+    required this.skills,
+    required this.apps,
+    required this.mcpServers,
+    this.id,
+    this.description,
+    this.version,
+    this.category,
+    this.marketplacePath,
+    this.remoteMarketplaceName,
+    this.authType,
+  });
+
+  final String? id;
+  final String name;
+  final String displayName;
+  final String? description;
+  final String? version;
+  final bool installed;
+  final bool enabled;
+  final String? category;
+  final String? marketplacePath;
+  final String? remoteMarketplaceName;
+  final String? authType;
+  final List<AppPluginSkillInfo> skills;
+  final List<AppPluginAuthAppInfo> apps;
+  final List<AppPluginMcpServerInfo> mcpServers;
+
+  factory AppPluginDetailInfo.fromJson(Map<String, dynamic> json) {
+    final summary = AppPluginSummaryInfo.fromJson(json);
+    return AppPluginDetailInfo(
+      id: summary.id,
+      name: summary.name,
+      displayName: summary.displayName,
+      description: summary.description,
+      version: summary.version,
+      installed: summary.installed,
+      enabled: summary.enabled,
+      category: summary.category,
+      marketplacePath: summary.marketplacePath,
+      remoteMarketplaceName: summary.remoteMarketplaceName,
+      authType: summary.authType,
+      skills: (json['skills'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AppPluginSkillInfo.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+      apps: (json['apps'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AppPluginAuthAppInfo.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+      mcpServers: (json['mcpServers'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AppPluginMcpServerInfo.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AppPluginSkillInfo {
+  const AppPluginSkillInfo({required this.name, this.description});
+
+  final String name;
+  final String? description;
+
+  factory AppPluginSkillInfo.fromJson(Map<String, dynamic> json) {
+    return AppPluginSkillInfo(
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String?,
+    );
+  }
+}
+
+class AppPluginAuthAppInfo {
+  const AppPluginAuthAppInfo({
+    required this.name,
+    this.authStatus,
+    this.installUrl,
+  });
+
+  final String name;
+  final String? authStatus;
+  final String? installUrl;
+
+  factory AppPluginAuthAppInfo.fromJson(Map<String, dynamic> json) {
+    return AppPluginAuthAppInfo(
+      name: json['name'] as String? ?? '',
+      authStatus: json['authStatus'] as String?,
+      installUrl: json['installUrl'] as String?,
+    );
+  }
+}
+
+class AppPluginMcpServerInfo {
+  const AppPluginMcpServerInfo({
+    required this.name,
+    this.authStatus,
+    this.toolCount,
+  });
+
+  final String name;
+  final String? authStatus;
+  final int? toolCount;
+
+  factory AppPluginMcpServerInfo.fromJson(Map<String, dynamic> json) {
+    return AppPluginMcpServerInfo(
+      name: json['name'] as String? ?? '',
+      authStatus: json['authStatus'] as String?,
+      toolCount: json['toolCount'] as int?,
+    );
+  }
+}
+
+class AppPluginInstallResultInfo {
+  const AppPluginInstallResultInfo({
+    required this.pluginName,
+    required this.installed,
+    required this.appsNeedingAuth,
+    this.message,
+  });
+
+  final String pluginName;
+  final bool installed;
+  final String? message;
+  final List<AppPluginAuthAppInfo> appsNeedingAuth;
+
+  factory AppPluginInstallResultInfo.fromJson(Map<String, dynamic> json) {
+    return AppPluginInstallResultInfo(
+      pluginName: json['pluginName'] as String? ?? '',
+      installed: json['installed'] as bool? ?? false,
+      message: json['message'] as String?,
+      appsNeedingAuth: (json['appsNeedingAuth'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => AppPluginAuthAppInfo.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class AppMcpServerInfo {
+  const AppMcpServerInfo({
+    required this.name,
+    required this.toolCount,
+    required this.tools,
+    required this.resourceCount,
+    this.status,
+    this.authStatus,
+  });
+
+  final String name;
+  final String? status;
+  final String? authStatus;
+  final int toolCount;
+  final List<String> tools;
+  final int resourceCount;
+
+  factory AppMcpServerInfo.fromJson(Map<String, dynamic> json) {
+    return AppMcpServerInfo(
+      name: json['name'] as String? ?? '',
+      status: json['status'] as String?,
+      authStatus: json['authStatus'] as String?,
+      toolCount: json['toolCount'] as int? ?? 0,
+      tools: (json['tools'] as List<dynamic>? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
+      resourceCount: json['resourceCount'] as int? ?? 0,
+    );
+  }
+}
+
+class AppMcpOauthLoginInfo {
+  const AppMcpOauthLoginInfo({
+    required this.serverName,
+    this.loginUrl,
+    this.status,
+    this.message,
+  });
+
+  final String serverName;
+  final String? loginUrl;
+  final String? status;
+  final String? message;
+
+  factory AppMcpOauthLoginInfo.fromJson(Map<String, dynamic> json) {
+    return AppMcpOauthLoginInfo(
+      serverName: json['serverName'] as String? ?? '',
+      loginUrl: json['loginUrl'] as String?,
+      status: json['status'] as String?,
+      message: json['message'] as String?,
+    );
+  }
+}
+
+class AppRemoteStatusInfo {
+  const AppRemoteStatusInfo({
+    required this.enabled,
+    this.connectionStatus,
+    this.serverName,
+    this.environmentId,
+    this.installationId,
+  });
+
+  final bool enabled;
+  final String? connectionStatus;
+  final String? serverName;
+  final String? environmentId;
+  final String? installationId;
+
+  factory AppRemoteStatusInfo.fromJson(Map<String, dynamic> json) {
+    return AppRemoteStatusInfo(
+      enabled: json['enabled'] as bool? ?? false,
+      connectionStatus: json['connectionStatus'] as String?,
+      serverName: json['serverName'] as String?,
+      environmentId: json['environmentId'] as String?,
+      installationId: json['installationId'] as String?,
+    );
+  }
+}
+
+class AppRemotePairingInfo {
+  const AppRemotePairingInfo({
+    this.pairingCode,
+    this.manualPairingCode,
+    this.environmentId,
+    this.expiresAt,
+  });
+
+  final String? pairingCode;
+  final String? manualPairingCode;
+  final String? environmentId;
+  final int? expiresAt;
+
+  factory AppRemotePairingInfo.fromJson(Map<String, dynamic> json) {
+    return AppRemotePairingInfo(
+      pairingCode: json['pairingCode'] as String?,
+      manualPairingCode: json['manualPairingCode'] as String?,
+      environmentId: json['environmentId'] as String?,
+      expiresAt: json['expiresAt'] as int?,
+    );
+  }
+}
+
+class AppRateLimitInfo {
+  const AppRateLimitInfo({
+    required this.limitId,
+    required this.usedPercent,
+    required this.remainingPercent,
+    this.planType,
+    this.windowDurationMins,
+    this.resetsAt,
+  });
+
+  final String limitId;
+  final String? planType;
+  final int usedPercent;
+  final int remainingPercent;
+  final int? windowDurationMins;
+  final int? resetsAt;
+
+  factory AppRateLimitInfo.fromJson(Map<String, dynamic> json) {
+    return AppRateLimitInfo(
+      limitId: json['limitId'] as String? ?? 'codex',
+      planType: json['planType'] as String?,
+      usedPercent: json['usedPercent'] as int? ?? 0,
+      remainingPercent: json['remainingPercent'] as int? ?? 100,
+      windowDurationMins: json['windowDurationMins'] as int?,
+      resetsAt: json['resetsAt'] as int?,
     );
   }
 }

@@ -44,6 +44,40 @@ describe("FileTransferManager", () => {
     ).rejects.toThrow(/outside workspace/);
   });
 
+  it("rejects home directory paths before resolving them inside the workspace", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-link-files-"));
+    const manager = new FileTransferManager({
+      workspaces: [{ id: "default", label: "root", path: root }],
+      maxBytes: 1024,
+    });
+
+    await expect(
+      manager.offerWorkspaceFile({
+        sessionId: "s1",
+        workspaceRoot: root,
+        relativePath: "~/.codex/src/cryptobot/validation.py",
+        reason: "requested",
+      }),
+    ).rejects.toThrow(/workspace-relative path/);
+  });
+
+  it("reports missing workspace files without leaking raw realpath errors", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-link-files-"));
+    const manager = new FileTransferManager({
+      workspaces: [{ id: "default", label: "root", path: root }],
+      maxBytes: 1024,
+    });
+
+    await expect(
+      manager.offerWorkspaceFile({
+        sessionId: "s1",
+        workspaceRoot: root,
+        relativePath: "src/cryptobot/validation.py",
+        reason: "requested",
+      }),
+    ).rejects.toThrow(/File was not found in workspace: src\/cryptobot\/validation.py/);
+  });
+
   it("rejects files above the configured size limit", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-link-files-"));
     await writeFile(path.join(root, "big.txt"), "too large");

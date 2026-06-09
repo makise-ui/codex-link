@@ -446,54 +446,269 @@ void main() {
     expect(find.text('/goal complete'), findsOneWidget);
   });
 
-  testWidgets(
-    'connection state is shown below the chat instead of top chrome',
-    (tester) async {
-      final controller = AppController()
-        ..phase = ConnectionPhase.connected
-        ..handleBridgeMessageForTest({
-          'type': 'host.info',
-          'version': 7,
-          'connectionMode': 'tunnel',
-          'tunnelProvider': 'cloudflared',
-          'publicUrl': 'wss://unit.trycloudflare.com',
-          'localUrl': 'ws://127.0.0.1:8787',
-          'hostLabel': 'Codex Link',
-          'yoloAllowed': false,
-        })
-        ..handleBridgeMessageForTest({
-          'type': 'session.list',
-          'activeSessionId': 's1',
-          'sessions': [
-            {
-              'sessionId': 's1',
-              'title': 'Tunnel placement',
-              'updatedAt': '2026-06-08T00:00:00.000Z',
-              'workspaceId': 'default',
-              'workdir': '/tmp/repo',
-              'lastStatus': 'idle',
-              'mode': 'safe',
-              'sandbox': 'workspace-write',
-            },
-          ],
-        });
+  testWidgets('connected tunnel details stay out of the chat chrome', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'host.info',
+        'version': 7,
+        'connectionMode': 'tunnel',
+        'tunnelProvider': 'cloudflared',
+        'publicUrl': 'wss://unit.trycloudflare.com',
+        'localUrl': 'ws://127.0.0.1:8787',
+        'hostLabel': 'Codex Link',
+        'yoloAllowed': false,
+      })
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Tunnel placement',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
 
-      await tester.pumpWidget(
-        ChangeNotifierProvider<AppController>.value(
-          value: controller,
-          child: MaterialApp(
-            theme: buildCodexTheme(),
-            home: const ChatScreen(),
-          ),
-        ),
-      );
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(theme: buildCodexTheme(), home: const ChatScreen()),
+      ),
+    );
 
-      expect(
-        find.byKey(const ValueKey('bottom-connection-chip')),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(find.byKey(const ValueKey('bottom-connection-chip')), findsNothing);
+    expect(find.textContaining('cloudflared'), findsNothing);
+    expect(find.text('repo / default model'), findsOneWidget);
+  });
+
+  testWidgets('offline top card reconnect affordance stays visible', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.offline
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Offline',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(theme: buildCodexTheme(), home: const ChatScreen()),
+      ),
+    );
+
+    expect(find.text('Disconnected - tap to reconnect'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('bottom-connection-chip')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('attach menu opens the workspace browser entry point', (
+    tester,
+  ) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Files',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'running',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+            'activeRunId': 'run-1',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(theme: buildCodexTheme(), home: const ChatScreen()),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('floating-attach-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.text('Browse workspace'), findsOneWidget);
+    expect(find.text('Open files, preview code, or upload'), findsOneWidget);
+    expect(find.text('Upload image'), findsOneWidget);
+    expect(find.text('Upload file'), findsOneWidget);
+  });
+
+  testWidgets('session controls expose speed model and permission choices', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final socket = FakeBridgeSocketClient();
+    final controller = AppController(socket: socket)
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'host.info',
+        'version': 11,
+        'connectionMode': 'lan',
+        'localUrl': 'ws://127.0.0.1:8787',
+        'hostLabel': 'Codex Link',
+        'yoloAllowed': true,
+      })
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Controls',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+            'model': 'gpt-test',
+            'reasoningEffort': 'high',
+            'serviceTier': 'priority',
+          },
+        ],
+      })
+      ..handleBridgeMessageForTest({
+        'type': 'app.model.list',
+        'models': [
+          {
+            'id': 'gpt-test',
+            'model': 'gpt-test',
+            'displayName': 'GPT Test',
+            'hidden': false,
+            'supportedReasoningEfforts': ['low', 'high', 'xhigh'],
+            'inputModalities': ['text'],
+            'supportsPersonality': false,
+            'serviceTiers': [
+              {
+                'id': 'priority',
+                'name': 'Priority',
+                'description': 'Faster responses for more credits',
+              },
+            ],
+            'defaultServiceTier': null,
+            'isDefault': false,
+          },
+          {
+            'id': 'gpt-other',
+            'model': 'gpt-other',
+            'displayName': 'GPT Other',
+            'hidden': false,
+            'supportedReasoningEfforts': ['low', 'high'],
+            'inputModalities': ['text'],
+            'supportsPersonality': false,
+            'serviceTiers': [],
+            'defaultServiceTier': null,
+            'isDefault': false,
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(theme: buildCodexTheme(), home: const ChatScreen()),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Session controls'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.text('Chat controls'), findsOneWidget);
+    expect(find.text('default permissions'), findsOneWidget);
+    expect(find.text('yolo'), findsOneWidget);
+    expect(find.text('Priority fast mode'), findsOneWidget);
+
+    await tester.tap(find.text('Priority fast mode'));
+    await tester.pump();
+
+    expect(socket.sentMessages.last, {
+      'type': 'session.config.set',
+      'sessionId': 's1',
+      'serviceTier': 'priority',
+    });
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, -420));
+    await tester.pump();
+    expect(find.text('GPT Test'), findsWidgets);
+    await tester.scrollUntilVisible(
+      find.text('GPT Other'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('GPT Other'), findsWidgets);
+
+    await tester.tap(
+      find
+          .ancestor(of: find.text('GPT Other'), matching: find.byType(ListTile))
+          .first,
+    );
+    await tester.pump();
+
+    expect(socket.sentMessages.last, {
+      'type': 'session.config.set',
+      'sessionId': 's1',
+      'model': 'gpt-other',
+      'reasoningEffort': 'high',
+      'serviceTier': null,
+    });
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('legacy-model-input')),
+      220,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('legacy-model-input')),
+      'gpt-legacy-codex',
+    );
+    await tester.tap(find.byTooltip('Apply legacy model'));
+    await tester.pump();
+
+    expect(socket.sentMessages.last, {
+      'type': 'session.config.set',
+      'sessionId': 's1',
+      'model': 'gpt-legacy-codex',
+      'reasoningEffort': 'high',
+      'serviceTier': null,
+    });
+  });
 
   testWidgets(
     'run completion notice previews the final response in dark chrome',
@@ -561,7 +776,7 @@ void main() {
     },
   );
 
-  testWidgets('top bar opens command center separately from settings', (
+  testWidgets('top bar opens app-server actions separately from settings', (
     tester,
   ) async {
     final controller = AppController()
@@ -572,7 +787,7 @@ void main() {
         'sessions': [
           {
             'sessionId': 's1',
-            'title': 'Command center',
+            'title': 'Actions',
             'updatedAt': '2026-06-08T00:00:00.000Z',
             'workspaceId': 'default',
             'workdir': '/tmp/repo',
@@ -590,11 +805,12 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('Commands'));
+    await tester.tap(find.byTooltip('App server actions'));
     await tester.pumpAndSettle();
 
     expect(find.byType(ChatScreen), findsNothing);
-    expect(find.text('Commands'), findsWidgets);
+    expect(find.text('App Server Actions'), findsWidgets);
+    expect(find.text('Plugins'), findsOneWidget);
   });
 
   testWidgets('composer can send a steer message while a run is active', (

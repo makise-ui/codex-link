@@ -3,14 +3,16 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../app_controller.dart';
-import '../commands/command_center_screen.dart';
+import '../app_server/app_server_actions_screen.dart';
 import '../protocol/bridge_messages.dart';
 import '../sessions/session_sidebar.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
+import 'file_browser_screen.dart';
 import 'message_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -42,6 +44,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ? null
             : Drawer(
                 width: MediaQuery.sizeOf(context).width * 0.86,
+                backgroundColor: Colors.transparent,
+                surfaceTintColor: Colors.transparent,
                 child: SessionSidebar(
                   onPicked: () => Navigator.maybePop(context),
                 ),
@@ -116,6 +120,51 @@ class _FloatingTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = controller.activeSession;
+    final subtitle = _topBarSubtitle(controller, session);
+    final card = GlassCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      radius: AppRadius.xl,
+      color: CodexColors.panel.withValues(alpha: 0.42),
+      blur: 24,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            session?.title ?? 'Codex Link',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              _ConnectionDot(offline: controller.isOffline),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: CodexColors.dim,
+                    fontSize: 12,
+                    height: 1.1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (session?.goal != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            _ActiveGoalChip(goal: session!.goal!),
+          ],
+        ],
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: Row(
@@ -133,44 +182,13 @@ class _FloatingTopBar extends StatelessWidget {
             const SizedBox(width: AppSpacing.sm),
           ],
           Expanded(
-            child: GlassCard(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.sm,
-              ),
-              radius: AppRadius.xl,
-              color: CodexColors.panel.withValues(alpha: 0.42),
-              blur: 24,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    session?.title ?? 'Codex Link',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    [
-                      if (session?.workdirName.isNotEmpty == true)
-                        session!.workdirName,
-                      controller.statusText,
-                    ].join(' • '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: CodexColors.dim,
-                      fontSize: 12,
-                      height: 1.1,
-                    ),
-                  ),
-                  if (session?.goal != null) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    _ActiveGoalChip(goal: session!.goal!),
-                  ],
-                ],
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                key: const ValueKey('top-session-card'),
+                borderRadius: BorderRadius.circular(AppRadius.xl),
+                onTap: controller.isOffline ? controller.reconnect : null,
+                child: card,
               ),
             ),
           ),
@@ -195,14 +213,14 @@ class _FloatingTopBar extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'Commands',
+                tooltip: 'App server actions',
                 onPressed: () => _showCommands(context),
                 icon: const Icon(Icons.terminal_rounded, size: 21),
               ),
               IconButton(
-                tooltip: 'Settings',
-                onPressed: () => _showSessionInfo(context, controller),
-                icon: const Icon(Icons.settings_rounded, size: 21),
+                tooltip: 'Session controls',
+                onPressed: () => _showSessionControls(context, controller),
+                icon: const Icon(Icons.tune_rounded, size: 21),
               ),
             ],
           ),
@@ -213,15 +231,153 @@ class _FloatingTopBar extends StatelessWidget {
 
   void _showCommands(BuildContext context) {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const CommandCenterScreen()),
+      MaterialPageRoute<void>(builder: (_) => const AppServerActionsScreen()),
     );
   }
 
-  void _showSessionInfo(BuildContext context, AppController controller) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+  void _showSessionControls(BuildContext context, AppController controller) {
+    controller.refreshAppModels(includeHidden: true);
+    showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: codexPanelHighColor(context),
+        surfaceTintColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.xl,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.xl),
+          side: BorderSide(
+            color: codexDimColor(context).withValues(alpha: 0.18),
+          ),
+        ),
+        child: const _SessionControlsSheet(),
+      ),
+    );
   }
+}
+
+class _ConnectionDot extends StatelessWidget {
+  const _ConnectionDot({required this.offline});
+
+  final bool offline;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = offline
+        ? CodexColors.amber
+        : Theme.of(context).colorScheme.secondary;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.28),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: const SizedBox.square(dimension: 7),
+    );
+  }
+}
+
+String _topBarSubtitle(AppController controller, CodexSessionInfo? session) {
+  if (controller.isOffline) return 'Disconnected - tap to reconnect';
+  final parts = <String>[];
+  final workdir = session?.workdirName.trim() ?? '';
+  if (workdir.isNotEmpty) parts.add(workdir);
+  parts.add(_sessionModelLabel(controller, session));
+  final effort = session?.reasoningEffort?.trim() ?? '';
+  if (effort.isNotEmpty) parts.add('effort $effort');
+  final serviceTier = _sessionServiceTierLabel(controller, session);
+  if (serviceTier.isNotEmpty) parts.add(serviceTier);
+  return parts.join(' / ');
+}
+
+String _sessionModelLabel(AppController controller, CodexSessionInfo? session) {
+  final configured = session?.model?.trim() ?? '';
+  if (configured.isEmpty) return 'default model';
+  for (final model in controller.appModels) {
+    if (model.id == configured || model.model == configured) {
+      return model.displayName;
+    }
+  }
+  return configured;
+}
+
+String _sessionServiceTierLabel(
+  AppController controller,
+  CodexSessionInfo? session,
+) {
+  final selected = session?.serviceTier?.trim() ?? '';
+  if (selected.isEmpty) return '';
+  final model = _selectedModel(controller.appModels, session?.model);
+  for (final tier in model?.serviceTiers ?? const <AppModelServiceTierInfo>[]) {
+    if (tier.id == selected) return tier.name;
+  }
+  return selected;
+}
+
+AppModelInfo? _selectedModel(List<AppModelInfo> models, String? modelId) {
+  final configured = modelId?.trim() ?? '';
+  if (configured.isEmpty) {
+    for (final model in models) {
+      if (model.isDefault) return model;
+    }
+    return models.isEmpty ? null : models.first;
+  }
+  for (final model in models) {
+    if (model.id == configured || model.model == configured) return model;
+  }
+  return null;
+}
+
+AppModelServiceTierInfo? _preferredFastServiceTier(AppModelInfo? model) {
+  final tiers = model?.serviceTiers ?? const <AppModelServiceTierInfo>[];
+  if (tiers.isEmpty) return null;
+  final defaultTier = model?.defaultServiceTier?.trim() ?? '';
+  for (final tier in tiers) {
+    final haystack = '${tier.id} ${tier.name} ${tier.description ?? ''}'
+        .toLowerCase();
+    if (haystack.contains('priority') ||
+        haystack.contains('fast') ||
+        haystack.contains('scale')) {
+      return tier;
+    }
+  }
+  for (final tier in tiers) {
+    if (tier.id != defaultTier) return tier;
+  }
+  return tiers.first;
+}
+
+List<String> _effortOptionsFor(AppModelInfo? model, CodexSessionInfo? session) {
+  final supported = model?.supportedReasoningEfforts ?? const <String>[];
+  final options = supported.isEmpty
+      ? <String>['low', 'medium', 'high', 'xhigh']
+      : List<String>.from(supported);
+  final current = session?.reasoningEffort?.trim() ?? '';
+  if (current.isNotEmpty && !options.contains(current)) {
+    options.add(current);
+  }
+  return options;
+}
+
+String? _nextEffortForModel(AppModelInfo model, String? currentEffort) {
+  final current = currentEffort?.trim() ?? '';
+  final supported = model.supportedReasoningEfforts;
+  if (current.isNotEmpty &&
+      (supported.isEmpty || supported.contains(current))) {
+    return current;
+  }
+  final fallback = model.defaultReasoningEffort?.trim();
+  if (fallback != null && fallback.isNotEmpty) return fallback;
+  if (supported.contains('medium')) return 'medium';
+  return supported.isEmpty ? null : supported.first;
 }
 
 class _ActiveGoalChip extends StatelessWidget {
@@ -272,6 +428,398 @@ class _ActiveGoalChip extends StatelessWidget {
   }
 }
 
+class _SessionControlsSheet extends StatelessWidget {
+  const _SessionControlsSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final session = controller.activeSession;
+    final selectedModel = _selectedModel(controller.appModels, session?.model);
+    final selectedModelId = session?.model?.trim() ?? '';
+    final effortOptions = _effortOptionsFor(selectedModel, session);
+    final speedTier = session?.serviceTier?.trim() ?? '';
+    final fastTier = _preferredFastServiceTier(selectedModel);
+    final serviceTiers =
+        selectedModel?.serviceTiers ?? const <AppModelServiceTierInfo>[];
+    final selectedEffort = session?.reasoningEffort?.trim().isNotEmpty == true
+        ? session!.reasoningEffort!.trim()
+        : selectedModel?.defaultReasoningEffort ?? 'medium';
+    return SafeArea(
+      top: false,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 540, maxHeight: 660),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.xs,
+            AppSpacing.lg,
+            AppSpacing.xl,
+          ),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Chat controls',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh models',
+                  onPressed: controller.isConnected
+                      ? () => controller.refreshAppModels(includeHidden: true)
+                      : null,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+                IconButton(
+                  tooltip: 'Full settings',
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const SettingsScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.settings_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _ControlSection(
+              title: 'Codex permission mode',
+              child: Column(
+                children: [
+                  _ControlRadioTile(
+                    title: 'default permissions',
+                    selected: session?.mode != RunMode.yolo,
+                    enabled: controller.isConnected,
+                    onTap: () => controller.setYolo(false),
+                  ),
+                  _ControlRadioTile(
+                    title: 'yolo',
+                    subtitle: controller.hostInfo?.yoloAllowed == true
+                        ? 'full access for this chat'
+                        : 'host must be started with --allow-yolo',
+                    selected: session?.mode == RunMode.yolo,
+                    enabled:
+                        controller.isConnected &&
+                        controller.hostInfo?.yoloAllowed == true,
+                    onTap: () => controller.setYolo(true),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _ControlSection(
+              title: 'Speed',
+              child: serviceTiers.isEmpty
+                  ? ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.speed_rounded),
+                      title: const Text('fast mode unavailable'),
+                      subtitle: const Text(
+                        'the selected model did not report paid speed tiers',
+                      ),
+                      enabled: false,
+                    )
+                  : Column(
+                      children: [
+                        _ControlRadioTile(
+                          title: 'default speed',
+                          subtitle: 'normal credit usage',
+                          selected: speedTier.isEmpty,
+                          enabled: controller.isConnected,
+                          onTap: () =>
+                              controller.setSessionConfig(serviceTier: ''),
+                        ),
+                        for (final tier in serviceTiers)
+                          _ControlRadioTile(
+                            title: tier.id == fastTier?.id
+                                ? '${tier.name} fast mode'
+                                : tier.name,
+                            subtitle:
+                                tier.description ??
+                                'faster responses may use more credits',
+                            selected: speedTier == tier.id,
+                            enabled: controller.isConnected,
+                            onTap: () => controller.setSessionConfig(
+                              serviceTier: tier.id,
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _ControlSection(
+              title: 'Model',
+              child: Column(
+                children: [
+                  if (controller.appModels.isEmpty)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.cloud_sync_outlined),
+                      title: const Text('model list unavailable'),
+                      subtitle: const Text('refresh after the host connects'),
+                      onTap: controller.isConnected
+                          ? () =>
+                                controller.refreshAppModels(includeHidden: true)
+                          : null,
+                    )
+                  else ...[
+                    _ControlRadioTile(
+                      title: 'default model',
+                      selected: selectedModelId.isEmpty,
+                      enabled: controller.isConnected,
+                      onTap: () => controller.setSessionConfig(
+                        model: '',
+                        serviceTier: '',
+                      ),
+                    ),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: controller.appModels.length,
+                        itemBuilder: (context, index) {
+                          final model = controller.appModels[index];
+                          return _ControlRadioTile(
+                            title: model.displayName,
+                            subtitle: model.description ?? model.model,
+                            selected:
+                                selectedModelId == model.id ||
+                                selectedModelId == model.model,
+                            enabled: controller.isConnected,
+                            onTap: () => controller.setSessionConfig(
+                              model: model.id,
+                              reasoningEffort: _nextEffortForModel(
+                                model,
+                                session?.reasoningEffort,
+                              ),
+                              serviceTier: '',
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: AppSpacing.sm),
+                  _LegacyModelField(
+                    value: selectedModelId,
+                    enabled: controller.isConnected,
+                    onApply: (value) => controller.setSessionConfig(
+                      model: value,
+                      reasoningEffort: selectedEffort,
+                      serviceTier: '',
+                    ),
+                    onClear: () =>
+                        controller.setSessionConfig(model: '', serviceTier: ''),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _ControlSection(
+              title: 'Effort',
+              child: Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                children: [
+                  for (final effort in effortOptions)
+                    ChoiceChip(
+                      label: Text(effort),
+                      selected: selectedEffort == effort,
+                      onSelected: controller.isConnected
+                          ? (_) => controller.setSessionConfig(
+                              reasoningEffort: effort,
+                            )
+                          : null,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LegacyModelField extends StatefulWidget {
+  const _LegacyModelField({
+    required this.value,
+    required this.enabled,
+    required this.onApply,
+    required this.onClear,
+  });
+
+  final String value;
+  final bool enabled;
+  final ValueChanged<String> onApply;
+  final VoidCallback onClear;
+
+  @override
+  State<_LegacyModelField> createState() => _LegacyModelFieldState();
+}
+
+class _LegacyModelFieldState extends State<_LegacyModelField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant _LegacyModelField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value && _controller.text != widget.value) {
+      _controller.text = widget.value;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            key: const ValueKey('legacy-model-input'),
+            controller: _controller,
+            enabled: widget.enabled,
+            style: TextStyle(
+              color: codexTextColor(context),
+              fontFamily: 'monospace',
+              fontSize: 13,
+            ),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.memory_rounded),
+              labelText: 'Legacy model id',
+              hintText: 'gpt-5.1-codex-max',
+            ),
+            onSubmitted: (_) => _apply(),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        IconButton(
+          tooltip: 'Clear model',
+          onPressed: widget.enabled ? widget.onClear : null,
+          icon: const Icon(Icons.close_rounded),
+        ),
+        IconButton(
+          tooltip: 'Apply legacy model',
+          onPressed: widget.enabled ? _apply : null,
+          icon: const Icon(Icons.check_rounded),
+        ),
+      ],
+    );
+  }
+
+  void _apply() {
+    final value = _controller.text.trim();
+    if (value.isEmpty) {
+      widget.onClear();
+      return;
+    }
+    widget.onApply(value);
+  }
+}
+
+class _ControlSection extends StatelessWidget {
+  const _ControlSection({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: codexComposerColor(context).withValues(alpha: 0.54),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(
+          color: codexDimColor(context).withValues(alpha: 0.14),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                AppSpacing.xs,
+                AppSpacing.sm,
+                AppSpacing.xs,
+              ),
+              child: Text(
+                title.toUpperCase(),
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: codexMutedColor(context),
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ControlRadioTile extends StatelessWidget {
+  const _ControlRadioTile({
+    required this.title,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+    this.subtitle,
+  });
+
+  final String title;
+  final String? subtitle;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = Theme.of(context).colorScheme.secondary;
+    final foreground = enabled
+        ? codexTextColor(context)
+        : codexDimColor(context);
+    return ListTile(
+      dense: true,
+      enabled: enabled,
+      leading: Icon(
+        selected ? Icons.radio_button_checked : Icons.radio_button_off,
+        color: selected ? active : codexDimColor(context),
+      ),
+      title: Text(title, style: TextStyle(color: foreground)),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: codexDimColor(context), fontSize: 12),
+            ),
+      onTap: enabled ? onTap : null,
+    );
+  }
+}
+
 class _ConnectionBadge {
   const _ConnectionBadge({
     required this.label,
@@ -314,16 +862,9 @@ class _BottomConnectionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (controller.hostInfo == null && !controller.isOffline) {
-      return const SizedBox.shrink();
-    }
+    if (!controller.isOffline) return const SizedBox.shrink();
     final connection = _connectionLabel(controller);
-    final info = controller.hostInfo;
-    final detail = controller.isOffline
-        ? 'tap to reconnect'
-        : info?.connectionMode == 'tunnel'
-        ? (info?.tunnelProvider ?? 'tunnel')
-        : 'local bridge';
+    const detail = 'tap to reconnect';
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -790,6 +1331,7 @@ class _EdgeFade extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final base = isCodexLight(context) ? LightCodexColors.ink : CodexColors.ink;
     return IgnorePointer(
       child: SizedBox(
         height: top ? 118 : 176,
@@ -799,9 +1341,9 @@ class _EdgeFade extends StatelessWidget {
               begin: top ? Alignment.topCenter : Alignment.bottomCenter,
               end: top ? Alignment.bottomCenter : Alignment.topCenter,
               colors: [
-                CodexColors.ink.withValues(alpha: 0.82),
-                CodexColors.ink.withValues(alpha: 0.28),
-                CodexColors.ink.withValues(alpha: 0),
+                base.withValues(alpha: 0.82),
+                base.withValues(alpha: 0.28),
+                base.withValues(alpha: 0),
               ],
             ),
           ),
@@ -822,10 +1364,12 @@ class _MessageList extends StatefulWidget {
 
 class _MessageListState extends State<_MessageList> {
   bool _showJumpToBottom = false;
+  bool _showJumpToPrevious = false;
   bool _autoScrollQueued = false;
   bool _queuedAutoScrollAnimated = false;
   int _lastItemCount = 0;
   String _lastTimelineSignature = '';
+  final Map<String, GlobalKey> _messageKeys = {};
 
   @override
   void initState() {
@@ -851,8 +1395,14 @@ class _MessageListState extends State<_MessageList> {
     if (!widget.scrollController.hasClients) return;
     final position = widget.scrollController.position;
     final shouldShow = position.maxScrollExtent - position.pixels > 240;
-    if (shouldShow != _showJumpToBottom && mounted) {
-      setState(() => _showJumpToBottom = shouldShow);
+    final shouldShowPrevious = position.pixels > 360;
+    if ((shouldShow != _showJumpToBottom ||
+            shouldShowPrevious != _showJumpToPrevious) &&
+        mounted) {
+      setState(() {
+        _showJumpToBottom = shouldShow;
+        _showJumpToPrevious = shouldShowPrevious;
+      });
     }
   }
 
@@ -887,10 +1437,45 @@ class _MessageListState extends State<_MessageList> {
     });
   }
 
+  GlobalKey _keyForMessage(String id) {
+    return _messageKeys.putIfAbsent(id, GlobalKey.new);
+  }
+
+  void _jumpToPreviousResponse(List<ChatMessage> messages) {
+    if (!widget.scrollController.hasClients) return;
+    final current = widget.scrollController.position.pixels;
+    final max = widget.scrollController.position.maxScrollExtent;
+    for (final message in messages.reversed) {
+      if (message.role != ChatRole.assistant) continue;
+      final context = _messageKeys[message.id]?.currentContext;
+      final renderObject = context?.findRenderObject();
+      if (renderObject == null) continue;
+      final viewport = RenderAbstractViewport.maybeOf(renderObject);
+      if (viewport == null) continue;
+      final target = viewport.getOffsetToReveal(renderObject, 0).offset;
+      if (target < current - 24) {
+        widget.scrollController.animateTo(
+          target.clamp(0.0, max).toDouble(),
+          duration: AppMotion.scroll,
+          curve: Curves.easeInOutCubic,
+        );
+        return;
+      }
+    }
+    widget.scrollController.animateTo(
+      0,
+      duration: AppMotion.scroll,
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final messages = controller.activeMessages;
+    _messageKeys.removeWhere(
+      (id, _) => !messages.any((message) => message.id == id),
+    );
     if (messages.isEmpty && !controller.isRunning) {
       return const _EmptyChatHero();
     }
@@ -924,10 +1509,15 @@ class _MessageListState extends State<_MessageList> {
                 final item = items[index];
                 final shouldAnimateItem = index >= items.length - 6;
                 return switch (item) {
-                  _SingleTimelineItem(:final message) => MessageBubble(
-                    key: ValueKey('message-${message.id}-${message.kind.name}'),
-                    message: message,
-                    animate: shouldAnimateItem,
+                  _SingleTimelineItem(:final message) => KeyedSubtree(
+                    key: _keyForMessage(message.id),
+                    child: MessageBubble(
+                      key: ValueKey(
+                        'bubble-${message.id}-${message.kind.name}',
+                      ),
+                      message: message,
+                      animate: shouldAnimateItem,
+                    ),
                   ),
                   _ActivityTimelineItem(:final messages) => ActivityStackBubble(
                     key: ValueKey(
@@ -937,6 +1527,28 @@ class _MessageListState extends State<_MessageList> {
                   ),
                 };
               },
+            ),
+          ),
+        ),
+        Positioned(
+          right: AppSpacing.lg,
+          bottom: 202,
+          child: AnimatedScale(
+            scale: _showJumpToPrevious ? 1 : 0.82,
+            duration: AppMotion.quick,
+            curve: Curves.easeOutCubic,
+            child: AnimatedOpacity(
+              opacity: _showJumpToPrevious ? 1 : 0,
+              duration: AppMotion.quick,
+              child: IgnorePointer(
+                ignoring: !_showJumpToPrevious,
+                child: ChatGptCircleButton(
+                  icon: Icons.keyboard_arrow_up_rounded,
+                  size: 42,
+                  background: CodexColors.panelHigh,
+                  onPressed: () => _jumpToPreviousResponse(messages),
+                ),
+              ),
             ),
           ),
         ),
@@ -1148,14 +1760,18 @@ class _PromptComposerState extends State<_PromptComposer> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              ChatGptCircleButton(
-                key: const ValueKey('floating-attach-button'),
-                icon: Icons.add_rounded,
-                size: 44,
-                background: codexComposerColor(context).withValues(alpha: 0.82),
-                onPressed: controller.isConnected && !controller.isRunning
-                    ? () => _showAttachmentPicker(context)
-                    : null,
+              Builder(
+                builder: (buttonContext) => ChatGptCircleButton(
+                  key: const ValueKey('floating-attach-button'),
+                  icon: Icons.add_rounded,
+                  size: 44,
+                  background: codexComposerColor(
+                    context,
+                  ).withValues(alpha: 0.82),
+                  onPressed: controller.isConnected
+                      ? () => _showAttachmentPicker(buttonContext)
+                      : null,
+                ),
               ),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
@@ -1337,43 +1953,18 @@ class _PromptComposerState extends State<_PromptComposer> {
           selection: TextSelection.collapsed(offset: 6),
         );
         break;
-      case 'codex.sessions':
-        _openCommandCenter(CommandCenterSection.sessions);
-        break;
       case 'codex.model':
         _openSettings(SettingsSection.model);
-        break;
-      case 'codex.workspace':
-        widget.controller.runCommand(command);
-        _openCommandCenter(CommandCenterSection.workspace);
-        break;
-      case 'codex.skills':
-        widget.controller.runCommand(command);
-        _openCommandCenter(CommandCenterSection.skills);
-        break;
-      case 'codex.files':
-        widget.controller.runCommand(command);
-        _openCommandCenter(CommandCenterSection.files);
-        break;
-      case 'codex.history':
-        widget.controller.runCommand(command);
-        _openCommandCenter(CommandCenterSection.sessions);
         break;
       case 'codex.tunnel':
         widget.controller.runCommand(command);
         _openSettings(SettingsSection.connection);
         break;
-      case 'codex.approvals':
-        widget.controller.runCommand(command);
-        _openCommandCenter(CommandCenterSection.approvals);
-        break;
       case 'codex.review':
         widget.controller.runCommand(command);
-        _openCommandCenter(CommandCenterSection.review);
         break;
       case 'codex.doctor':
         widget.controller.runCommand(command);
-        _openCommandCenter(CommandCenterSection.diagnostics);
         break;
       default:
         widget.controller.runCommand(command);
@@ -1385,14 +1976,6 @@ class _PromptComposerState extends State<_PromptComposer> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SettingsScreen(initialSection: section),
-      ),
-    );
-  }
-
-  void _openCommandCenter(CommandCenterSection section) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CommandCenterScreen(initialSection: section),
       ),
     );
   }
@@ -1427,42 +2010,81 @@ class _PromptComposerState extends State<_PromptComposer> {
   }
 
   Future<void> _showAttachmentPicker(BuildContext context) async {
-    final picked = await showModalBottomSheet<_AttachmentPickMode>(
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final box = context.findRenderObject() as RenderBox;
+    final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
+    final picked = await showMenu<_AttachmentPickMode>(
       context: context,
-      backgroundColor: CodexColors.panel,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg,
-            AppSpacing.sm,
-            AppSpacing.lg,
-            AppSpacing.xl,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.image_rounded),
-                title: const Text('Upload image'),
-                subtitle: const Text('Attach a screenshot or visual reference'),
-                onTap: () =>
-                    Navigator.of(context).pop(_AttachmentPickMode.image),
-              ),
-              ListTile(
-                leading: const Icon(Icons.attach_file_rounded),
-                title: const Text('Upload file'),
-                subtitle: const Text('Save a file into the active workspace'),
-                onTap: () =>
-                    Navigator.of(context).pop(_AttachmentPickMode.file),
-              ),
-            ],
-          ),
-        ),
+      color: codexPanelHighColor(context),
+      surfaceTintColor: Colors.transparent,
+      elevation: 8,
+      constraints: const BoxConstraints(minWidth: 260, maxWidth: 320),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        side: BorderSide(color: codexDimColor(context).withValues(alpha: 0.18)),
       ),
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(topLeft.dx, topLeft.dy, box.size.width, box.size.height),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        _attachmentMenuItem(
+          context,
+          _AttachmentPickMode.workspace,
+          Icons.folder_open_rounded,
+          'Browse workspace',
+          'Open files, preview code, or upload',
+        ),
+        _attachmentMenuItem(
+          context,
+          _AttachmentPickMode.image,
+          Icons.image_rounded,
+          'Upload image',
+          'Attach a screenshot or visual reference',
+        ),
+        _attachmentMenuItem(
+          context,
+          _AttachmentPickMode.file,
+          Icons.attach_file_rounded,
+          'Upload file',
+          'Save a file into the active workspace',
+        ),
+      ],
     );
     if (!mounted || picked == null) return;
+    if (picked == _AttachmentPickMode.workspace) {
+      await _openFileBrowser();
+      return;
+    }
     await _pickFiles(picked);
+  }
+
+  Future<void> _openFileBrowser() async {
+    final selectedPath = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const FileBrowserScreen()),
+    );
+    if (!mounted || selectedPath == null || selectedPath.trim().isEmpty) return;
+    _insertPathMention(selectedPath.trim());
+  }
+
+  void _insertPathMention(String path) {
+    final controller = widget.textController;
+    final value = controller.value;
+    final selection = value.selection;
+    final cursor = selection.isValid ? selection.baseOffset : value.text.length;
+    final safeCursor = cursor.clamp(0, value.text.length).toInt();
+    final prefix =
+        safeCursor > 0 && !value.text.substring(0, safeCursor).endsWith(' ')
+        ? ' '
+        : '';
+    final insertion = '$prefix@$path ';
+    final text = value.text.replaceRange(safeCursor, safeCursor, insertion);
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: safeCursor + insertion.length),
+    );
+    widget.controller.clearFileSuggestions();
+    setState(() {});
   }
 
   Future<void> _pickFiles(_AttachmentPickMode mode) async {
@@ -1503,7 +2125,44 @@ class _PromptComposerState extends State<_PromptComposer> {
   }
 }
 
-enum _AttachmentPickMode { image, file }
+enum _AttachmentPickMode { workspace, image, file }
+
+PopupMenuItem<_AttachmentPickMode> _attachmentMenuItem(
+  BuildContext context,
+  _AttachmentPickMode value,
+  IconData icon,
+  String title,
+  String subtitle,
+) {
+  return PopupMenuItem<_AttachmentPickMode>(
+    value: value,
+    height: 58,
+    child: Row(
+      children: [
+        Icon(icon, size: 18, color: codexMutedColor(context)),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: AppSpacing.xxs),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: codexDimColor(context)),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
 class _GoalSubcommand {
   const _GoalSubcommand({required this.command, required this.description});

@@ -1,4 +1,4 @@
-import type { AppAccountLoginCompletedMessage, AppAccountUpdatedMessage, AppFsEntryRecord, AppFsFileRecord, AppModelRecord, AppProviderCapabilitiesRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginCancelStatus, CodexAccountLoginFlow, DiffAvailableMessage, MessageCompletedMessage, MessageDeltaMessage, MessageStartedMessage, OutputDeltaMessage, ReasoningEffort, RunCompletedMessage, RunStartedMessage, SessionGoalClearedMessage, SessionGoalRecord, SessionGoalUpdatedMessage, SessionPlanUpdatedMessage, SessionStartedMessage, SessionUpdatedMessage, StatusMessage, WorkspaceFileRecord } from "../protocol/messages.js";
+import type { AppAccountLoginCompletedMessage, AppAccountUpdatedMessage, AppFsEntryRecord, AppFsFileRecord, AppMcpOauthLoginRecord, AppMcpServerRecord, AppModelRecord, AppPluginDetailRecord, AppPluginInstallResultRecord, AppPluginMarketplaceRecord, AppPluginUninstallResultRecord, AppProviderCapabilitiesRecord, AppRateLimitRecord, AppRemoteControlStatusRecord, AppRemotePairingRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginCancelStatus, CodexAccountLoginFlow, DiffAvailableMessage, MessageCompletedMessage, MessageDeltaMessage, MessageStartedMessage, OutputDeltaMessage, ReasoningEffort, RunCompletedMessage, RunStartedMessage, SessionGoalClearedMessage, SessionGoalRecord, SessionGoalUpdatedMessage, SessionPlanUpdatedMessage, SessionStartedMessage, SessionUpdatedMessage, StatusMessage, WorkspaceFileRecord } from "../protocol/messages.js";
 
 export type CodexEvent =
   | SessionStartedMessage
@@ -79,6 +79,24 @@ export type AccountLoginCancelResult = {
   status: CodexAccountLoginCancelStatus;
 };
 
+export type AppPluginLocatorInput = {
+  pluginName: string;
+  marketplacePath?: string;
+  remoteMarketplaceName?: string;
+};
+
+export type AppPluginListInput = {
+  cwd?: string;
+};
+
+export type AppMcpStatusListInput = {
+  detail?: "full" | "toolsAndAuthOnly";
+};
+
+export type AppRemotePairingInput = {
+  manualPairingCode?: string;
+};
+
 export interface CodexSession {
   readonly sessionId: string;
   start(): Promise<void>;
@@ -89,12 +107,23 @@ export interface CodexSession {
   listSkills?(input?: AppSkillListInput): Promise<{ groups: AppSkillGroupRecord[] }>;
   listDirectory?(absolutePath: string): Promise<AppFsEntryRecord[]>;
   readFile?(absolutePath: string): Promise<AppFsFileRecord>;
+  writeFile?(absolutePath: string, dataBase64: string): Promise<AppFsFileRecord>;
+  createDirectory?(absolutePath: string): Promise<void>;
   searchFiles?(input: AppFileSearchInput): Promise<WorkspaceFileRecord[]>;
   startReview?(input: AppReviewStartInput): Promise<AppReviewStartResult>;
   getAccount?(refreshToken?: boolean): Promise<CodexAccountInfo>;
   startAccountLogin?(input: AccountLoginStartInput): Promise<CodexAccountLoginFlow>;
   cancelAccountLogin?(loginId: string): Promise<AccountLoginCancelResult>;
   logoutAccount?(): Promise<void>;
+  readRateLimits?(): Promise<AppRateLimitRecord[]>;
+  listPlugins?(input?: AppPluginListInput): Promise<{ marketplaces: AppPluginMarketplaceRecord[] }>;
+  readPlugin?(input: AppPluginLocatorInput): Promise<AppPluginDetailRecord>;
+  installPlugin?(input: AppPluginLocatorInput): Promise<AppPluginInstallResultRecord>;
+  uninstallPlugin?(pluginName: string): Promise<AppPluginUninstallResultRecord>;
+  listMcpServers?(input?: AppMcpStatusListInput): Promise<AppMcpServerRecord[]>;
+  startMcpOauthLogin?(serverName: string): Promise<AppMcpOauthLoginRecord>;
+  readRemoteControlStatus?(): Promise<AppRemoteControlStatusRecord>;
+  startRemoteControlPairing?(input?: AppRemotePairingInput): Promise<AppRemotePairingRecord>;
   setGoal?(input: GoalSetInput): Promise<SessionGoalRecord>;
   getGoal?(): Promise<SessionGoalRecord | null>;
   clearGoal?(): Promise<boolean>;

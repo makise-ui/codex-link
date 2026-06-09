@@ -53,7 +53,7 @@ describe("startBridgeServer", () => {
     });
     const hostInfo = messages.find((message) => message.type === "host.info");
     expect(hostInfo).toMatchObject({
-      version: 8,
+      version: 12,
       connectionMode: "tunnel",
       tunnelProvider: "cloudflared",
       publicUrl: "wss://unit.trycloudflare.com",
@@ -149,6 +149,52 @@ describe("startBridgeServer", () => {
       query: "main",
       files: [{ path: "lib/main.dart", name: "main.dart" }],
     });
+
+    ws.close();
+  });
+
+  it("forwards workspace env secret updates to the session manager", async () => {
+    const port = await freePort();
+    const sessionManager = fakeSessionManager();
+    server = await startBridgeServer({
+      host: "127.0.0.1",
+      port,
+      url: `ws://127.0.0.1:${port}`,
+      pairingStore: new PairingStore({ password: "secret" }),
+      sessionManager,
+      auditLog: { record() {} } as unknown as AuditLog,
+      logger: { info() {} } as unknown as pino.Logger,
+      hostInfo: {
+        connectionMode: "tunnel",
+        tunnelProvider: "cloudflared",
+        publicUrl: "wss://unit.trycloudflare.com",
+        localUrl: `ws://127.0.0.1:${port}`,
+        hostLabel: "Codex Link",
+        yoloAllowed: false,
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+    });
+    ws.send(JSON.stringify({ type: "workspace.env.set", sessionId: "s1", content: "OPENAI_API_KEY=sk-unit" }));
+
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "workspace.env.updated")).toBe(true);
+    });
+    expect(sessionManager.envSets).toEqual([{ sessionId: "s1", content: "OPENAI_API_KEY=sk-unit", targetPath: undefined }]);
+    expect(messages.find((message) => message.type === "workspace.env.updated")).toMatchObject({
+      sessionId: "s1",
+      path: ".env.local",
+      variableNames: ["OPENAI_API_KEY"],
+    });
+    expect(messages.filter((message) => message.type === "workspace.env.updated")).toHaveLength(1);
 
     ws.close();
   });
@@ -320,11 +366,73 @@ describe("startBridgeServer", () => {
 
     ws.close();
   });
+
+  it("forwards interactive app-server action messages to the session manager", async () => {
+    const port = await freePort();
+    const sessionManager = fakeSessionManager();
+    server = await startBridgeServer({
+      host: "127.0.0.1",
+      port,
+      url: `ws://127.0.0.1:${port}`,
+      pairingStore: new PairingStore({ password: "secret" }),
+      sessionManager,
+      auditLog: { record() {} } as unknown as AuditLog,
+      logger: { info() {} } as unknown as pino.Logger,
+      hostInfo: {
+        connectionMode: "tunnel",
+        tunnelProvider: "cloudflared",
+        publicUrl: "wss://unit.trycloudflare.com",
+        localUrl: `ws://127.0.0.1:${port}`,
+        hostLabel: "Codex Link",
+        yoloAllowed: false,
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+    });
+    messages.length = 0;
+
+    ws.send(JSON.stringify({ type: "app.plugin.list", sessionId: "s1" }));
+    ws.send(JSON.stringify({ type: "app.plugin.read", pluginName: "github", marketplacePath: "/tmp/marketplace" }));
+    ws.send(JSON.stringify({ type: "app.plugin.install", pluginName: "github", marketplacePath: "/tmp/marketplace" }));
+    ws.send(JSON.stringify({ type: "app.plugin.uninstall", pluginName: "github" }));
+    ws.send(JSON.stringify({ type: "app.mcp.status.list", sessionId: "s1", detail: "toolsAndAuthOnly" }));
+    ws.send(JSON.stringify({ type: "app.mcp.oauth.login", serverName: "github" }));
+    ws.send(JSON.stringify({ type: "app.remote.status.read" }));
+    ws.send(JSON.stringify({ type: "app.remote.pairing.start", manualPairingCode: "123456" }));
+    ws.send(JSON.stringify({ type: "app.account.rateLimits.read" }));
+
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "app.plugin.list")).toBe(true);
+      expect(messages.some((message) => message.type === "app.plugin.detail")).toBe(true);
+      expect(messages.some((message) => message.type === "app.plugin.install.result")).toBe(true);
+      expect(messages.some((message) => message.type === "app.plugin.uninstall.result")).toBe(true);
+      expect(messages.some((message) => message.type === "app.mcp.status.list")).toBe(true);
+      expect(messages.some((message) => message.type === "app.mcp.oauth.login.started")).toBe(true);
+      expect(messages.some((message) => message.type === "app.remote.status")).toBe(true);
+      expect(messages.some((message) => message.type === "app.remote.pairing.started")).toBe(true);
+      expect(messages.some((message) => message.type === "app.account.rateLimits")).toBe(true);
+    });
+    expect(sessionManager.pluginActions.map((action) => action.type)).toEqual(["list", "read", "install", "uninstall"]);
+    expect(sessionManager.mcpActions).toEqual(["list:toolsAndAuthOnly", "oauth:github"]);
+    expect(sessionManager.remoteActions).toEqual(["status", "pair:123456"]);
+    expect(sessionManager.rateLimitReads).toBe(1);
+
+    ws.close();
+  });
 });
 
 function fakeSessionManager(): CodexSessionManager & {
   requestedFiles: Array<{ sessionId: string; path: string }>;
   fileSearches: Array<{ sessionId: string; query?: string; limit?: number }>;
+  envSets: Array<{ sessionId: string; content: string; targetPath?: string }>;
   goalSets: Array<{ sessionId: string; objective?: string; status?: string; tokenBudget?: number | null }>;
   goalGets: string[];
   goalClears: string[];
@@ -334,9 +442,14 @@ function fakeSessionManager(): CodexSessionManager & {
   accountLoginStarts: Array<Record<string, unknown>>;
   accountLoginCancels: string[];
   accountLogouts: number;
+  pluginActions: Array<Record<string, unknown>>;
+  mcpActions: string[];
+  remoteActions: string[];
+  rateLimitReads: number;
 } {
   const requestedFiles: Array<{ sessionId: string; path: string }> = [];
   const fileSearches: Array<{ sessionId: string; query?: string; limit?: number }> = [];
+  const envSets: Array<{ sessionId: string; content: string; targetPath?: string }> = [];
   const goalSets: Array<{ sessionId: string; objective?: string; status?: string; tokenBudget?: number | null }> = [];
   const goalGets: string[] = [];
   const goalClears: string[] = [];
@@ -345,11 +458,16 @@ function fakeSessionManager(): CodexSessionManager & {
   const accountReads: boolean[] = [];
   const accountLoginStarts: Array<Record<string, unknown>> = [];
   const accountLoginCancels: string[] = [];
+  const pluginActions: Array<Record<string, unknown>> = [];
+  const mcpActions: string[] = [];
+  const remoteActions: string[] = [];
+  let rateLimitReads = 0;
   let accountLogouts = 0;
   let listener: ((event: unknown) => void) | undefined;
   return {
     requestedFiles,
     fileSearches,
+    envSets,
     goalSets,
     goalGets,
     goalClears,
@@ -358,8 +476,14 @@ function fakeSessionManager(): CodexSessionManager & {
     accountReads,
     accountLoginStarts,
     accountLoginCancels,
+    pluginActions,
+    mcpActions,
+    remoteActions,
     get accountLogouts() {
       return accountLogouts;
+    },
+    get rateLimitReads() {
+      return rateLimitReads;
     },
     onEvent: (callback: (event: unknown) => void) => {
       listener = callback;
@@ -391,6 +515,18 @@ function fakeSessionManager(): CodexSessionManager & {
         query: query ?? "",
         files: [{ path: "lib/main.dart", name: "main.dart", sizeBytes: 14, mimeType: "text/plain" }],
       };
+    },
+    setWorkspaceEnv: async (sessionId: string, content: string, targetPath?: string) => {
+      envSets.push({ sessionId, content, targetPath });
+      const result = {
+        type: "workspace.env.updated",
+        sessionId,
+        path: targetPath ?? ".env.local",
+        variableNames: ["OPENAI_API_KEY"],
+        skippedLineCount: 0,
+      };
+      listener?.(result);
+      return result;
     },
     setGoal: async (sessionId: string, input: { objective?: string; status?: string; tokenBudget?: number | null }) => {
       goalSets.push({ sessionId, ...input });
@@ -430,7 +566,7 @@ function fakeSessionManager(): CodexSessionManager & {
     },
     listAppModels: async (_sessionId?: string, _includeHidden?: boolean) => ({
       type: "app.model.list",
-      models: [{ id: "gpt-test", model: "gpt-test", displayName: "GPT Test", hidden: false, supportedReasoningEfforts: ["low"], inputModalities: ["text"], supportsPersonality: false, isDefault: true }],
+      models: [{ id: "gpt-test", model: "gpt-test", displayName: "GPT Test", hidden: false, supportedReasoningEfforts: ["low"], inputModalities: ["text"], supportsPersonality: false, serviceTiers: [], defaultServiceTier: null, isDefault: true }],
       capabilities: { namespaceTools: true, imageGeneration: true, webSearch: true },
     }),
     listAppThreads: async () => ({
@@ -538,6 +674,80 @@ function fakeSessionManager(): CodexSessionManager & {
         account: { accountType: null, authMode: null, requiresOpenaiAuth: true },
       };
     },
+    listAppPlugins: async (sessionId?: string) => {
+      pluginActions.push({ type: "list", sessionId });
+      return {
+        type: "app.plugin.list",
+        marketplaces: [
+          {
+            name: "openai-curated",
+            displayName: "OpenAI curated",
+            path: "/tmp/marketplace",
+            plugins: [{ name: "github", displayName: "GitHub", description: "GitHub integration", installed: false, enabled: true }],
+          },
+        ],
+      };
+    },
+    readAppPlugin: async (input: Record<string, unknown>) => {
+      pluginActions.push({ type: "read", ...input });
+      return {
+        type: "app.plugin.detail",
+        plugin: { name: input.pluginName, displayName: "GitHub", description: "GitHub integration", skills: [], apps: [], mcpServers: [] },
+      };
+    },
+    installAppPlugin: async (input: Record<string, unknown>) => {
+      pluginActions.push({ type: "install", ...input });
+      return {
+        type: "app.plugin.install.result",
+        pluginName: input.pluginName,
+        installed: true,
+        appsNeedingAuth: [],
+      };
+    },
+    uninstallAppPlugin: async (pluginName: string) => {
+      pluginActions.push({ type: "uninstall", pluginName });
+      return {
+        type: "app.plugin.uninstall.result",
+        pluginName,
+        uninstalled: true,
+      };
+    },
+    listAppMcpServers: async (_sessionId?: string, detail?: string) => {
+      mcpActions.push(`list:${detail ?? "toolsAndAuthOnly"}`);
+      return {
+        type: "app.mcp.status.list",
+        servers: [{ name: "github", status: "enabled", authStatus: "unauthenticated", toolCount: 2, tools: ["search_issues"], resourceCount: 0 }],
+      };
+    },
+    startAppMcpOauthLogin: async (serverName: string) => {
+      mcpActions.push(`oauth:${serverName}`);
+      return {
+        type: "app.mcp.oauth.login.started",
+        serverName,
+        loginUrl: "https://github.com/login/oauth/authorize",
+      };
+    },
+    readAppRemoteControlStatus: async () => {
+      remoteActions.push("status");
+      return {
+        type: "app.remote.status",
+        status: { enabled: true, serverName: "unit-host", environmentId: "env-1" },
+      };
+    },
+    startAppRemotePairing: async (manualPairingCode?: string) => {
+      remoteActions.push(`pair:${manualPairingCode ?? ""}`);
+      return {
+        type: "app.remote.pairing.started",
+        pairing: { pairingCode: "PAIR-123", manualPairingCode, environmentId: "env-1" },
+      };
+    },
+    readAppRateLimits: async () => {
+      rateLimitReads += 1;
+      return {
+        type: "app.account.rateLimits",
+        limits: [{ limitId: "codex", planType: "pro", usedPercent: 5, remainingPercent: 95, windowDurationMins: 43200 }],
+      };
+    },
     listSessions: () => [
       {
         sessionId: "s1",
@@ -557,6 +767,7 @@ function fakeSessionManager(): CodexSessionManager & {
   } as unknown as CodexSessionManager & {
     requestedFiles: Array<{ sessionId: string; path: string }>;
     fileSearches: Array<{ sessionId: string; query?: string; limit?: number }>;
+    envSets: Array<{ sessionId: string; content: string; targetPath?: string }>;
     goalSets: Array<{ sessionId: string; objective?: string; status?: string; tokenBudget?: number | null }>;
     goalGets: string[];
     goalClears: string[];
@@ -566,6 +777,10 @@ function fakeSessionManager(): CodexSessionManager & {
     accountLoginStarts: Array<Record<string, unknown>>;
     accountLoginCancels: string[];
     accountLogouts: number;
+    pluginActions: Array<Record<string, unknown>>;
+    mcpActions: string[];
+    remoteActions: string[];
+    rateLimitReads: number;
   };
 }
 

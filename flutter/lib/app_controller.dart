@@ -81,10 +81,24 @@ class AppController extends ChangeNotifier {
   CodexAccountLoginFlow? activeCodexLogin;
   bool codexAccountBusy = false;
   String? codexAccountErrorText;
+  bool appServerActionsBusy = false;
+  String? appServerActionsErrorText;
+  bool envSecretsBusy = false;
+  String? envSecretsStatusText;
   final List<AppThreadInfo> appThreads = [];
   final List<AppSkillGroupInfo> appSkillGroups = [];
   final List<AppFsEntryInfo> appFileEntries = [];
   final List<WorkspaceFileInfo> appFileSearchResults = [];
+  final List<AppPluginMarketplaceInfo> appPluginMarketplaces = [];
+  AppPluginDetailInfo? appSelectedPlugin;
+  AppPluginInstallResultInfo? appPluginInstallResult;
+  final List<AppMcpServerInfo> appMcpServers = [];
+  AppMcpOauthLoginInfo? appMcpOauthLogin;
+  AppRemoteStatusInfo? appRemoteStatus;
+  AppRemotePairingInfo? appRemotePairing;
+  final List<AppRateLimitInfo> appRateLimits = [];
+  bool appFsBusy = false;
+  String? appFsStatusText;
   final List<FileOfferInfo> fileOffers = [];
   final List<DownloadedFileInfo> downloadedFiles = [];
   final Map<String, String> savedFilePaths = {};
@@ -416,6 +430,119 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  void refreshAppServerActions() {
+    refreshAppPlugins();
+    refreshAppMcpServers();
+    refreshRemoteControlStatus();
+    refreshAppRateLimits();
+  }
+
+  void refreshAppPlugins() {
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({
+      'type': 'app.plugin.list',
+      if (activeSession?.sessionId != null)
+        'sessionId': activeSession!.sessionId,
+    });
+  }
+
+  void readAppPlugin(
+    String pluginName, {
+    String? marketplacePath,
+    String? remoteMarketplaceName,
+  }) {
+    final trimmed = pluginName.trim();
+    if (trimmed.isEmpty) return;
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({
+      'type': 'app.plugin.read',
+      'pluginName': trimmed,
+      if (marketplacePath?.trim().isNotEmpty == true)
+        'marketplacePath': marketplacePath!.trim(),
+      if (remoteMarketplaceName?.trim().isNotEmpty == true)
+        'remoteMarketplaceName': remoteMarketplaceName!.trim(),
+    });
+  }
+
+  void installAppPlugin(
+    String pluginName, {
+    String? marketplacePath,
+    String? remoteMarketplaceName,
+  }) {
+    final trimmed = pluginName.trim();
+    if (trimmed.isEmpty) return;
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({
+      'type': 'app.plugin.install',
+      'pluginName': trimmed,
+      if (marketplacePath?.trim().isNotEmpty == true)
+        'marketplacePath': marketplacePath!.trim(),
+      if (remoteMarketplaceName?.trim().isNotEmpty == true)
+        'remoteMarketplaceName': remoteMarketplaceName!.trim(),
+    });
+  }
+
+  void uninstallAppPlugin(String pluginName) {
+    final trimmed = pluginName.trim();
+    if (trimmed.isEmpty) return;
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.plugin.uninstall', 'pluginName': trimmed});
+  }
+
+  void refreshAppMcpServers({String detail = 'toolsAndAuthOnly'}) {
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({
+      'type': 'app.mcp.status.list',
+      if (activeSession?.sessionId != null)
+        'sessionId': activeSession!.sessionId,
+      'detail': detail,
+    });
+  }
+
+  void startAppMcpOauthLogin(String serverName) {
+    final trimmed = serverName.trim();
+    if (trimmed.isEmpty) return;
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.mcp.oauth.login', 'serverName': trimmed});
+  }
+
+  void refreshRemoteControlStatus() {
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.remote.status.read'});
+  }
+
+  void startRemotePairing({String? manualPairingCode}) {
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({
+      'type': 'app.remote.pairing.start',
+      if (manualPairingCode?.trim().isNotEmpty == true)
+        'manualPairingCode': manualPairingCode!.trim(),
+    });
+  }
+
+  void refreshAppRateLimits() {
+    appServerActionsBusy = true;
+    appServerActionsErrorText = null;
+    notifyListeners();
+    _send({'type': 'app.account.rateLimits.read'});
+  }
+
   void refreshCodexAccount({bool refreshToken = false}) {
     codexAccountBusy = true;
     codexAccountErrorText = null;
@@ -500,13 +627,50 @@ class AppController extends ChangeNotifier {
   void listAppDirectory([String path = '']) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
+    appFsBusy = true;
+    appFsStatusText = path.trim().isEmpty
+        ? 'Opening workspace...'
+        : 'Opening $path...';
+    notifyListeners();
     _send({'type': 'app.fs.list', 'sessionId': sessionId, 'path': path});
   }
 
   void readAppFile(String path) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null || path.trim().isEmpty) return;
+    appFsBusy = true;
+    appFsStatusText = 'Reading ${path.trim()}...';
+    notifyListeners();
     _send({'type': 'app.fs.read', 'sessionId': sessionId, 'path': path});
+  }
+
+  void writeAppFile(String path, String dataBase64) {
+    final sessionId = activeSession?.sessionId;
+    final trimmed = path.trim();
+    if (sessionId == null || trimmed.isEmpty || dataBase64.isEmpty) return;
+    appFsBusy = true;
+    appFsStatusText = 'Uploading $trimmed...';
+    notifyListeners();
+    _send({
+      'type': 'app.fs.write',
+      'sessionId': sessionId,
+      'path': trimmed,
+      'dataBase64': dataBase64,
+    });
+  }
+
+  void createAppDirectory(String path) {
+    final sessionId = activeSession?.sessionId;
+    final trimmed = path.trim();
+    if (sessionId == null || trimmed.isEmpty) return;
+    appFsBusy = true;
+    appFsStatusText = 'Creating $trimmed...';
+    notifyListeners();
+    _send({
+      'type': 'app.fs.createDirectory',
+      'sessionId': sessionId,
+      'path': trimmed,
+    });
   }
 
   void searchAppFiles(String query, {int limit = 40}) {
@@ -556,6 +720,21 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  void setWorkspaceEnvSecrets(String content, {String path = '.env.local'}) {
+    final sessionId = activeSession?.sessionId;
+    final trimmed = content.trim();
+    if (!isConnected || sessionId == null || trimmed.isEmpty) return;
+    envSecretsBusy = true;
+    envSecretsStatusText = 'Saving env secrets...';
+    notifyListeners();
+    _send({
+      'type': 'workspace.env.set',
+      'sessionId': sessionId,
+      'content': trimmed,
+      if (path != '.env.local') 'path': path,
+    });
+  }
+
   void clearFileSuggestions() {
     if (fileSuggestionQuery.isEmpty && fileSuggestions.isEmpty) return;
     fileSuggestionQuery = '';
@@ -581,7 +760,11 @@ class AppController extends ChangeNotifier {
     });
   }
 
-  void setSessionConfig({String? model, String? reasoningEffort}) {
+  void setSessionConfig({
+    String? model,
+    String? reasoningEffort,
+    String? serviceTier,
+  }) {
     final sessionId = activeSession?.sessionId;
     if (sessionId == null) return;
     final trimmedModel = model?.trim();
@@ -594,6 +777,11 @@ class AppController extends ChangeNotifier {
     }
     if (reasoningEffort != null && reasoningEffort.isNotEmpty) {
       message['reasoningEffort'] = reasoningEffort;
+    }
+    if (serviceTier != null) {
+      message['serviceTier'] = serviceTier.trim().isEmpty
+          ? null
+          : serviceTier.trim();
     }
     _send(message);
   }
@@ -649,45 +837,8 @@ class AppController extends ChangeNotifier {
       case 'codex.new':
         createSession();
         return;
-      case 'codex.workspace':
-        refreshWorkspaces();
-        statusText = 'Workspace controls are open in commands.';
-        notifyListeners();
-        return;
-      case 'codex.skills':
-        refreshAppSkills(forceReload: true);
-        statusText = 'Skills are open in commands.';
-        notifyListeners();
-        return;
-      case 'codex.files':
-        listAppDirectory();
-        statusText = 'Files are open in commands.';
-        notifyListeners();
-        return;
-      case 'codex.history':
-        refreshAppThreads();
-        refreshExternalSessions();
-        statusText = 'Session history is open in commands.';
-        notifyListeners();
-        return;
-      case 'codex.approvals':
-        statusText = pendingApprovals.isEmpty
-            ? 'No pending approvals.'
-            : '${pendingApprovals.length} approval${pendingApprovals.length == 1 ? '' : 's'} pending.';
-        notifyListeners();
-        return;
-      case 'codex.tunnel':
-        statusText = hostInfo?.connectionMode == 'tunnel'
-            ? 'Tunnel details are open in settings.'
-            : 'Local bridge details are open in settings.';
-        notifyListeners();
-        return;
       case 'codex.review':
         startReview();
-        return;
-      case 'codex.sessions':
-        statusText = 'Open ${command.title} from commands.';
-        notifyListeners();
         return;
       case 'codex.model':
         statusText = 'Open ${command.title} from settings.';
@@ -882,6 +1033,12 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  void _refreshAppDirectorySilently(String path) {
+    final sessionId = activeSession?.sessionId;
+    if (sessionId == null) return;
+    _send({'type': 'app.fs.list', 'sessionId': sessionId, 'path': path});
+  }
+
   void _handleMessage(Map<String, dynamic> message) {
     switch (message['type'] as String?) {
       case 'status':
@@ -937,6 +1094,9 @@ class AppController extends ChangeNotifier {
       case 'workspace.file.search.results':
         _replaceFileSuggestions(message);
         break;
+      case 'workspace.env.updated':
+        _applyWorkspaceEnvUpdated(message);
+        break;
       case 'command.list':
         commands
           ..clear()
@@ -989,6 +1149,110 @@ class AppController extends ChangeNotifier {
       case 'app.account.login.completed':
         _applyCodexLoginCompleted(message);
         break;
+      case 'app.account.rateLimits':
+        appRateLimits
+          ..clear()
+          ..addAll(
+            ((message['limits'] as List<dynamic>? ?? const [])).map(
+              (item) => AppRateLimitInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        break;
+      case 'app.plugin.list':
+        appPluginMarketplaces
+          ..clear()
+          ..addAll(
+            ((message['marketplaces'] as List<dynamic>? ?? const [])).map(
+              (item) => AppPluginMarketplaceInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        break;
+      case 'app.plugin.detail':
+        if (message['plugin'] is Map) {
+          appSelectedPlugin = AppPluginDetailInfo.fromJson(
+            Map<String, dynamic>.from(message['plugin'] as Map),
+          );
+        }
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        break;
+      case 'app.plugin.install.result':
+        appPluginInstallResult = AppPluginInstallResultInfo.fromJson(message);
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        _showNotice(
+          appPluginInstallResult?.installed == true
+              ? 'Plugin installed'
+              : 'Plugin install updated',
+          appPluginInstallResult?.pluginName ?? 'Plugin action finished.',
+          payload: 'plugin:install',
+        );
+        break;
+      case 'app.plugin.uninstall.result':
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        _showNotice(
+          'Plugin removed',
+          message['pluginName'] as String? ?? 'Plugin removed.',
+          payload: 'plugin:uninstall',
+        );
+        break;
+      case 'app.mcp.status.list':
+        appMcpServers
+          ..clear()
+          ..addAll(
+            ((message['servers'] as List<dynamic>? ?? const [])).map(
+              (item) => AppMcpServerInfo.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            ),
+          );
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        break;
+      case 'app.mcp.oauth.login.started':
+        appMcpOauthLogin = AppMcpOauthLoginInfo.fromJson(message);
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        _showNotice(
+          'MCP login ready',
+          appMcpOauthLogin?.loginUrl ?? appMcpOauthLogin?.serverName ?? '',
+          payload: 'mcp:oauth',
+        );
+        break;
+      case 'app.remote.status':
+        if (message['status'] is Map) {
+          appRemoteStatus = AppRemoteStatusInfo.fromJson(
+            Map<String, dynamic>.from(message['status'] as Map),
+          );
+        }
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        break;
+      case 'app.remote.pairing.started':
+        if (message['pairing'] is Map) {
+          appRemotePairing = AppRemotePairingInfo.fromJson(
+            Map<String, dynamic>.from(message['pairing'] as Map),
+          );
+        }
+        appServerActionsBusy = false;
+        appServerActionsErrorText = null;
+        _showNotice(
+          'Remote pairing ready',
+          appRemotePairing?.manualPairingCode ??
+              appRemotePairing?.pairingCode ??
+              '',
+          payload: 'remote:pairing',
+        );
+        break;
       case 'app.thread.list':
         appThreads
           ..clear()
@@ -1022,6 +1286,8 @@ class AppController extends ChangeNotifier {
               ),
             ),
           );
+        appFsBusy = false;
+        appFsStatusText = null;
         break;
       case 'app.fs.file':
         if (message['file'] is Map) {
@@ -1029,6 +1295,25 @@ class AppController extends ChangeNotifier {
             Map<String, dynamic>.from(message['file'] as Map),
           );
         }
+        appFsBusy = false;
+        appFsStatusText = null;
+        break;
+      case 'app.fs.write.result':
+        if (message['file'] is Map) {
+          appPreviewFile = AppFsFileInfo.fromJson(
+            Map<String, dynamic>.from(message['file'] as Map),
+          );
+          appFsStatusText = 'Uploaded ${appPreviewFile!.path}.';
+        } else {
+          appFsStatusText = 'File uploaded.';
+        }
+        appFsBusy = false;
+        _refreshAppDirectorySilently(appFilePath);
+        break;
+      case 'app.fs.directory.created':
+        appFsBusy = false;
+        appFsStatusText = 'Created ${message['path'] as String? ?? 'folder'}.';
+        _refreshAppDirectorySilently(appFilePath);
         break;
       case 'app.file.search.results':
         appFileSearchResults
@@ -1078,6 +1363,21 @@ class AppController extends ChangeNotifier {
         _appendFileDownloadEvent(message);
         break;
       case 'error':
+        if (appFsBusy) {
+          appFsBusy = false;
+          appFsStatusText =
+              message['message'] as String? ?? 'File operation failed.';
+        }
+        if (envSecretsBusy) {
+          envSecretsBusy = false;
+          envSecretsStatusText =
+              message['message'] as String? ?? 'Could not save env secrets.';
+        }
+        if (appServerActionsBusy) {
+          appServerActionsBusy = false;
+          appServerActionsErrorText =
+              message['message'] as String? ?? 'App-server action failed.';
+        }
         _appendError(message['message'] as String? ?? 'Unknown bridge error');
         statusText = message['message'] as String? ?? statusText;
         break;
@@ -1176,6 +1476,25 @@ class AppController extends ChangeNotifier {
           ),
         ),
       );
+  }
+
+  void _applyWorkspaceEnvUpdated(Map<String, dynamic> message) {
+    final names = (message['variableNames'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .where((name) => name.trim().isNotEmpty)
+        .map((name) => name.trim())
+        .toList(growable: false);
+    final path = message['path'] as String? ?? '.env.local';
+    final skipped = message['skippedLineCount'] as int? ?? 0;
+    envSecretsBusy = false;
+    envSecretsStatusText = names.isEmpty
+        ? 'No env secrets were saved.'
+        : 'Saved ${names.length} env ${names.length == 1 ? 'secret' : 'secrets'} to $path: ${names.join(', ')}${skipped > 0 ? ' ($skipped skipped)' : ''}';
+    _showNotice(
+      'Env secrets saved',
+      envSecretsStatusText!,
+      payload: 'workspace-env:saved',
+    );
   }
 
   void _applyCodexAccountStatus(Map<String, dynamic> message) {
@@ -1990,7 +2309,7 @@ String? _requestedFilePathFromPrompt(String prompt) {
     r'^(?:/send|/download|send\s+file|send\s+me\s+file)\s+(.+)$',
     caseSensitive: false,
   ).firstMatch(prompt.trim());
-  final rawPath = match?.group(1)?.trim();
+  final rawPath = _firstPathToken(match?.group(1)?.trim() ?? '');
   if (rawPath == null || rawPath.isEmpty) return null;
   var normalized = rawPath;
   if (normalized.startsWith('@')) {
@@ -2008,6 +2327,18 @@ String? _requestedFilePathFromPrompt(String prompt) {
     normalized = normalized.substring(1, normalized.length - 1).trim();
   }
   return normalized;
+}
+
+String? _firstPathToken(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return null;
+  final first = trimmed[0];
+  if (first == '"' || first == "'") {
+    final end = trimmed.indexOf(first, 1);
+    if (end > 0) return trimmed.substring(0, end + 1);
+    return trimmed;
+  }
+  return trimmed.split(RegExp(r'\s+')).first;
 }
 
 String? _goalStatusFromCommandValue(String value) {

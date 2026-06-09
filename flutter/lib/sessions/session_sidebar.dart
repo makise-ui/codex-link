@@ -19,6 +19,17 @@ class _SessionSidebarState extends State<SessionSidebar> {
   final _searchController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final controller = context.read<AppController>();
+      controller.refreshAppThreads(limit: 40);
+      controller.refreshExternalSessions();
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -38,14 +49,37 @@ class _SessionSidebarState extends State<SessionSidebar> {
                     session.workdirName.toLowerCase().contains(query),
               )
               .toList(growable: false);
+    final appThreads = query.isEmpty
+        ? controller.appThreads
+        : controller.appThreads
+              .where(
+                (thread) =>
+                    thread.title.toLowerCase().contains(query) ||
+                    thread.workdir.toLowerCase().contains(query) ||
+                    thread.preview.toLowerCase().contains(query),
+              )
+              .toList(growable: false);
+    final externalSessions = query.isEmpty
+        ? controller.externalSessions
+        : controller.externalSessions
+              .where(
+                (session) =>
+                    session.title.toLowerCase().contains(query) ||
+                    session.workdir.toLowerCase().contains(query),
+              )
+              .toList(growable: false);
+    final sidebarColor = isCodexLight(context)
+        ? LightCodexColors.panelHigh
+        : CodexColors.ink2;
     return SafeArea(
       child: Container(
         width: 288,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF1B1B1D), Color(0xFF0A0A0B), Color(0xFF161618)],
+        decoration: BoxDecoration(
+          color: sidebarColor,
+          border: Border(
+            right: BorderSide(
+              color: codexDimColor(context).withValues(alpha: 0.12),
+            ),
           ),
         ),
         child: Column(
@@ -81,6 +115,7 @@ class _SessionSidebarState extends State<SessionSidebar> {
                   controller: _searchController,
                   onChanged: (_) => setState(() {}),
                   style: const TextStyle(fontSize: 13),
+                  cursorColor: codexTextColor(context),
                   decoration: InputDecoration(
                     hintText: 'Search sessions',
                     prefixIcon: const Icon(Icons.search_rounded, size: 18),
@@ -89,39 +124,74 @@ class _SessionSidebarState extends State<SessionSidebar> {
                       vertical: AppSpacing.xs,
                     ),
                     filled: true,
-                    fillColor: CodexColors.panelHigh.withValues(alpha: 0.54),
+                    fillColor: codexPanelHighColor(
+                      context,
+                    ).withValues(alpha: isCodexLight(context) ? 0.86 : 0.54),
                   ),
                 ),
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Text(
                 'Recents',
                 style: TextStyle(
-                  color: CodexColors.muted,
+                  color: codexMutedColor(context),
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
                 ),
               ),
             ),
             Expanded(
-              child: ListView.builder(
+              child: ListView(
                 padding: EdgeInsets.zero,
-                itemCount: sessions.length,
-                itemBuilder: (context, index) {
-                  final session = sessions[index];
-                  final active =
-                      session.sessionId == controller.activeSession?.sessionId;
-                  return _SessionRow(
-                    session: session,
-                    active: active,
-                    onTap: () {
-                      controller.selectSession(session.sessionId);
-                      widget.onPicked?.call();
-                    },
-                  );
-                },
+                children: [
+                  for (final session in sessions)
+                    _SessionRow(
+                      session: session,
+                      active:
+                          session.sessionId ==
+                          controller.activeSession?.sessionId,
+                      onTap: () {
+                        controller.selectSession(session.sessionId);
+                        widget.onPicked?.call();
+                      },
+                    ),
+                  if (appThreads.isNotEmpty || externalSessions.isNotEmpty)
+                    _CodexSessionSection(
+                      appThreads: appThreads,
+                      externalSessions: externalSessions,
+                      onImportThread: (thread) {
+                        controller.importAppThread(thread);
+                        widget.onPicked?.call();
+                      },
+                      onImportExternal: (session) {
+                        controller.importExternalSession(session);
+                        widget.onPicked?.call();
+                      },
+                      onRefresh: () {
+                        controller.refreshAppThreads(
+                          query: _searchController.text,
+                          limit: 40,
+                        );
+                        controller.refreshExternalSessions();
+                      },
+                    ),
+                  if (sessions.isEmpty &&
+                      appThreads.isEmpty &&
+                      externalSessions.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Text(
+                        query.isEmpty
+                            ? 'No sessions yet.'
+                            : 'No matching sessions.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: codexMutedColor(context),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             Padding(
@@ -184,17 +254,17 @@ class _ConnectionSummary extends StatelessWidget {
         ? CodexColors.amber
         : hostInfo?.connectionMode == 'tunnel'
         ? CodexColors.greenSoft
-        : CodexColors.muted;
+        : codexMutedColor(context);
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.md,
         vertical: AppSpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: CodexColors.panelHigh.withValues(alpha: 0.58),
+        color: codexPanelHighColor(context).withValues(alpha: 0.68),
         borderRadius: BorderRadius.circular(AppRadius.lg),
         border: Border.all(
-          color: CodexColors.text.withValues(alpha: AppOpacity.border),
+          color: codexDimColor(context).withValues(alpha: AppOpacity.border),
         ),
       ),
       child: Row(
@@ -208,7 +278,7 @@ class _ConnectionSummary extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: Theme.of(
                 context,
-              ).textTheme.labelLarge?.copyWith(color: CodexColors.text),
+              ).textTheme.labelLarge?.copyWith(color: codexTextColor(context)),
             ),
           ),
         ],
@@ -236,8 +306,12 @@ class _SessionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textColor = codexTextColor(context);
+    final dimColor = codexDimColor(context);
     return Material(
-      color: active ? CodexColors.panelHigh : Colors.transparent,
+      color: active
+          ? codexPanelHighColor(context).withValues(alpha: 0.72)
+          : Colors.transparent,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -249,9 +323,9 @@ class _SessionRow extends StatelessWidget {
                   session.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
-                    color: CodexColors.text,
+                    color: textColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -263,8 +337,8 @@ class _SessionRow extends StatelessWidget {
                   session.workdirName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: CodexColors.dim,
+                  style: TextStyle(
+                    color: dimColor,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -291,12 +365,220 @@ class _SessionRow extends StatelessWidget {
   }
 }
 
+class _CodexSessionSection extends StatelessWidget {
+  const _CodexSessionSection({
+    required this.appThreads,
+    required this.externalSessions,
+    required this.onImportThread,
+    required this.onImportExternal,
+    required this.onRefresh,
+  });
+
+  final List<AppThreadInfo> appThreads;
+  final List<ExternalSessionInfo> externalSessions;
+  final ValueChanged<AppThreadInfo> onImportThread;
+  final ValueChanged<ExternalSessionInfo> onImportExternal;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = appThreads.length + externalSessions.length;
+    if (total == 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.md),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const ValueKey('system-codex-sessions'),
+          initiallyExpanded: appThreads.isNotEmpty,
+          tilePadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          childrenPadding: const EdgeInsets.only(bottom: AppSpacing.sm),
+          leading: Icon(
+            Icons.history_rounded,
+            size: 18,
+            color: codexMutedColor(context),
+          ),
+          title: Text(
+            'System Codex',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: codexTextColor(context),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          subtitle: Text(
+            '$total importable ${total == 1 ? 'session' : 'sessions'}',
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: codexDimColor(context)),
+          ),
+          trailing: IconButton(
+            tooltip: 'Refresh Codex sessions',
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            onPressed: onRefresh,
+          ),
+          children: [
+            for (final thread in appThreads.take(8))
+              _ImportableCodexThreadRow(
+                thread: thread,
+                onTap: () => onImportThread(thread),
+              ),
+            for (final session in externalSessions.take(8))
+              _ImportableExternalSessionRow(
+                session: session,
+                onTap: () => onImportExternal(session),
+              ),
+            if (total > 16)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.xs,
+                  AppSpacing.lg,
+                  0,
+                ),
+                child: Text(
+                  'Search to narrow ${total - 16} more sessions.',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: codexDimColor(context),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ImportableCodexThreadRow extends StatelessWidget {
+  const _ImportableCodexThreadRow({required this.thread, required this.onTap});
+
+  final AppThreadInfo thread;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ImportableSessionRow(
+      icon: Icons.account_tree_outlined,
+      title: thread.title,
+      subtitle: _sessionSubtitle(thread.workdir, thread.preview),
+      source: thread.source?.trim().isNotEmpty == true
+          ? thread.source!.trim()
+          : 'app-server',
+      onTap: onTap,
+    );
+  }
+}
+
+class _ImportableExternalSessionRow extends StatelessWidget {
+  const _ImportableExternalSessionRow({
+    required this.session,
+    required this.onTap,
+  });
+
+  final ExternalSessionInfo session;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ImportableSessionRow(
+      icon: Icons.terminal_rounded,
+      title: session.title,
+      subtitle: _sessionSubtitle(session.workdir, session.codexThreadId),
+      source: '~/.codex',
+      onTap: onTap,
+    );
+  }
+}
+
+class _ImportableSessionRow extends StatelessWidget {
+  const _ImportableSessionRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.source,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String source;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.sm,
+            AppSpacing.md,
+            AppSpacing.sm,
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 16, color: codexMutedColor(context)),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title.trim().isEmpty ? 'Codex session' : title.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: codexTextColor(context),
+                      ),
+                    ),
+                    if (subtitle.trim().isNotEmpty)
+                      Text(
+                        subtitle.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: codexDimColor(context),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              SoftPill(label: source, color: codexMutedColor(context)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _sessionSubtitle(String workdir, String fallback) {
+  final cleanWorkdir = workdir.trim();
+  if (cleanWorkdir.isNotEmpty) return _shortPath(cleanWorkdir);
+  return fallback.trim();
+}
+
+String _shortPath(String path) {
+  final normalized = path.replaceAll('\\', '/');
+  final parts = normalized
+      .split('/')
+      .where((part) => part.trim().isNotEmpty)
+      .toList(growable: false);
+  if (parts.length <= 2) return normalized;
+  return '${parts[parts.length - 2]}/${parts.last}';
+}
+
 class _WorkspacePicker extends StatelessWidget {
   const _WorkspacePicker({required this.controller});
 
   final AppController controller;
   static const _addWorkspaceAction = '__add_workspace__';
   static const _createWorkspaceAction = '__create_workspace__';
+  static const _cloneWorkspaceAction = '__clone_workspace__';
 
   @override
   Widget build(BuildContext context) {
@@ -315,16 +597,16 @@ class _WorkspacePicker extends StatelessWidget {
       key: const ValueKey('workspace-picker'),
       tooltip: 'Switch workspace',
       enabled: !disabled,
-      color: CodexColors.panelHigh.withValues(alpha: 0.98),
+      color: codexPanelHighColor(context).withValues(alpha: 0.98),
       elevation: 0,
       surfaceTintColor: Colors.transparent,
-      shadowColor: Colors.black.withValues(alpha: 0.38),
+      shadowColor: CodexColors.ink.withValues(alpha: 0.38),
       offset: const Offset(0, -8),
       constraints: const BoxConstraints(minWidth: 252, maxWidth: 280),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.lg),
         side: BorderSide(
-          color: CodexColors.text.withValues(alpha: AppOpacity.border),
+          color: codexDimColor(context).withValues(alpha: AppOpacity.border),
         ),
       ),
       onSelected: (value) => _handleSelection(context, value),
@@ -344,7 +626,15 @@ class _WorkspacePicker extends StatelessWidget {
           height: 44,
           child: _WorkspaceActionMenuItem(
             icon: Icons.folder_open_rounded,
-            title: 'Add folder...',
+            title: 'Add folder or URL...',
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: _cloneWorkspaceAction,
+          height: 44,
+          child: _WorkspaceActionMenuItem(
+            icon: Icons.cloud_download_rounded,
+            title: 'Clone GitHub URL...',
           ),
         ),
         const PopupMenuItem<String>(
@@ -366,30 +656,27 @@ class _WorkspacePicker extends StatelessWidget {
             right: AppSpacing.sm,
           ),
           decoration: BoxDecoration(
-            color: CodexColors.panelHigh.withValues(alpha: 0.68),
+            color: codexPanelHighColor(context).withValues(alpha: 0.68),
             borderRadius: BorderRadius.circular(AppRadius.pill),
             border: Border.all(
-              color: CodexColors.text.withValues(alpha: AppOpacity.border),
+              color: codexDimColor(
+                context,
+              ).withValues(alpha: AppOpacity.border),
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.24),
+                color: CodexColors.ink.withValues(alpha: 0.24),
                 blurRadius: 18,
                 offset: const Offset(0, 8),
-              ),
-              BoxShadow(
-                color: Colors.white.withValues(alpha: 0.028),
-                blurRadius: 0,
-                spreadRadius: 1,
               ),
             ],
           ),
           child: Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.folder_open_rounded,
                 size: 17,
-                color: CodexColors.muted,
+                color: codexMutedColor(context),
               ),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
@@ -397,16 +684,16 @@ class _WorkspacePicker extends StatelessWidget {
                   activeWorkspace?.displayName ?? 'Workspace',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelLarge?.copyWith(color: CodexColors.text),
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: codexTextColor(context),
+                  ),
                 ),
               ),
               const SizedBox(width: AppSpacing.xs),
-              const Icon(
+              Icon(
                 Icons.keyboard_arrow_down_rounded,
                 size: 20,
-                color: CodexColors.muted,
+                color: codexMutedColor(context),
               ),
             ],
           ),
@@ -417,11 +704,15 @@ class _WorkspacePicker extends StatelessWidget {
 
   Future<void> _handleSelection(BuildContext context, String value) async {
     if (value == _addWorkspaceAction) {
-      await _showWorkspaceDialog(context, create: false);
+      await _showWorkspaceDialog(context, create: false, clone: false);
+      return;
+    }
+    if (value == _cloneWorkspaceAction) {
+      await _showWorkspaceDialog(context, create: false, clone: true);
       return;
     }
     if (value == _createWorkspaceAction) {
-      await _showWorkspaceDialog(context, create: true);
+      await _showWorkspaceDialog(context, create: true, clone: false);
       return;
     }
     controller.switchWorkspace(value);
@@ -430,10 +721,11 @@ class _WorkspacePicker extends StatelessWidget {
   Future<void> _showWorkspaceDialog(
     BuildContext context, {
     required bool create,
+    required bool clone,
   }) async {
     final path = await showDialog<String>(
       context: context,
-      builder: (_) => _WorkspacePathDialog(create: create),
+      builder: (_) => _WorkspacePathDialog(create: create, clone: clone),
     );
     if (!context.mounted || path == null || path.trim().isEmpty) return;
     controller.addWorkspacePath(path, create: create);
@@ -450,7 +742,7 @@ class _WorkspaceActionMenuItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 17, color: CodexColors.muted),
+        Icon(icon, size: 17, color: codexMutedColor(context)),
         const SizedBox(width: AppSpacing.md),
         Expanded(
           child: Text(title, style: Theme.of(context).textTheme.labelLarge),
@@ -461,9 +753,10 @@ class _WorkspaceActionMenuItem extends StatelessWidget {
 }
 
 class _WorkspacePathDialog extends StatefulWidget {
-  const _WorkspacePathDialog({required this.create});
+  const _WorkspacePathDialog({required this.create, required this.clone});
 
   final bool create;
+  final bool clone;
 
   @override
   State<_WorkspacePathDialog> createState() => _WorkspacePathDialogState();
@@ -480,7 +773,11 @@ class _WorkspacePathDialogState extends State<_WorkspacePathDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.create ? 'Create folder' : 'Add folder';
+    final title = widget.clone
+        ? 'Clone GitHub URL'
+        : widget.create
+        ? 'Create folder'
+        : 'Add workspace';
     return AlertDialog(
       title: Text(title),
       content: TextField(
@@ -488,10 +785,12 @@ class _WorkspacePathDialogState extends State<_WorkspacePathDialog> {
         controller: _controller,
         autofocus: true,
         decoration: InputDecoration(
-          labelText: 'Path',
-          hintText: widget.create
+          labelText: widget.clone ? 'Git URL' : 'Path or Git URL',
+          hintText: widget.clone
+              ? 'https://github.com/user/repo'
+              : widget.create
               ? '/home/kurisu/projects/new-task'
-              : '/home/kurisu/projects/existing',
+              : '/home/kurisu/projects/existing or GitHub URL',
         ),
         onSubmitted: _submit,
       ),
@@ -502,7 +801,13 @@ class _WorkspacePathDialogState extends State<_WorkspacePathDialog> {
         ),
         FilledButton(
           onPressed: () => _submit(_controller.text),
-          child: Text(widget.create ? 'Create' : 'Add'),
+          child: Text(
+            widget.clone
+                ? 'Clone'
+                : widget.create
+                ? 'Create'
+                : 'Add',
+          ),
         ),
       ],
     );
@@ -525,16 +830,18 @@ class _WorkspaceMenuItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final titleStyle = Theme.of(
       context,
-    ).textTheme.labelLarge?.copyWith(color: CodexColors.text);
+    ).textTheme.labelLarge?.copyWith(color: codexTextColor(context));
     final subtitleStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
-      color: CodexColors.dim,
+      color: codexDimColor(context),
       fontWeight: FontWeight.w600,
     );
     return Row(
       children: [
         Icon(
           active ? Icons.check_circle_rounded : Icons.folder_rounded,
-          color: active ? CodexColors.greenSoft : CodexColors.muted,
+          color: active
+              ? Theme.of(context).colorScheme.secondary
+              : codexMutedColor(context),
           size: 17,
         ),
         const SizedBox(width: AppSpacing.md),

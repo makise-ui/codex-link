@@ -155,7 +155,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Playground'), findsOneWidget);
-    expect(find.text('Add folder...'), findsOneWidget);
+    expect(find.text('Add folder or URL...'), findsOneWidget);
+    expect(find.text('Clone GitHub URL...'), findsOneWidget);
     expect(find.text('Create folder...'), findsOneWidget);
   });
 
