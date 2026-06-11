@@ -15,6 +15,7 @@ enum SettingsSection {
   mode,
   model,
   appearance,
+  notifications,
 }
 
 class SettingsScreen extends StatefulWidget {
@@ -158,6 +159,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _ThemeModePicker(controller: controller),
                   _AccentPicker(controller: controller),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _Section(
+                key: _sectionKeys[SettingsSection.notifications],
+                title: 'Notifications',
+                children: [
+                  _NotificationSettingsSection(controller: controller),
                 ],
               ),
               const SizedBox(height: AppSpacing.lg),
@@ -933,6 +942,150 @@ class _AccentPicker extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _NotificationSettingsSection extends StatelessWidget {
+  const _NotificationSettingsSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.md,
+      ),
+      child: Column(
+        children: [
+          _NotificationSwitch(
+            key: const ValueKey('notification-plan-switch'),
+            controller: controller,
+            category: AppNotificationCategory.plan,
+            icon: Icons.task_alt_rounded,
+            title: 'Plan updates',
+            subtitle: 'Show when Codex updates the current plan.',
+          ),
+          _NotificationSwitch(
+            key: const ValueKey('notification-task-switch'),
+            controller: controller,
+            category: AppNotificationCategory.task,
+            icon: Icons.check_circle_outline_rounded,
+            title: 'Task finished',
+            subtitle: 'Show when a run completes, fails, or is cancelled.',
+          ),
+          _NotificationSwitch(
+            controller: controller,
+            category: AppNotificationCategory.goal,
+            icon: Icons.flag_rounded,
+            title: 'Goal status',
+            subtitle: 'Show goal complete, blocked, and status updates.',
+          ),
+          _NotificationSwitch(
+            controller: controller,
+            category: AppNotificationCategory.update,
+            icon: Icons.system_update_alt_rounded,
+            title: 'Updates',
+            subtitle: 'Show app and host update notices.',
+          ),
+          _NotificationSwitch(
+            controller: controller,
+            category: AppNotificationCategory.error,
+            icon: Icons.error_outline_rounded,
+            title: 'Errors',
+            subtitle: 'Show failed update, login, and bridge notices.',
+          ),
+          _NotificationSwitch(
+            controller: controller,
+            category: AppNotificationCategory.remote,
+            icon: Icons.phonelink_ring_rounded,
+            title: 'Remote pairing',
+            subtitle: 'Show pairing codes and remote-control readiness.',
+          ),
+          _NotificationSwitch(
+            controller: controller,
+            category: AppNotificationCategory.other,
+            icon: Icons.notifications_none_rounded,
+            title: 'Other events',
+            subtitle: 'Show account, plugin, MCP, and env events.',
+          ),
+          const Divider(height: AppSpacing.lg, color: CodexColors.borderSoft),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'In-app duration',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
+            children: [
+              for (final seconds in const [2, 3, 5, 6, 8, 12])
+                ChoiceChip(
+                  key: ValueKey('notice-duration-$seconds'),
+                  label: Text('${seconds}s'),
+                  selected: controller.inAppNoticeDurationSeconds == seconds,
+                  onSelected: (_) =>
+                      controller.setInAppNoticeDurationSeconds(seconds),
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: CodexColors.panelHigh,
+                  selectedColor: Theme.of(
+                    context,
+                  ).colorScheme.secondary.withValues(alpha: 0.18),
+                  side: BorderSide(
+                    color: controller.inAppNoticeDurationSeconds == seconds
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.secondary.withValues(alpha: 0.42)
+                        : CodexColors.borderSoft,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationSwitch extends StatelessWidget {
+  const _NotificationSwitch({
+    super.key,
+    required this.controller,
+    required this.category,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final AppController controller;
+  final AppNotificationCategory category;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = controller.notificationCategoryEnabled(category);
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      secondary: Icon(icon, color: CodexColors.muted),
+      title: Text(title),
+      subtitle: Text(
+        subtitle,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: CodexColors.muted),
+      ),
+      value: enabled,
+      onChanged: (value) =>
+          controller.setNotificationCategoryEnabled(category, value),
     );
   }
 }

@@ -1,15 +1,30 @@
 {
-  "name": "@codex-lan/host",
-  "version": "0.1.1",
-  "private": true,
+  "name": "codex-link-host",
+  "version": "0.1.2",
   "type": "module",
   "description": "Host bridge for controlling Codex app-server sessions from Codex Link.",
+  "license": "MIT",
+  "bin": {
+    "codex-link-host": "dist/src/index.js"
+  },
+  "files": [
+    "dist/src/**/*",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "update:self": "../scripts/update-host.sh"
   },
   "dependencies": {
     "commander": "^12.1.0",

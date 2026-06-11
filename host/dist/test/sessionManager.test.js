@@ -1,9 +1,12 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexSessionManager, summarizeDoctorOutput } from "../src/codex/sessionManager.js";
 const tempDirs = [];
+const execFileAsync = promisify(execFile);
 afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -28,6 +31,43 @@ describe("CodexSessionManager", () => {
         expect(updated.workspaceId).toBe("workspace-2");
         expect(updated.workdir).toBe("/other");
         expect(updated.codexThreadId).toBeUndefined();
+        await manager.close();
+    });
+    it("runs shell commands in the session workspace", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        await writeFile(path.join(workspace, "marker.txt"), "workspace marker\n");
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: true,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = manager.listSessions();
+        await manager.setSessionMode(session.sessionId, "yolo");
+        const result = await manager.runShellCommand(session.sessionId, "pwd && cat marker.txt");
+        expect(result.type).toBe("shell.command.result");
+        expect(result.exitCode).toBe(0);
+        expect(result.cwd).toBe(workspace);
+        expect(result.stdout).toContain(workspace);
+        expect(result.stdout).toContain("workspace marker");
+        await manager.close();
+    });
+    it("rejects shell commands unless the session is in yolo mode", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = manager.listSessions();
+        await expect(manager.runShellCommand(session.sessionId, "pwd")).rejects.toThrow(/yolo/i);
         await manager.close();
     });
     it("requires explicit host permission for yolo mode", async () => {
@@ -106,6 +146,53 @@ describe("CodexSessionManager", () => {
         expect(manager.getWorkspaces(session.sessionId).some((item) => item.path === newWorkspace && item.active)).toBe(true);
         await manager.close();
     });
+    it("clones a git url when adding a workspace from the client", async () => {
+        const stateDir = await tempStateDir();
+        const source = await tempStateDir();
+        await execFileAsync("git", ["init"], { cwd: source });
+        await writeFile(path.join(source, "README.md"), "# cloned\n");
+        await execFileAsync("git", ["add", "README.md"], { cwd: source });
+        await execFileAsync("git", ["-c", "user.name=Unit", "-c", "user.email=unit@example.com", "commit", "-m", "init"], { cwd: source });
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+        });
+        const [session] = manager.listSessions();
+        const workspace = await manager.addWorkspace(`file://${source}`, session.sessionId);
+        tempDirs.push(workspace.path);
+        expect(workspace.active).toBe(true);
+        await expect(readFile(path.join(workspace.path, "README.md"), "utf8")).resolves.toBe("# cloned\n");
+        await manager.close();
+    });
+    it("clones same-name git repositories into distinct workspace directories", async () => {
+        const stateDir = await tempStateDir();
+        const firstSource = await tempStateDir();
+        const secondParent = await tempStateDir();
+        const secondSource = path.join(secondParent, path.basename(firstSource));
+        await mkdir(secondSource, { recursive: true });
+        await initGitRepo(firstSource, "FIRST");
+        await initGitRepo(secondSource, "SECOND");
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: "/repo" }],
+        });
+        const [session] = manager.listSessions();
+        const firstWorkspace = await manager.addWorkspace(`file://${firstSource}`, session.sessionId);
+        const secondWorkspace = await manager.addWorkspace(`file://${secondSource}`, session.sessionId);
+        tempDirs.push(firstWorkspace.path, secondWorkspace.path);
+        expect(firstWorkspace.path).not.toBe(secondWorkspace.path);
+        await expect(readFile(path.join(firstWorkspace.path, "README.md"), "utf8")).resolves.toBe("FIRST\n");
+        await expect(readFile(path.join(secondWorkspace.path, "README.md"), "utf8")).resolves.toBe("SECOND\n");
+        await manager.close();
+    });
     it("creates the playground directory when switching into it", async () => {
         const stateDir = await tempStateDir();
         const parent = await tempStateDir();
@@ -128,7 +215,7 @@ describe("CodexSessionManager", () => {
         expect(stats.isDirectory()).toBe(true);
         await manager.close();
     });
-    it("persists model and reasoning effort with the session", async () => {
+    it("persists model reasoning effort and service tier with the session", async () => {
         const stateDir = await tempStateDir();
         const manager = await CodexSessionManager.create({
             sessionMode: "mock",
@@ -139,9 +226,10 @@ describe("CodexSessionManager", () => {
             workspaces: [{ id: "default", label: "repo", path: "/repo" }],
         });
         const [session] = manager.listSessions();
-        const updated = await manager.setSessionConfig(session.sessionId, { model: "gpt-5-codex", reasoningEffort: "xhigh" });
+        const updated = await manager.setSessionConfig(session.sessionId, { model: "gpt-5-codex", reasoningEffort: "xhigh", serviceTier: "priority" });
         expect(updated.model).toBe("gpt-5-codex");
         expect(updated.reasoningEffort).toBe("xhigh");
+        expect(updated.serviceTier).toBe("priority");
         await manager.close();
         const restored = await CodexSessionManager.create({
             sessionMode: "mock",
@@ -151,10 +239,10 @@ describe("CodexSessionManager", () => {
             allowYolo: false,
             workspaces: [{ id: "default", label: "repo", path: "/repo" }],
         });
-        expect(restored.listSessions()[0]).toEqual(expect.objectContaining({ model: "gpt-5-codex", reasoningEffort: "xhigh" }));
+        expect(restored.listSessions()[0]).toEqual(expect.objectContaining({ model: "gpt-5-codex", reasoningEffort: "xhigh", serviceTier: "priority" }));
         await restored.close();
     });
-    it("preserves model when only effort changes and clears model when requested", async () => {
+    it("preserves model when only effort changes and clears model or service tier when requested", async () => {
         const stateDir = await tempStateDir();
         const manager = await CodexSessionManager.create({
             sessionMode: "mock",
@@ -165,13 +253,16 @@ describe("CodexSessionManager", () => {
             workspaces: [{ id: "default", label: "repo", path: "/repo" }],
         });
         const [session] = manager.listSessions();
-        await manager.setSessionConfig(session.sessionId, { model: "gpt-5-codex", reasoningEffort: "medium" });
+        await manager.setSessionConfig(session.sessionId, { model: "gpt-5-codex", reasoningEffort: "medium", serviceTier: "priority" });
         const effortOnly = await manager.setSessionConfig(session.sessionId, { reasoningEffort: "low" });
         expect(effortOnly.model).toBe("gpt-5-codex");
         expect(effortOnly.reasoningEffort).toBe("low");
+        expect(effortOnly.serviceTier).toBe("priority");
         const cleared = await manager.setSessionConfig(session.sessionId, { model: "" });
         expect(cleared.model).toBeUndefined();
         expect(cleared.reasoningEffort).toBe("low");
+        const tierCleared = await manager.setSessionConfig(session.sessionId, { serviceTier: null });
+        expect(tierCleared.serviceTier).toBeUndefined();
         await manager.close();
     });
     it("sets, gets, clears, and persists native session goals", async () => {
@@ -296,6 +387,77 @@ describe("CodexSessionManager", () => {
         expect(manager.getSessionHistory(session.sessionId).some((message) => message.kind === "files" && message.text.includes("requested report.txt"))).toBe(true);
         await manager.close();
     });
+    it("offers a requested nested workspace file by unique basename", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        await mkdir(path.join(workspace, "assets", "screens"), { recursive: true });
+        await writeFile(path.join(workspace, "assets", "screens", "flutter_03.png"), "png bytes");
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = manager.listSessions();
+        const offer = await manager.offerRequestedFile(session.sessionId, "@flutter_03.png");
+        expect(offer).toMatchObject({
+            name: "flutter_03.png",
+            path: "assets/screens/flutter_03.png",
+            reason: "requested",
+        });
+        await manager.close();
+    });
+    it("writes pasted env secrets into the active workspace env file", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        await writeFile(path.join(workspace, ".env.local"), "OLD=value\nKEEP=yes\n");
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = manager.listSessions();
+        const result = await manager.setWorkspaceEnv(session.sessionId, [
+            "OPENAI_API_KEY=sk-unit",
+            "LIST=value1,value2",
+            "export OLD=replaced",
+            "bad key=nope",
+            "# comment",
+        ].join("\n"));
+        expect(result).toEqual({
+            type: "workspace.env.updated",
+            sessionId: session.sessionId,
+            path: ".env.local",
+            variableNames: ["OPENAI_API_KEY", "LIST", "OLD"],
+            skippedLineCount: 2,
+        });
+        await expect(readFile(path.join(workspace, ".env.local"), "utf8")).resolves.toBe("OLD=replaced\nKEEP=yes\nOPENAI_API_KEY=sk-unit\nLIST=value1,value2\n");
+        await manager.close();
+    });
+    it("tightens existing env secret file permissions to owner-only", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        const envPath = path.join(workspace, ".env.local");
+        await writeFile(envPath, "OLD=value\n");
+        await chmod(envPath, 0o644);
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = manager.listSessions();
+        await manager.setWorkspaceEnv(session.sessionId, "OPENAI_API_KEY=sk-unit");
+        expect((await stat(envPath)).mode & 0o777).toBe(0o600);
+        await manager.close();
+    });
     it("searches active workspace files for mobile mentions", async () => {
         const stateDir = await tempStateDir();
         const workspace = await tempStateDir();
@@ -328,6 +490,26 @@ describe("CodexSessionManager", () => {
         expect(results.files.some((file) => file.path.includes("node_modules"))).toBe(false);
         await manager.close();
     });
+    it("rejects fallback app file writes through symlinks outside the workspace", async () => {
+        const stateDir = await tempStateDir();
+        const workspace = await tempStateDir();
+        const outside = await tempStateDir();
+        const outsideFile = path.join(outside, "secret.txt");
+        await writeFile(outsideFile, "outside\n");
+        await symlink(outsideFile, path.join(workspace, "linked-secret.txt"));
+        const manager = await CodexSessionManager.create({
+            sessionMode: "mock",
+            codexCommand: "codex",
+            stateDir,
+            defaultSandbox: "workspace-write",
+            allowYolo: false,
+            workspaces: [{ id: "default", label: "repo", path: workspace }],
+        });
+        const [session] = manager.listSessions();
+        await expect(manager.writeAppFile(session.sessionId, "linked-secret.txt", Buffer.from("owned\n").toString("base64"))).rejects.toThrow(/outside the active workspace|Refusing to write through a symlink/);
+        await expect(readFile(outsideFile, "utf8")).resolves.toBe("outside\n");
+        await manager.close();
+    });
     it("exposes app-server capability fallbacks for models, files, skills, search, and review", async () => {
         const stateDir = await tempStateDir();
         const workspace = await tempStateDir();
@@ -347,12 +529,18 @@ describe("CodexSessionManager", () => {
         const skills = await manager.listAppSkills(session.sessionId, false);
         const entries = await manager.listAppDirectory(session.sessionId, "");
         const file = await manager.readAppFile(session.sessionId, "README.md");
+        const written = await manager.writeAppFile(session.sessionId, "notes/unit.txt", Buffer.from("from phone\n").toString("base64"));
+        const created = await manager.createAppDirectory(session.sessionId, "scratch/new-folder");
         const search = await manager.searchAppFiles(session.sessionId, "@main", 10);
         const review = await manager.startReview(session.sessionId, { target: "custom", instructions: "Review current changes", delivery: "inline" });
         expect(models.models.some((model) => model.id === "gpt-5.5")).toBe(true);
         expect(skills.groups[0]).toMatchObject({ cwd: workspace });
         expect(entries.entries).toContainEqual(expect.objectContaining({ name: "README.md", path: "README.md", isFile: true }));
         expect(file.file).toMatchObject({ name: "README.md", text: "# Unit\n" });
+        expect(written.file).toMatchObject({ path: "notes/unit.txt", name: "unit.txt", text: "from phone\n" });
+        await expect(readFile(path.join(workspace, "notes", "unit.txt"), "utf8")).resolves.toBe("from phone\n");
+        expect(created).toMatchObject({ path: "scratch/new-folder" });
+        expect((await stat(path.join(workspace, "scratch", "new-folder"))).isDirectory()).toBe(true);
         expect(search.files).toEqual([expect.objectContaining({ path: "lib/main.dart", name: "main.dart" })]);
         expect(review).toMatchObject({ sessionId: session.sessionId, runId: expect.stringMatching(/^mock-review-/), reviewThreadId: session.sessionId });
         await manager.close();
@@ -464,4 +652,10 @@ async function tempStateDir() {
     await mkdir(dir, { recursive: true });
     tempDirs.push(dir);
     return dir;
+}
+async function initGitRepo(directory, readme) {
+    await execFileAsync("git", ["init"], { cwd: directory });
+    await writeFile(path.join(directory, "README.md"), `${readme}\n`);
+    await execFileAsync("git", ["add", "README.md"], { cwd: directory });
+    await execFileAsync("git", ["-c", "user.name=Unit", "-c", "user.email=unit@example.com", "commit", "-m", "init"], { cwd: directory });
 }

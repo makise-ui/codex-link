@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "../src/protocol/messages.js";
 import { parseClientMessage } from "../src/protocol/schemas.js";
 describe("protocol schemas", () => {
-    it("uses protocol version 8", () => {
-        expect(PROTOCOL_VERSION).toBe(8);
+    it("uses protocol version 15", () => {
+        expect(PROTOCOL_VERSION).toBe(15);
     });
     it("accepts a valid prompt", () => {
         expect(parseClientMessage({
@@ -36,16 +36,22 @@ describe("protocol schemas", () => {
             query: "main",
             limit: 12,
         });
+        expect(parseClientMessage({ type: "workspace.env.set", sessionId: "s1", content: "OPENAI_API_KEY=sk-unit\nLIST=value1,value2" })).toEqual({
+            type: "workspace.env.set",
+            sessionId: "s1",
+            content: "OPENAI_API_KEY=sk-unit\nLIST=value1,value2",
+        });
         expect(parseClientMessage({ type: "session.mode.set", sessionId: "s1", mode: "yolo" })).toEqual({
             type: "session.mode.set",
             sessionId: "s1",
             mode: "yolo",
         });
-        expect(parseClientMessage({ type: "session.config.set", sessionId: "s1", model: "gpt-5-codex", reasoningEffort: "high" })).toEqual({
+        expect(parseClientMessage({ type: "session.config.set", sessionId: "s1", model: "gpt-5-codex", reasoningEffort: "high", serviceTier: "priority" })).toEqual({
             type: "session.config.set",
             sessionId: "s1",
             model: "gpt-5-codex",
             reasoningEffort: "high",
+            serviceTier: "priority",
         });
         expect(parseClientMessage({ type: "session.goal.set", sessionId: "s1", objective: "Ship app-server adapter", status: "active", tokenBudget: 20000 })).toEqual({
             type: "session.goal.set",
@@ -66,6 +72,12 @@ describe("protocol schemas", () => {
             type: "command.run",
             sessionId: "s1",
             commandId: "codex.test",
+        });
+        expect(parseClientMessage({ type: "host.update.check" })).toEqual({
+            type: "host.update.check",
+        });
+        expect(parseClientMessage({ type: "host.update.run" })).toEqual({
+            type: "host.update.run",
         });
     });
     it("accepts password auth without exposing it through other auth messages", () => {
@@ -137,6 +149,17 @@ describe("protocol schemas", () => {
             sessionId: "s1",
             path: "README.md",
         });
+        expect(parseClientMessage({ type: "app.fs.write", sessionId: "s1", path: "notes.txt", dataBase64: "aGVsbG8=" })).toEqual({
+            type: "app.fs.write",
+            sessionId: "s1",
+            path: "notes.txt",
+            dataBase64: "aGVsbG8=",
+        });
+        expect(parseClientMessage({ type: "app.fs.createDirectory", sessionId: "s1", path: "notes" })).toEqual({
+            type: "app.fs.createDirectory",
+            sessionId: "s1",
+            path: "notes",
+        });
         expect(parseClientMessage({ type: "app.file.search", sessionId: "s1", query: "@main", limit: 20 })).toEqual({
             type: "app.file.search",
             sessionId: "s1",
@@ -168,6 +191,45 @@ describe("protocol schemas", () => {
         });
         expect(parseClientMessage({ type: "app.account.logout" })).toEqual({
             type: "app.account.logout",
+        });
+    });
+    it("accepts interactive app-server action controls", () => {
+        expect(parseClientMessage({ type: "app.plugin.list", sessionId: "s1" })).toEqual({
+            type: "app.plugin.list",
+            sessionId: "s1",
+        });
+        expect(parseClientMessage({ type: "app.plugin.read", pluginName: "github", marketplacePath: "/tmp/marketplace" })).toEqual({
+            type: "app.plugin.read",
+            pluginName: "github",
+            marketplacePath: "/tmp/marketplace",
+        });
+        expect(parseClientMessage({ type: "app.plugin.install", pluginName: "github", marketplacePath: "/tmp/marketplace" })).toEqual({
+            type: "app.plugin.install",
+            pluginName: "github",
+            marketplacePath: "/tmp/marketplace",
+        });
+        expect(parseClientMessage({ type: "app.plugin.uninstall", pluginName: "github" })).toEqual({
+            type: "app.plugin.uninstall",
+            pluginName: "github",
+        });
+        expect(parseClientMessage({ type: "app.mcp.status.list", sessionId: "s1", detail: "toolsAndAuthOnly" })).toEqual({
+            type: "app.mcp.status.list",
+            sessionId: "s1",
+            detail: "toolsAndAuthOnly",
+        });
+        expect(parseClientMessage({ type: "app.mcp.oauth.login", serverName: "github" })).toEqual({
+            type: "app.mcp.oauth.login",
+            serverName: "github",
+        });
+        expect(parseClientMessage({ type: "app.remote.status.read" })).toEqual({
+            type: "app.remote.status.read",
+        });
+        expect(parseClientMessage({ type: "app.remote.pairing.start", manualPairingCode: "123456" })).toEqual({
+            type: "app.remote.pairing.start",
+            manualPairingCode: "123456",
+        });
+        expect(parseClientMessage({ type: "app.account.rateLimits.read" })).toEqual({
+            type: "app.account.rateLimits.read",
         });
     });
     it("accepts file request client messages", () => {

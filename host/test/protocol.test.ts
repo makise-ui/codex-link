@@ -3,8 +3,8 @@ import { PROTOCOL_VERSION } from "../src/protocol/messages.js";
 import { parseClientMessage } from "../src/protocol/schemas.js";
 
 describe("protocol schemas", () => {
-  it("uses protocol version 12", () => {
-    expect(PROTOCOL_VERSION).toBe(12);
+  it("uses protocol version 15", () => {
+    expect(PROTOCOL_VERSION).toBe(15);
   });
 
   it("accepts a valid prompt", () => {
@@ -77,6 +77,12 @@ describe("protocol schemas", () => {
       type: "command.run",
       sessionId: "s1",
       commandId: "codex.test",
+    });
+    expect(parseClientMessage({ type: "host.update.check" })).toEqual({
+      type: "host.update.check",
+    });
+    expect(parseClientMessage({ type: "host.update.run" })).toEqual({
+      type: "host.update.run",
     });
   });
 

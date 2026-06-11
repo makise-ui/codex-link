@@ -286,6 +286,65 @@ void main() {
     expect(find.byKey(const ValueKey('theme-mode-dark')), findsOneWidget);
   });
 
+  testWidgets('settings expose notification preferences', (tester) async {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Notifications',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'idle',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+          },
+        ],
+      });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppController>.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildCodexTheme(),
+          home: const SettingsScreen(),
+        ),
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Notifications'),
+      520,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(
+      find.byKey(const ValueKey('notification-plan-switch')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('notification-task-switch')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notification-plan-switch')));
+    await tester.pump();
+    expect(
+      controller.notificationCategoryEnabled(AppNotificationCategory.plan),
+      isFalse,
+    );
+
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -320));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('notice-duration-8')));
+    await tester.pump();
+    expect(controller.inAppNoticeDurationSeconds, 8);
+  });
+
   testWidgets('app-server actions screen owns interactive integrations', (
     tester,
   ) async {
@@ -374,6 +433,14 @@ void main() {
               'serverName': 'archlinux',
               'environmentId': null,
             },
+          })
+          ..handleBridgeMessageForTest({
+            'type': 'host.update.status',
+            'packageName': 'codex-link-host',
+            'currentVersion': '0.1.1',
+            'latestVersion': '0.1.2',
+            'updateAvailable': true,
+            'updateRunning': false,
           });
 
     await tester.pumpWidget(
@@ -389,6 +456,13 @@ void main() {
     expect(find.text('App Server Actions'), findsOneWidget);
     expect(find.text('Plugins'), findsOneWidget);
     expect(find.text('GitHub'), findsOneWidget);
+    await tester.tap(find.text('GitHub'));
+    await tester.pump();
+    expect(socket.sentMessages.last, {
+      'type': 'app.plugin.read',
+      'pluginName': 'github',
+      'marketplacePath': '/tmp/marketplace',
+    });
 
     await tester.scrollUntilVisible(
       find.text('MCP Servers'),
@@ -405,13 +479,23 @@ void main() {
     expect(find.textContaining('disabled'), findsOneWidget);
     expect(find.text('Enable & pair'), findsOneWidget);
 
-    await tester.tap(find.text('GitHub'));
-    await tester.pump();
-    expect(socket.sentMessages.last, {
-      'type': 'app.plugin.read',
-      'pluginName': 'github',
-      'marketplacePath': '/tmp/marketplace',
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -420));
+    await tester.pumpAndSettle();
+    expect(find.text('Host Update'), findsOneWidget);
+    controller.handleBridgeMessageForTest({
+      'type': 'host.update.status',
+      'packageName': 'codex-link-host',
+      'currentVersion': '0.1.1',
+      'latestVersion': '0.1.2',
+      'updateAvailable': true,
+      'updateRunning': false,
     });
+    await tester.pump();
+    expect(find.textContaining('0.1.1'), findsOneWidget);
+    expect(find.textContaining('0.1.2'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('host-update-run')));
+    await tester.pump();
+    expect(socket.sentMessages.last, {'type': 'host.update.run'});
   });
 
   testWidgets('app-server actions plugin list uses load more for long lists', (
@@ -531,12 +615,12 @@ void main() {
     );
 
     await tester.scrollUntilVisible(
-      find.text('Updates'),
+      find.text('Download APK'),
       520,
       scrollable: find.byType(Scrollable).first,
     );
 
-    expect(find.text('Updates'), findsOneWidget);
+    expect(find.text('Updates'), findsWidgets);
     expect(find.text('Codex Link v1.0.1'), findsOneWidget);
     expect(find.text('Download APK'), findsOneWidget);
   });

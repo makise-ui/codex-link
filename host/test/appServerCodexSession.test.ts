@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AppServerCodexSession } from "../src/codex/appServerCodexSession.js";
 import type { CodexEvent } from "../src/codex/codexSession.js";
 
+const testThreadId = "thread-test";
 const fakeAppServerScript = String.raw`
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
@@ -64,6 +65,19 @@ const makeNativeThread = () => ({
     },
   ],
 });
+const makeSubagentThread = (options = {}) => ({
+  ...makeThread(),
+  id: "subagent-thread",
+  sessionId: "subagent-thread",
+  parentThreadId: options.parentThreadId === undefined ? threadId : options.parentThreadId,
+  preview: "Checking app-server protocol",
+  createdAt: 12,
+  updatedAt: 13,
+  status: { type: "running" },
+  agentNickname: "Explorer",
+  agentRole: "explorer",
+  name: "Protocol explorer",
+});
 function write(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
@@ -116,7 +130,8 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "thread/list") {
-    respond(message.id, { data: [makeNativeThread()], nextCursor: null, backwardsCursor: null });
+    const search = message.params.searchTerm ?? "";
+    respond(message.id, { data: search === "subagent" ? [makeSubagentThread()] : [makeNativeThread()], nextCursor: null, backwardsCursor: null });
     return;
   }
   if (message.method === "thread/read") {
@@ -183,6 +198,24 @@ rl.on("line", (line) => {
     const turnId = text.includes("stay running") ? "turn-running" : "turn-1";
     respond(message.id, { turn: makeTurn(turnId) });
     write({ method: "turn/started", params: { threadId, turn: makeTurn(turnId) } });
+    if (text.includes("spawn subagent")) {
+      if (!text.includes("unannounced")) {
+        write({ method: "thread/started", params: { thread: makeSubagentThread({ parentThreadId: text.includes("unparented") ? null : undefined }) } });
+      }
+      if (text.includes("noisy")) {
+        const subagentThreadId = "subagent-thread";
+        const subagentTurnId = "subagent-turn-1";
+        write({ method: "turn/started", params: { threadId: subagentThreadId, turn: makeTurn(subagentTurnId) } });
+        write({ method: "warning", params: { threadId: subagentThreadId, message: "Child warning should not reach parent chat" } });
+        write({ method: "item/started", params: { threadId: subagentThreadId, turnId: subagentTurnId, startedAtMs: 1, item: { type: "reasoning", id: "child-reason-1" } } });
+        write({ method: "item/reasoning/textDelta", params: { threadId: subagentThreadId, turnId: subagentTurnId, itemId: "child-reason-1", delta: "child thinking" } });
+        write({ method: "item/started", params: { threadId: subagentThreadId, turnId: subagentTurnId, startedAtMs: 2, item: { type: "agentMessage", id: "child-msg-1", text: "", phase: "final_answer", memoryCitation: null } } });
+        write({ method: "item/agentMessage/delta", params: { threadId: subagentThreadId, turnId: subagentTurnId, itemId: "child-msg-1", delta: "Child response should not reach parent chat." } });
+        write({ method: "item/completed", params: { threadId: subagentThreadId, turnId: subagentTurnId, completedAtMs: 3, item: { type: "agentMessage", id: "child-msg-1", text: "Child response should not reach parent chat.", phase: "final_answer", memoryCitation: null } } });
+        write({ method: "turn/completed", params: { threadId: subagentThreadId, turn: makeTurn(subagentTurnId, "completed") } });
+      }
+      return;
+    }
     if (turnId === "turn-running") return;
     write({ method: "item/started", params: { threadId, turnId, startedAtMs: 1, item: { type: "reasoning", id: "reason-1" } } });
     write({ method: "item/reasoning/summaryPartAdded", params: { threadId, turnId, itemId: "reason-1", summaryIndex: 0 } });
@@ -673,6 +706,7 @@ describe("AppServerCodexSession", () => {
 
     const models = await session.listModels(true);
     const threads = await session.listThreads({ query: "Native", cwd: process.cwd(), limit: 5 });
+    const subagentThreads = await session.listThreads({ query: "subagent", cwd: process.cwd(), limit: 5 });
     const thread = await session.readThread("native-thread", true);
     const skills = await session.listSkills({ cwds: [process.cwd()], forceReload: true });
     const entries = await session.listDirectory(process.cwd());
@@ -685,12 +719,145 @@ describe("AppServerCodexSession", () => {
       capabilities: { namespaceTools: true, imageGeneration: true, webSearch: true },
     });
     expect(threads).toEqual([expect.objectContaining({ threadId: "native-thread", title: "Native app-server history", workdir: process.cwd() })]);
+    expect(subagentThreads).toEqual([
+      expect.objectContaining({
+        threadId: "subagent-thread",
+        parentThreadId: testThreadId,
+        agentNickname: "Explorer",
+        agentRole: "explorer",
+        status: "running",
+      }),
+    ]);
     expect(thread.messages.some((message) => message.text.includes("Bridge reviewed"))).toBe(true);
     expect(skills.groups[0].skills[0]).toMatchObject({ name: "flutter-design-system", enabled: true });
     expect(entries).toContainEqual(expect.objectContaining({ name: "README.md", path: "README.md", isFile: true }));
     expect(file).toMatchObject({ name: "README.md", text: "hello native file\n" });
     expect(fuzzy).toEqual([expect.objectContaining({ path: "lib/main.dart", name: "main.dart" })]);
     expect(review).toMatchObject({ runId: "review-turn", reviewThreadId: "thread-test" });
+
+    await session.close();
+  });
+
+  it("emits subagent updates without replacing the main thread id", async () => {
+    let savedThreadId: string | undefined;
+    const session = new AppServerCodexSession({
+      command: process.execPath,
+      argsPrefix: ["-e", fakeAppServerScript],
+      workdir: process.cwd(),
+      onThreadStarted: (threadId) => {
+        savedThreadId = threadId;
+      },
+    });
+    const events: CodexEvent[] = [];
+    session.onEvent((event) => events.push(event));
+
+    await session.sendPrompt("spawn subagent");
+    await waitForRunStarted(events, "turn-1");
+    await waitForSubagentsUpdated(events, "turn-1");
+
+    expect(savedThreadId).toBe(testThreadId);
+    expect(events).toContainEqual({
+      type: "session.subagents.updated",
+      sessionId: expect.any(String),
+      runId: "turn-1",
+      parentThreadId: testThreadId,
+      subagents: [
+        expect.objectContaining({
+          threadId: "subagent-thread",
+          parentThreadId: testThreadId,
+          agentNickname: "Explorer",
+          agentRole: "explorer",
+          status: "running",
+        }),
+      ],
+    });
+
+    await session.close();
+  });
+
+  it("does not stream child subagent turn events into the parent chat", async () => {
+    const session = new AppServerCodexSession({
+      command: process.execPath,
+      argsPrefix: ["-e", fakeAppServerScript],
+      workdir: process.cwd(),
+    });
+    const events: CodexEvent[] = [];
+    session.onEvent((event) => events.push(event));
+
+    await session.sendPrompt("spawn subagent noisy");
+    await waitForSubagentsUpdated(events, "turn-1");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.subagents.updated",
+        subagents: [
+          expect.objectContaining({
+            threadId: "subagent-thread",
+            status: "running",
+          }),
+        ],
+      }),
+    );
+    expect(events.some((event) => event.type === "run.started" && event.runId === "subagent-turn-1")).toBe(false);
+    expect(events.some((event) => event.type === "message.delta" && event.text.includes("Child warning should not reach parent chat"))).toBe(false);
+    expect(events.some((event) => event.type === "message.delta" && event.text.includes("Child response should not reach parent chat"))).toBe(false);
+
+    await session.close();
+  });
+
+  it("shows subagent activity for child threads without parent metadata", async () => {
+    const session = new AppServerCodexSession({
+      command: process.execPath,
+      argsPrefix: ["-e", fakeAppServerScript],
+      workdir: process.cwd(),
+    });
+    const events: CodexEvent[] = [];
+    session.onEvent((event) => events.push(event));
+
+    await session.sendPrompt("spawn subagent unparented noisy");
+    await waitForSubagentsUpdated(events, "turn-1");
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.subagents.updated",
+        subagents: [
+          expect.objectContaining({
+            threadId: "subagent-thread",
+            agentNickname: "Explorer",
+            status: "running",
+          }),
+        ],
+      }),
+    );
+
+    await session.close();
+  });
+
+  it("synthesizes subagent activity from child turn notifications", async () => {
+    const session = new AppServerCodexSession({
+      command: process.execPath,
+      argsPrefix: ["-e", fakeAppServerScript],
+      workdir: process.cwd(),
+    });
+    const events: CodexEvent[] = [];
+    session.onEvent((event) => events.push(event));
+
+    await session.sendPrompt("spawn subagent unannounced noisy");
+    await waitForSubagentsUpdated(events, "turn-1");
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.subagents.updated",
+        subagents: [
+          expect.objectContaining({
+            threadId: "subagent-thread",
+            title: "Subagent",
+            status: "running",
+          }),
+        ],
+      }),
+    );
 
     await session.close();
   });
@@ -732,6 +899,16 @@ async function waitForRunStarted(events: CodexEvent[], runId: string, timeoutMs 
   while (!events.some((event) => event.type === "run.started" && event.runId === runId)) {
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for run start: ${runId}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForSubagentsUpdated(events: CodexEvent[], runId: string, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!events.some((event) => event.type === "session.subagents.updated" && event.runId === runId)) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for subagent update: ${runId}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }

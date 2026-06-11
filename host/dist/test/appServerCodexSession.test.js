@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { AppServerCodexSession } from "../src/codex/appServerCodexSession.js";
+const testThreadId = "thread-test";
 const fakeAppServerScript = String.raw `
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
 const threadId = "thread-test";
+let remoteControlEnabled = false;
 const makeThread = () => ({
   id: threadId,
   sessionId: "session-test",
@@ -61,6 +63,19 @@ const makeNativeThread = () => ({
     },
   ],
 });
+const makeSubagentThread = (options = {}) => ({
+  ...makeThread(),
+  id: "subagent-thread",
+  sessionId: "subagent-thread",
+  parentThreadId: options.parentThreadId === undefined ? threadId : options.parentThreadId,
+  preview: "Checking app-server protocol",
+  createdAt: 12,
+  updatedAt: 13,
+  status: { type: "running" },
+  agentNickname: "Explorer",
+  agentRole: "explorer",
+  name: "Protocol explorer",
+});
 function write(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
@@ -96,7 +111,7 @@ rl.on("line", (line) => {
           inputModalities: ["text", "image"],
           supportsPersonality: true,
           additionalSpeedTiers: [],
-          serviceTiers: [],
+          serviceTiers: [{ id: "priority", name: "Priority", description: "Faster responses for more credits" }],
           defaultServiceTier: null,
           isDefault: true,
           upgrade: null,
@@ -113,7 +128,8 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "thread/list") {
-    respond(message.id, { data: [makeNativeThread()], nextCursor: null, backwardsCursor: null });
+    const search = message.params.searchTerm ?? "";
+    respond(message.id, { data: search === "subagent" ? [makeSubagentThread()] : [makeNativeThread()], nextCursor: null, backwardsCursor: null });
     return;
   }
   if (message.method === "thread/read") {
@@ -180,6 +196,24 @@ rl.on("line", (line) => {
     const turnId = text.includes("stay running") ? "turn-running" : "turn-1";
     respond(message.id, { turn: makeTurn(turnId) });
     write({ method: "turn/started", params: { threadId, turn: makeTurn(turnId) } });
+    if (text.includes("spawn subagent")) {
+      if (!text.includes("unannounced")) {
+        write({ method: "thread/started", params: { thread: makeSubagentThread({ parentThreadId: text.includes("unparented") ? null : undefined }) } });
+      }
+      if (text.includes("noisy")) {
+        const subagentThreadId = "subagent-thread";
+        const subagentTurnId = "subagent-turn-1";
+        write({ method: "turn/started", params: { threadId: subagentThreadId, turn: makeTurn(subagentTurnId) } });
+        write({ method: "warning", params: { threadId: subagentThreadId, message: "Child warning should not reach parent chat" } });
+        write({ method: "item/started", params: { threadId: subagentThreadId, turnId: subagentTurnId, startedAtMs: 1, item: { type: "reasoning", id: "child-reason-1" } } });
+        write({ method: "item/reasoning/textDelta", params: { threadId: subagentThreadId, turnId: subagentTurnId, itemId: "child-reason-1", delta: "child thinking" } });
+        write({ method: "item/started", params: { threadId: subagentThreadId, turnId: subagentTurnId, startedAtMs: 2, item: { type: "agentMessage", id: "child-msg-1", text: "", phase: "final_answer", memoryCitation: null } } });
+        write({ method: "item/agentMessage/delta", params: { threadId: subagentThreadId, turnId: subagentTurnId, itemId: "child-msg-1", delta: "Child response should not reach parent chat." } });
+        write({ method: "item/completed", params: { threadId: subagentThreadId, turnId: subagentTurnId, completedAtMs: 3, item: { type: "agentMessage", id: "child-msg-1", text: "Child response should not reach parent chat.", phase: "final_answer", memoryCitation: null } } });
+        write({ method: "turn/completed", params: { threadId: subagentThreadId, turn: makeTurn(subagentTurnId, "completed") } });
+      }
+      return;
+    }
     if (turnId === "turn-running") return;
     write({ method: "item/started", params: { threadId, turnId, startedAtMs: 1, item: { type: "reasoning", id: "reason-1" } } });
     write({ method: "item/reasoning/summaryPartAdded", params: { threadId, turnId, itemId: "reason-1", summaryIndex: 0 } });
@@ -200,6 +234,48 @@ rl.on("line", (line) => {
     write({ method: "item/started", params: { threadId, turnId, startedAtMs: 1, item: { type: "mcpToolCall", id: "mcp-1", server: "files", tool: "read" } } });
     write({ method: "item/mcpToolCall/progress", params: { threadId, turnId, itemId: "mcp-1", message: "Reading project metadata" } });
     write({ method: "item/completed", params: { threadId, turnId, completedAtMs: 1, item: { type: "mcpToolCall", id: "mcp-1", server: "files", tool: "read" } } });
+    write({
+      method: "item/started",
+      params: {
+        threadId,
+        turnId,
+        startedAtMs: 1,
+        item: {
+          type: "commandExecution",
+          id: "cmd-skill",
+          command: "sed -n '1,80p' /home/unit/.codex/skills/flutter-design-system/SKILL.md",
+          cwd: process.cwd(),
+          processId: "proc-skill",
+          source: "exec",
+          status: "inProgress",
+          commandActions: [{ type: "read", command: "sed", name: "SKILL.md", path: "/home/unit/.codex/skills/flutter-design-system/SKILL.md" }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      },
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId,
+        completedAtMs: 1,
+        item: {
+          type: "commandExecution",
+          id: "cmd-skill",
+          command: "sed -n '1,80p' /home/unit/.codex/skills/flutter-design-system/SKILL.md",
+          cwd: process.cwd(),
+          processId: "proc-skill",
+          source: "exec",
+          status: "completed",
+          commandActions: [{ type: "read", command: "sed", name: "SKILL.md", path: "/home/unit/.codex/skills/flutter-design-system/SKILL.md" }],
+          aggregatedOutput: "",
+          exitCode: 0,
+          durationMs: 8,
+        },
+      },
+    });
     write({
       method: "item/started",
       params: {
@@ -284,6 +360,20 @@ rl.on("line", (line) => {
     });
     return;
   }
+  if (message.method === "account/rateLimits/read") {
+    respond(message.id, {
+      rateLimits: {
+        limitId: "codex",
+        planType: "pro",
+        primary: {
+          usedPercent: 5,
+          windowDurationMins: 43200,
+          resetsAt: 1719900000,
+        },
+      },
+    });
+    return;
+  }
   if (message.method === "getAuthStatus") {
     respond(message.id, {
       authMethod: "chatgpt",
@@ -327,6 +417,113 @@ rl.on("line", (line) => {
     write({ method: "account/updated", params: { authMode: null, planType: null } });
     return;
   }
+  if (message.method === "plugin/list") {
+    respond(message.id, {
+      marketplaces: [
+        {
+          name: "openai-curated",
+          displayName: "OpenAI curated",
+          path: "/tmp/marketplace/openai-curated",
+          plugins: [
+            {
+              id: "github",
+              name: "github",
+              displayName: "GitHub",
+              description: "Work with GitHub issues and pull requests.",
+              version: "1.0.0",
+              installed: false,
+              enabled: true,
+              categories: ["Development"],
+              auth: { type: "oauth" },
+            },
+          ],
+        },
+      ],
+    });
+    return;
+  }
+  if (message.method === "plugin/read") {
+    respond(message.id, {
+      plugin: {
+        id: message.params.pluginName,
+        name: message.params.pluginName,
+        displayName: "GitHub",
+        description: "Work with GitHub issues and pull requests.",
+        version: "1.0.0",
+        installed: false,
+        enabled: true,
+        skills: [{ name: "github-prs", description: "Review pull requests." }],
+        apps: [{ name: "github", authStatus: "unauthenticated", installUrl: "https://github.com/apps/codex" }],
+        mcpServers: [{ name: "github", authStatus: "unauthenticated", toolCount: 8 }],
+      },
+    });
+    return;
+  }
+  if (message.method === "plugin/install") {
+    respond(message.id, {
+      pluginName: message.params.pluginName,
+      installed: true,
+      appsNeedingAuth: [{ name: "github", installUrl: "https://github.com/apps/codex" }],
+    });
+    return;
+  }
+  if (message.method === "plugin/uninstall") {
+    respond(message.id, { pluginName: message.params.pluginName, uninstalled: true });
+    return;
+  }
+  if (message.method === "mcpServerStatus/list") {
+    respond(message.id, {
+      servers: [
+        {
+          name: "github",
+          status: "enabled",
+          authStatus: "unauthenticated",
+          tools: [{ name: "search_issues" }, { name: "create_issue" }],
+          resources: [{ uri: "repo://issues", name: "Issues" }],
+        },
+      ],
+    });
+    return;
+  }
+  if (message.method === "mcpServer/oauth/login") {
+    respond(message.id, {
+      serverName: message.params.name,
+      loginUrl: "https://github.com/login/oauth/authorize?client_id=unit",
+    });
+    return;
+  }
+  if (message.method === "remoteControl/status/read") {
+    respond(message.id, {
+      status: remoteControlEnabled ? "connected" : "disabled",
+      serverName: "unit-host",
+      environmentId: remoteControlEnabled ? "env-1" : null,
+      installationId: "install-1",
+    });
+    return;
+  }
+  if (message.method === "remoteControl/enable") {
+    remoteControlEnabled = true;
+    respond(message.id, {
+      status: "connected",
+      serverName: "unit-host",
+      environmentId: "env-1",
+      installationId: "install-1",
+    });
+    return;
+  }
+  if (message.method === "remoteControl/pairing/start") {
+    if (!remoteControlEnabled) {
+      write({ id: message.id, error: { code: -32600, message: "remote control pairing requires remote control to be enabled" } });
+      return;
+    }
+    respond(message.id, {
+      pairingCode: "PAIR-123",
+      manualPairingCode: message.params.manualCode ? "PAIR-123" : null,
+      environmentId: "env-1",
+      expiresAt: 1719900300,
+    });
+    return;
+  }
   respond(message.id, {});
 });
 `;
@@ -350,6 +547,7 @@ describe("AppServerCodexSession", () => {
         expect(savedThreadId).toBe("thread-test");
         expect(events.some((event) => event.type === "run.started" && event.runId === "turn-1")).toBe(true);
         expect(events.some((event) => event.type === "message.started" && event.title === "Reading file")).toBe(true);
+        expect(events.some((event) => event.type === "message.started" && event.title === "Using skill")).toBe(true);
         expect(events.some((event) => event.type === "message.started" && event.title === "Thinking summary")).toBe(true);
         expect(events).toContainEqual({
             type: "session.plan.updated",
@@ -361,6 +559,7 @@ describe("AppServerCodexSession", () => {
         expect(events.some((event) => event.type === "message.started" && event.title === "Plan")).toBe(false);
         expect(events.some((event) => event.type === "message.delta" && event.text.includes("Checked repository shape"))).toBe(true);
         expect(events.some((event) => event.type === "message.delta" && event.text.includes("Reading project metadata"))).toBe(true);
+        expect(events.some((event) => event.type === "message.delta" && event.text.includes("Using skill: flutter-design-system"))).toBe(true);
         expect(events.some((event) => event.type === "message.delta" && event.text.includes("Terminal input"))).toBe(true);
         expect(events.some((event) => event.type === "message.delta" && event.text.includes("notes content"))).toBe(true);
         expect(events.some((event) => event.type === "diff.available" && event.files.some((file) => file.path === "notes.txt" && file.patch?.includes("+new")))).toBe(true);
@@ -434,6 +633,51 @@ describe("AppServerCodexSession", () => {
         expect(events.some((event) => event.type === "app.account.updated")).toBe(true);
         await session.close();
     });
+    it("exposes interactive app-server actions for plugins, MCP, remote control, and rate limits", async () => {
+        const session = new AppServerCodexSession({
+            command: process.execPath,
+            argsPrefix: ["-e", fakeAppServerScript],
+            workdir: process.cwd(),
+        });
+        const plugins = await session.listPlugins({ cwd: process.cwd() });
+        const plugin = await session.readPlugin({ pluginName: "github", marketplacePath: "/tmp/marketplace/openai-curated" });
+        const install = await session.installPlugin({ pluginName: "github", marketplacePath: "/tmp/marketplace/openai-curated" });
+        const uninstall = await session.uninstallPlugin("github");
+        const mcpServers = await session.listMcpServers({ detail: "toolsAndAuthOnly" });
+        const oauth = await session.startMcpOauthLogin("github");
+        const remoteStatus = await session.readRemoteControlStatus();
+        const pairing = await session.startRemoteControlPairing({ manualPairingCode: "123456" });
+        const rateLimits = await session.readRateLimits();
+        expect(plugins.marketplaces[0]).toMatchObject({
+            name: "openai-curated",
+            plugins: [expect.objectContaining({ name: "github", displayName: "GitHub" })],
+        });
+        expect(plugin).toMatchObject({
+            name: "github",
+            displayName: "GitHub",
+            apps: [expect.objectContaining({ name: "github", installUrl: expect.stringContaining("github.com") })],
+        });
+        expect(install).toMatchObject({
+            pluginName: "github",
+            installed: true,
+            appsNeedingAuth: [expect.objectContaining({ name: "github" })],
+        });
+        expect(uninstall).toEqual({ pluginName: "github", uninstalled: true });
+        expect(mcpServers).toEqual([expect.objectContaining({ name: "github", toolCount: 2, tools: ["search_issues", "create_issue"] })]);
+        expect(oauth).toMatchObject({ serverName: "github", loginUrl: expect.stringContaining("github.com") });
+        expect(remoteStatus).toMatchObject({ enabled: false, connectionStatus: "disabled", serverName: "unit-host" });
+        expect(pairing).toMatchObject({ pairingCode: "PAIR-123", manualPairingCode: "PAIR-123", environmentId: "env-1" });
+        expect(rateLimits).toEqual([
+            expect.objectContaining({
+                limitId: "codex",
+                planType: "pro",
+                usedPercent: 5,
+                remainingPercent: 95,
+                windowDurationMins: 43200,
+            }),
+        ]);
+        await session.close();
+    });
     it("exposes native app-server models, threads, skills, filesystem, fuzzy search, and review", async () => {
         const session = new AppServerCodexSession({
             command: process.execPath,
@@ -442,6 +686,7 @@ describe("AppServerCodexSession", () => {
         });
         const models = await session.listModels(true);
         const threads = await session.listThreads({ query: "Native", cwd: process.cwd(), limit: 5 });
+        const subagentThreads = await session.listThreads({ query: "subagent", cwd: process.cwd(), limit: 5 });
         const thread = await session.readThread("native-thread", true);
         const skills = await session.listSkills({ cwds: [process.cwd()], forceReload: true });
         const entries = await session.listDirectory(process.cwd());
@@ -449,16 +694,127 @@ describe("AppServerCodexSession", () => {
         const fuzzy = await session.searchFiles({ query: "main", roots: [process.cwd()], limit: 5 });
         const review = await session.startReview({ target: { type: "uncommittedChanges" }, delivery: "inline" });
         expect(models).toMatchObject({
-            models: [expect.objectContaining({ id: "gpt-test", displayName: "GPT Test", supportedReasoningEfforts: ["low", "high"] })],
+            models: [expect.objectContaining({ id: "gpt-test", displayName: "GPT Test", supportedReasoningEfforts: ["low", "high"], serviceTiers: [expect.objectContaining({ id: "priority", name: "Priority" })] })],
             capabilities: { namespaceTools: true, imageGeneration: true, webSearch: true },
         });
         expect(threads).toEqual([expect.objectContaining({ threadId: "native-thread", title: "Native app-server history", workdir: process.cwd() })]);
+        expect(subagentThreads).toEqual([
+            expect.objectContaining({
+                threadId: "subagent-thread",
+                parentThreadId: testThreadId,
+                agentNickname: "Explorer",
+                agentRole: "explorer",
+                status: "running",
+            }),
+        ]);
         expect(thread.messages.some((message) => message.text.includes("Bridge reviewed"))).toBe(true);
         expect(skills.groups[0].skills[0]).toMatchObject({ name: "flutter-design-system", enabled: true });
         expect(entries).toContainEqual(expect.objectContaining({ name: "README.md", path: "README.md", isFile: true }));
         expect(file).toMatchObject({ name: "README.md", text: "hello native file\n" });
         expect(fuzzy).toEqual([expect.objectContaining({ path: "lib/main.dart", name: "main.dart" })]);
         expect(review).toMatchObject({ runId: "review-turn", reviewThreadId: "thread-test" });
+        await session.close();
+    });
+    it("emits subagent updates without replacing the main thread id", async () => {
+        let savedThreadId;
+        const session = new AppServerCodexSession({
+            command: process.execPath,
+            argsPrefix: ["-e", fakeAppServerScript],
+            workdir: process.cwd(),
+            onThreadStarted: (threadId) => {
+                savedThreadId = threadId;
+            },
+        });
+        const events = [];
+        session.onEvent((event) => events.push(event));
+        await session.sendPrompt("spawn subagent");
+        await waitForRunStarted(events, "turn-1");
+        await waitForSubagentsUpdated(events, "turn-1");
+        expect(savedThreadId).toBe(testThreadId);
+        expect(events).toContainEqual({
+            type: "session.subagents.updated",
+            sessionId: expect.any(String),
+            runId: "turn-1",
+            parentThreadId: testThreadId,
+            subagents: [
+                expect.objectContaining({
+                    threadId: "subagent-thread",
+                    parentThreadId: testThreadId,
+                    agentNickname: "Explorer",
+                    agentRole: "explorer",
+                    status: "running",
+                }),
+            ],
+        });
+        await session.close();
+    });
+    it("does not stream child subagent turn events into the parent chat", async () => {
+        const session = new AppServerCodexSession({
+            command: process.execPath,
+            argsPrefix: ["-e", fakeAppServerScript],
+            workdir: process.cwd(),
+        });
+        const events = [];
+        session.onEvent((event) => events.push(event));
+        await session.sendPrompt("spawn subagent noisy");
+        await waitForSubagentsUpdated(events, "turn-1");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(events).toContainEqual(expect.objectContaining({
+            type: "session.subagents.updated",
+            subagents: [
+                expect.objectContaining({
+                    threadId: "subagent-thread",
+                    status: "running",
+                }),
+            ],
+        }));
+        expect(events.some((event) => event.type === "run.started" && event.runId === "subagent-turn-1")).toBe(false);
+        expect(events.some((event) => event.type === "message.delta" && event.text.includes("Child warning should not reach parent chat"))).toBe(false);
+        expect(events.some((event) => event.type === "message.delta" && event.text.includes("Child response should not reach parent chat"))).toBe(false);
+        await session.close();
+    });
+    it("shows subagent activity for child threads without parent metadata", async () => {
+        const session = new AppServerCodexSession({
+            command: process.execPath,
+            argsPrefix: ["-e", fakeAppServerScript],
+            workdir: process.cwd(),
+        });
+        const events = [];
+        session.onEvent((event) => events.push(event));
+        await session.sendPrompt("spawn subagent unparented noisy");
+        await waitForSubagentsUpdated(events, "turn-1");
+        expect(events).toContainEqual(expect.objectContaining({
+            type: "session.subagents.updated",
+            subagents: [
+                expect.objectContaining({
+                    threadId: "subagent-thread",
+                    agentNickname: "Explorer",
+                    status: "running",
+                }),
+            ],
+        }));
+        await session.close();
+    });
+    it("synthesizes subagent activity from child turn notifications", async () => {
+        const session = new AppServerCodexSession({
+            command: process.execPath,
+            argsPrefix: ["-e", fakeAppServerScript],
+            workdir: process.cwd(),
+        });
+        const events = [];
+        session.onEvent((event) => events.push(event));
+        await session.sendPrompt("spawn subagent unannounced noisy");
+        await waitForSubagentsUpdated(events, "turn-1");
+        expect(events).toContainEqual(expect.objectContaining({
+            type: "session.subagents.updated",
+            subagents: [
+                expect.objectContaining({
+                    threadId: "subagent-thread",
+                    title: "Subagent",
+                    status: "running",
+                }),
+            ],
+        }));
         await session.close();
     });
     it("cancels the active app-server turn with turn interrupt", async () => {
@@ -493,6 +849,15 @@ async function waitForRunStarted(events, runId, timeoutMs = 1_000) {
     while (!events.some((event) => event.type === "run.started" && event.runId === runId)) {
         if (Date.now() - startedAt > timeoutMs) {
             throw new Error(`Timed out waiting for run start: ${runId}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+}
+async function waitForSubagentsUpdated(events, runId, timeoutMs = 1_000) {
+    const startedAt = Date.now();
+    while (!events.some((event) => event.type === "session.subagents.updated" && event.runId === runId)) {
+        if (Date.now() - startedAt > timeoutMs) {
+            throw new Error(`Timed out waiting for subagent update: ${runId}`);
         }
         await new Promise((resolve) => setTimeout(resolve, 25));
     }

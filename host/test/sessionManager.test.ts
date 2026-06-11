@@ -40,6 +40,49 @@ describe("CodexSessionManager", () => {
     await manager.close();
   });
 
+  it("runs shell commands in the session workspace", async () => {
+    const stateDir = await tempStateDir();
+    const workspace = await tempStateDir();
+    await writeFile(path.join(workspace, "marker.txt"), "workspace marker\n");
+    const manager = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: true,
+      workspaces: [{ id: "default", label: "repo", path: workspace }],
+    });
+    const [session] = manager.listSessions();
+    await manager.setSessionMode(session.sessionId, "yolo");
+
+    const result = await manager.runShellCommand(session.sessionId, "pwd && cat marker.txt");
+
+    expect(result.type).toBe("shell.command.result");
+    expect(result.exitCode).toBe(0);
+    expect(result.cwd).toBe(workspace);
+    expect(result.stdout).toContain(workspace);
+    expect(result.stdout).toContain("workspace marker");
+    await manager.close();
+  });
+
+  it("rejects shell commands unless the session is in yolo mode", async () => {
+    const stateDir = await tempStateDir();
+    const workspace = await tempStateDir();
+    const manager = await CodexSessionManager.create({
+      sessionMode: "mock",
+      codexCommand: "codex",
+      stateDir,
+      defaultSandbox: "workspace-write",
+      allowYolo: false,
+      workspaces: [{ id: "default", label: "repo", path: workspace }],
+    });
+    const [session] = manager.listSessions();
+
+    await expect(manager.runShellCommand(session.sessionId, "pwd")).rejects.toThrow(/yolo/i);
+
+    await manager.close();
+  });
+
   it("requires explicit host permission for yolo mode", async () => {
     const stateDir = await tempStateDir();
     const manager = await CodexSessionManager.create({

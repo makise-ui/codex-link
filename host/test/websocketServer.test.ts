@@ -53,7 +53,7 @@ describe("startBridgeServer", () => {
     });
     const hostInfo = messages.find((message) => message.type === "host.info");
     expect(hostInfo).toMatchObject({
-      version: 12,
+      version: 14,
       connectionMode: "tunnel",
       tunnelProvider: "cloudflared",
       publicUrl: "wss://unit.trycloudflare.com",
@@ -195,6 +195,52 @@ describe("startBridgeServer", () => {
       variableNames: ["OPENAI_API_KEY"],
     });
     expect(messages.filter((message) => message.type === "workspace.env.updated")).toHaveLength(1);
+
+    ws.close();
+  });
+
+  it("forwards shell commands to the session manager", async () => {
+    const port = await freePort();
+    const sessionManager = fakeSessionManager();
+    server = await startBridgeServer({
+      host: "127.0.0.1",
+      port,
+      url: `ws://127.0.0.1:${port}`,
+      pairingStore: new PairingStore({ password: "secret" }),
+      sessionManager,
+      auditLog: { record() {} } as unknown as AuditLog,
+      logger: { info() {} } as unknown as pino.Logger,
+      hostInfo: {
+        connectionMode: "tunnel",
+        tunnelProvider: "cloudflared",
+        publicUrl: "wss://unit.trycloudflare.com",
+        localUrl: `ws://127.0.0.1:${port}`,
+        hostLabel: "Codex Link",
+        yoloAllowed: false,
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+    });
+    ws.send(JSON.stringify({ type: "shell.command.run", sessionId: "s1", command: "pwd" }));
+
+    await eventually(() => {
+      expect(messages.some((message) => message.type === "shell.command.result")).toBe(true);
+    });
+    expect(sessionManager.shellCommands).toEqual([{ sessionId: "s1", command: "pwd" }]);
+    expect(messages.find((message) => message.type === "shell.command.result")).toMatchObject({
+      sessionId: "s1",
+      command: "pwd",
+      exitCode: 0,
+      stdout: "/tmp/unit\n",
+    });
 
     ws.close();
   });
@@ -408,6 +454,8 @@ describe("startBridgeServer", () => {
     ws.send(JSON.stringify({ type: "app.remote.status.read" }));
     ws.send(JSON.stringify({ type: "app.remote.pairing.start", manualPairingCode: "123456" }));
     ws.send(JSON.stringify({ type: "app.account.rateLimits.read" }));
+    ws.send(JSON.stringify({ type: "host.update.check" }));
+    ws.send(JSON.stringify({ type: "host.update.run" }));
 
     await eventually(() => {
       expect(messages.some((message) => message.type === "app.plugin.list")).toBe(true);
@@ -419,11 +467,28 @@ describe("startBridgeServer", () => {
       expect(messages.some((message) => message.type === "app.remote.status")).toBe(true);
       expect(messages.some((message) => message.type === "app.remote.pairing.started")).toBe(true);
       expect(messages.some((message) => message.type === "app.account.rateLimits")).toBe(true);
+      expect(messages.some((message) => message.type === "host.update.status")).toBe(true);
+      expect(messages.some((message) => message.type === "host.update.progress")).toBe(true);
+      expect(messages.some((message) => message.type === "host.update.result")).toBe(true);
     });
     expect(sessionManager.pluginActions.map((action) => action.type)).toEqual(["list", "read", "install", "uninstall"]);
     expect(sessionManager.mcpActions).toEqual(["list:toolsAndAuthOnly", "oauth:github"]);
     expect(sessionManager.remoteActions).toEqual(["status", "pair:123456"]);
     expect(sessionManager.rateLimitReads).toBe(1);
+    expect(sessionManager.hostUpdateActions).toEqual(["check", "run"]);
+    expect(messages.find((message) => message.type === "host.update.status")).toMatchObject({
+      packageName: "codex-link-host",
+      currentVersion: "0.1.1",
+      latestVersion: "0.1.2",
+      updateAvailable: true,
+    });
+    expect(messages.find((message) => message.type === "host.update.result")).toMatchObject({
+      packageName: "codex-link-host",
+      previousVersion: "0.1.1",
+      latestVersion: "0.1.2",
+      updated: true,
+      restartRequired: true,
+    });
 
     ws.close();
   });
@@ -445,6 +510,8 @@ function fakeSessionManager(): CodexSessionManager & {
   pluginActions: Array<Record<string, unknown>>;
   mcpActions: string[];
   remoteActions: string[];
+  shellCommands: Array<{ sessionId: string; command: string }>;
+  hostUpdateActions: string[];
   rateLimitReads: number;
 } {
   const requestedFiles: Array<{ sessionId: string; path: string }> = [];
@@ -461,6 +528,8 @@ function fakeSessionManager(): CodexSessionManager & {
   const pluginActions: Array<Record<string, unknown>> = [];
   const mcpActions: string[] = [];
   const remoteActions: string[] = [];
+  const shellCommands: Array<{ sessionId: string; command: string }> = [];
+  const hostUpdateActions: string[] = [];
   let rateLimitReads = 0;
   let accountLogouts = 0;
   let listener: ((event: unknown) => void) | undefined;
@@ -479,6 +548,8 @@ function fakeSessionManager(): CodexSessionManager & {
     pluginActions,
     mcpActions,
     remoteActions,
+    shellCommands,
+    hostUpdateActions,
     get accountLogouts() {
       return accountLogouts;
     },
@@ -527,6 +598,19 @@ function fakeSessionManager(): CodexSessionManager & {
       };
       listener?.(result);
       return result;
+    },
+    runShellCommand: async (sessionId: string, command: string) => {
+      shellCommands.push({ sessionId, command });
+      return {
+        type: "shell.command.result",
+        sessionId,
+        command,
+        exitCode: 0,
+        stdout: "/tmp/unit\n",
+        stderr: "",
+        durationMs: 12,
+        cwd: "/tmp/unit",
+      };
     },
     setGoal: async (sessionId: string, input: { objective?: string; status?: string; tokenBudget?: number | null }) => {
       goalSets.push({ sessionId, ...input });
@@ -748,6 +832,38 @@ function fakeSessionManager(): CodexSessionManager & {
         limits: [{ limitId: "codex", planType: "pro", usedPercent: 5, remainingPercent: 95, windowDurationMins: 43200 }],
       };
     },
+    checkHostUpdate: async () => {
+      hostUpdateActions.push("check");
+      return {
+        type: "host.update.status",
+        packageName: "codex-link-host",
+        currentVersion: "0.1.1",
+        latestVersion: "0.1.2",
+        updateAvailable: true,
+        updateRunning: false,
+      };
+    },
+    runHostUpdate: async (onProgress: (event: unknown) => void) => {
+      hostUpdateActions.push("run");
+      onProgress({
+        type: "host.update.progress",
+        packageName: "codex-link-host",
+        phase: "installing",
+        line: "installing codex-link-host@latest",
+      });
+      return {
+        type: "host.update.result",
+        packageName: "codex-link-host",
+        previousVersion: "0.1.1",
+        latestVersion: "0.1.2",
+        updated: true,
+        exitCode: 0,
+        stdout: "updated\n",
+        stderr: "",
+        restartRequired: true,
+        message: "Host package updated. Restart the host bridge to use the new version.",
+      };
+    },
     listSessions: () => [
       {
         sessionId: "s1",
@@ -780,6 +896,8 @@ function fakeSessionManager(): CodexSessionManager & {
     pluginActions: Array<Record<string, unknown>>;
     mcpActions: string[];
     remoteActions: string[];
+    shellCommands: Array<{ sessionId: string; command: string }>;
+    hostUpdateActions: string[];
     rateLimitReads: number;
   };
 }

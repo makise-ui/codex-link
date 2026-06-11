@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import pino from "pino";
 import { PairingStore } from "./auth/pairingStore.js";
 import { CodexSessionManager } from "./codex/sessionManager.js";

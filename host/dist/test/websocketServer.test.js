@@ -42,7 +42,7 @@ describe("startBridgeServer", () => {
         });
         const hostInfo = messages.find((message) => message.type === "host.info");
         expect(hostInfo).toMatchObject({
-            version: 8,
+            version: 14,
             connectionMode: "tunnel",
             tunnelProvider: "cloudflared",
             publicUrl: "wss://unit.trycloudflare.com",
@@ -127,6 +127,88 @@ describe("startBridgeServer", () => {
             sessionId: "s1",
             query: "main",
             files: [{ path: "lib/main.dart", name: "main.dart" }],
+        });
+        ws.close();
+    });
+    it("forwards workspace env secret updates to the session manager", async () => {
+        const port = await freePort();
+        const sessionManager = fakeSessionManager();
+        server = await startBridgeServer({
+            host: "127.0.0.1",
+            port,
+            url: `ws://127.0.0.1:${port}`,
+            pairingStore: new PairingStore({ password: "secret" }),
+            sessionManager,
+            auditLog: { record() { } },
+            logger: { info() { } },
+            hostInfo: {
+                connectionMode: "tunnel",
+                tunnelProvider: "cloudflared",
+                publicUrl: "wss://unit.trycloudflare.com",
+                localUrl: `ws://127.0.0.1:${port}`,
+                hostLabel: "Codex Link",
+                yoloAllowed: false,
+            },
+        });
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        const messages = [];
+        ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+        await opened(ws);
+        ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+        });
+        ws.send(JSON.stringify({ type: "workspace.env.set", sessionId: "s1", content: "OPENAI_API_KEY=sk-unit" }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "workspace.env.updated")).toBe(true);
+        });
+        expect(sessionManager.envSets).toEqual([{ sessionId: "s1", content: "OPENAI_API_KEY=sk-unit", targetPath: undefined }]);
+        expect(messages.find((message) => message.type === "workspace.env.updated")).toMatchObject({
+            sessionId: "s1",
+            path: ".env.local",
+            variableNames: ["OPENAI_API_KEY"],
+        });
+        expect(messages.filter((message) => message.type === "workspace.env.updated")).toHaveLength(1);
+        ws.close();
+    });
+    it("forwards shell commands to the session manager", async () => {
+        const port = await freePort();
+        const sessionManager = fakeSessionManager();
+        server = await startBridgeServer({
+            host: "127.0.0.1",
+            port,
+            url: `ws://127.0.0.1:${port}`,
+            pairingStore: new PairingStore({ password: "secret" }),
+            sessionManager,
+            auditLog: { record() { } },
+            logger: { info() { } },
+            hostInfo: {
+                connectionMode: "tunnel",
+                tunnelProvider: "cloudflared",
+                publicUrl: "wss://unit.trycloudflare.com",
+                localUrl: `ws://127.0.0.1:${port}`,
+                hostLabel: "Codex Link",
+                yoloAllowed: false,
+            },
+        });
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        const messages = [];
+        ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+        await opened(ws);
+        ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+        });
+        ws.send(JSON.stringify({ type: "shell.command.run", sessionId: "s1", command: "pwd" }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "shell.command.result")).toBe(true);
+        });
+        expect(sessionManager.shellCommands).toEqual([{ sessionId: "s1", command: "pwd" }]);
+        expect(messages.find((message) => message.type === "shell.command.result")).toMatchObject({
+            sessionId: "s1",
+            command: "pwd",
+            exitCode: 0,
+            stdout: "/tmp/unit\n",
         });
         ws.close();
     });
@@ -280,10 +362,85 @@ describe("startBridgeServer", () => {
         });
         ws.close();
     });
+    it("forwards interactive app-server action messages to the session manager", async () => {
+        const port = await freePort();
+        const sessionManager = fakeSessionManager();
+        server = await startBridgeServer({
+            host: "127.0.0.1",
+            port,
+            url: `ws://127.0.0.1:${port}`,
+            pairingStore: new PairingStore({ password: "secret" }),
+            sessionManager,
+            auditLog: { record() { } },
+            logger: { info() { } },
+            hostInfo: {
+                connectionMode: "tunnel",
+                tunnelProvider: "cloudflared",
+                publicUrl: "wss://unit.trycloudflare.com",
+                localUrl: `ws://127.0.0.1:${port}`,
+                hostLabel: "Codex Link",
+                yoloAllowed: false,
+            },
+        });
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        const messages = [];
+        ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+        await opened(ws);
+        ws.send(JSON.stringify({ type: "auth.password", password: "secret", deviceName: "Pixel" }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "auth.accepted")).toBe(true);
+        });
+        messages.length = 0;
+        ws.send(JSON.stringify({ type: "app.plugin.list", sessionId: "s1" }));
+        ws.send(JSON.stringify({ type: "app.plugin.read", pluginName: "github", marketplacePath: "/tmp/marketplace" }));
+        ws.send(JSON.stringify({ type: "app.plugin.install", pluginName: "github", marketplacePath: "/tmp/marketplace" }));
+        ws.send(JSON.stringify({ type: "app.plugin.uninstall", pluginName: "github" }));
+        ws.send(JSON.stringify({ type: "app.mcp.status.list", sessionId: "s1", detail: "toolsAndAuthOnly" }));
+        ws.send(JSON.stringify({ type: "app.mcp.oauth.login", serverName: "github" }));
+        ws.send(JSON.stringify({ type: "app.remote.status.read" }));
+        ws.send(JSON.stringify({ type: "app.remote.pairing.start", manualPairingCode: "123456" }));
+        ws.send(JSON.stringify({ type: "app.account.rateLimits.read" }));
+        ws.send(JSON.stringify({ type: "host.update.check" }));
+        ws.send(JSON.stringify({ type: "host.update.run" }));
+        await eventually(() => {
+            expect(messages.some((message) => message.type === "app.plugin.list")).toBe(true);
+            expect(messages.some((message) => message.type === "app.plugin.detail")).toBe(true);
+            expect(messages.some((message) => message.type === "app.plugin.install.result")).toBe(true);
+            expect(messages.some((message) => message.type === "app.plugin.uninstall.result")).toBe(true);
+            expect(messages.some((message) => message.type === "app.mcp.status.list")).toBe(true);
+            expect(messages.some((message) => message.type === "app.mcp.oauth.login.started")).toBe(true);
+            expect(messages.some((message) => message.type === "app.remote.status")).toBe(true);
+            expect(messages.some((message) => message.type === "app.remote.pairing.started")).toBe(true);
+            expect(messages.some((message) => message.type === "app.account.rateLimits")).toBe(true);
+            expect(messages.some((message) => message.type === "host.update.status")).toBe(true);
+            expect(messages.some((message) => message.type === "host.update.progress")).toBe(true);
+            expect(messages.some((message) => message.type === "host.update.result")).toBe(true);
+        });
+        expect(sessionManager.pluginActions.map((action) => action.type)).toEqual(["list", "read", "install", "uninstall"]);
+        expect(sessionManager.mcpActions).toEqual(["list:toolsAndAuthOnly", "oauth:github"]);
+        expect(sessionManager.remoteActions).toEqual(["status", "pair:123456"]);
+        expect(sessionManager.rateLimitReads).toBe(1);
+        expect(sessionManager.hostUpdateActions).toEqual(["check", "run"]);
+        expect(messages.find((message) => message.type === "host.update.status")).toMatchObject({
+            packageName: "codex-link-host",
+            currentVersion: "0.1.1",
+            latestVersion: "0.1.2",
+            updateAvailable: true,
+        });
+        expect(messages.find((message) => message.type === "host.update.result")).toMatchObject({
+            packageName: "codex-link-host",
+            previousVersion: "0.1.1",
+            latestVersion: "0.1.2",
+            updated: true,
+            restartRequired: true,
+        });
+        ws.close();
+    });
 });
 function fakeSessionManager() {
     const requestedFiles = [];
     const fileSearches = [];
+    const envSets = [];
     const goalSets = [];
     const goalGets = [];
     const goalClears = [];
@@ -292,11 +449,18 @@ function fakeSessionManager() {
     const accountReads = [];
     const accountLoginStarts = [];
     const accountLoginCancels = [];
+    const pluginActions = [];
+    const mcpActions = [];
+    const remoteActions = [];
+    const shellCommands = [];
+    const hostUpdateActions = [];
+    let rateLimitReads = 0;
     let accountLogouts = 0;
     let listener;
     return {
         requestedFiles,
         fileSearches,
+        envSets,
         goalSets,
         goalGets,
         goalClears,
@@ -305,8 +469,16 @@ function fakeSessionManager() {
         accountReads,
         accountLoginStarts,
         accountLoginCancels,
+        pluginActions,
+        mcpActions,
+        remoteActions,
+        shellCommands,
+        hostUpdateActions,
         get accountLogouts() {
             return accountLogouts;
+        },
+        get rateLimitReads() {
+            return rateLimitReads;
         },
         onEvent: (callback) => {
             listener = callback;
@@ -337,6 +509,31 @@ function fakeSessionManager() {
                 sessionId,
                 query: query ?? "",
                 files: [{ path: "lib/main.dart", name: "main.dart", sizeBytes: 14, mimeType: "text/plain" }],
+            };
+        },
+        setWorkspaceEnv: async (sessionId, content, targetPath) => {
+            envSets.push({ sessionId, content, targetPath });
+            const result = {
+                type: "workspace.env.updated",
+                sessionId,
+                path: targetPath ?? ".env.local",
+                variableNames: ["OPENAI_API_KEY"],
+                skippedLineCount: 0,
+            };
+            listener?.(result);
+            return result;
+        },
+        runShellCommand: async (sessionId, command) => {
+            shellCommands.push({ sessionId, command });
+            return {
+                type: "shell.command.result",
+                sessionId,
+                command,
+                exitCode: 0,
+                stdout: "/tmp/unit\n",
+                stderr: "",
+                durationMs: 12,
+                cwd: "/tmp/unit",
             };
         },
         setGoal: async (sessionId, input) => {
@@ -377,7 +574,7 @@ function fakeSessionManager() {
         },
         listAppModels: async (_sessionId, _includeHidden) => ({
             type: "app.model.list",
-            models: [{ id: "gpt-test", model: "gpt-test", displayName: "GPT Test", hidden: false, supportedReasoningEfforts: ["low"], inputModalities: ["text"], supportsPersonality: false, isDefault: true }],
+            models: [{ id: "gpt-test", model: "gpt-test", displayName: "GPT Test", hidden: false, supportedReasoningEfforts: ["low"], inputModalities: ["text"], supportsPersonality: false, serviceTiers: [], defaultServiceTier: null, isDefault: true }],
             capabilities: { namespaceTools: true, imageGeneration: true, webSearch: true },
         }),
         listAppThreads: async () => ({
@@ -483,6 +680,112 @@ function fakeSessionManager() {
             return {
                 type: "app.account.status",
                 account: { accountType: null, authMode: null, requiresOpenaiAuth: true },
+            };
+        },
+        listAppPlugins: async (sessionId) => {
+            pluginActions.push({ type: "list", sessionId });
+            return {
+                type: "app.plugin.list",
+                marketplaces: [
+                    {
+                        name: "openai-curated",
+                        displayName: "OpenAI curated",
+                        path: "/tmp/marketplace",
+                        plugins: [{ name: "github", displayName: "GitHub", description: "GitHub integration", installed: false, enabled: true }],
+                    },
+                ],
+            };
+        },
+        readAppPlugin: async (input) => {
+            pluginActions.push({ type: "read", ...input });
+            return {
+                type: "app.plugin.detail",
+                plugin: { name: input.pluginName, displayName: "GitHub", description: "GitHub integration", skills: [], apps: [], mcpServers: [] },
+            };
+        },
+        installAppPlugin: async (input) => {
+            pluginActions.push({ type: "install", ...input });
+            return {
+                type: "app.plugin.install.result",
+                pluginName: input.pluginName,
+                installed: true,
+                appsNeedingAuth: [],
+            };
+        },
+        uninstallAppPlugin: async (pluginName) => {
+            pluginActions.push({ type: "uninstall", pluginName });
+            return {
+                type: "app.plugin.uninstall.result",
+                pluginName,
+                uninstalled: true,
+            };
+        },
+        listAppMcpServers: async (_sessionId, detail) => {
+            mcpActions.push(`list:${detail ?? "toolsAndAuthOnly"}`);
+            return {
+                type: "app.mcp.status.list",
+                servers: [{ name: "github", status: "enabled", authStatus: "unauthenticated", toolCount: 2, tools: ["search_issues"], resourceCount: 0 }],
+            };
+        },
+        startAppMcpOauthLogin: async (serverName) => {
+            mcpActions.push(`oauth:${serverName}`);
+            return {
+                type: "app.mcp.oauth.login.started",
+                serverName,
+                loginUrl: "https://github.com/login/oauth/authorize",
+            };
+        },
+        readAppRemoteControlStatus: async () => {
+            remoteActions.push("status");
+            return {
+                type: "app.remote.status",
+                status: { enabled: true, serverName: "unit-host", environmentId: "env-1" },
+            };
+        },
+        startAppRemotePairing: async (manualPairingCode) => {
+            remoteActions.push(`pair:${manualPairingCode ?? ""}`);
+            return {
+                type: "app.remote.pairing.started",
+                pairing: { pairingCode: "PAIR-123", manualPairingCode, environmentId: "env-1" },
+            };
+        },
+        readAppRateLimits: async () => {
+            rateLimitReads += 1;
+            return {
+                type: "app.account.rateLimits",
+                limits: [{ limitId: "codex", planType: "pro", usedPercent: 5, remainingPercent: 95, windowDurationMins: 43200 }],
+            };
+        },
+        checkHostUpdate: async () => {
+            hostUpdateActions.push("check");
+            return {
+                type: "host.update.status",
+                packageName: "codex-link-host",
+                currentVersion: "0.1.1",
+                latestVersion: "0.1.2",
+                updateAvailable: true,
+                updateRunning: false,
+            };
+        },
+        runHostUpdate: async (onProgress) => {
+            hostUpdateActions.push("run");
+            onProgress({
+                type: "host.update.progress",
+                packageName: "codex-link-host",
+                phase: "installing",
+                line: "installing codex-link-host@latest",
+            });
+            return {
+                type: "host.update.result",
+                packageName: "codex-link-host",
+                previousVersion: "0.1.1",
+                latestVersion: "0.1.2",
+                updated: true,
+                exitCode: 0,
+                stdout: "updated\n",
+                stderr: "",
+                restartRequired: true,
+                message: "Host package updated. Restart the host bridge to use the new version.",
             };
         },
         listSessions: () => [

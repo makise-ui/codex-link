@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 15;
 
 export type SessionStatus = "idle" | "starting" | "running" | "waiting_for_approval" | "cancelling" | "cancelled" | "completed" | "failed" | "connected";
 export type MessageKind = "thinking" | "reasoning" | "executing" | "response" | "system";
@@ -58,6 +58,9 @@ export type ClientMessage =
   | AppMcpOauthLoginRequestMessage
   | AppRemoteStatusReadRequestMessage
   | AppRemotePairingStartRequestMessage
+  | HostUpdateCheckRequestMessage
+  | HostUpdateRunRequestMessage
+  | ShellCommandRunMessage
   | CommandListRequestMessage
   | CommandRunMessage
   | PromptSendMessage
@@ -317,6 +320,20 @@ export type AppRemotePairingStartRequestMessage = {
   manualPairingCode?: string;
 };
 
+export type HostUpdateCheckRequestMessage = {
+  type: "host.update.check";
+};
+
+export type HostUpdateRunRequestMessage = {
+  type: "host.update.run";
+};
+
+export type ShellCommandRunMessage = {
+  type: "shell.command.run";
+  sessionId: string;
+  command: string;
+};
+
 export type CommandListRequestMessage = {
   type: "command.list";
 };
@@ -406,10 +423,15 @@ export type ServerMessage =
   | AppMcpOauthLoginStartedMessage
   | AppRemoteStatusMessage
   | AppRemotePairingStartedMessage
+  | HostUpdateStatusMessage
+  | HostUpdateProgressMessage
+  | HostUpdateResultMessage
+  | ShellCommandResultMessage
   | CommandListMessage
   | SessionGoalUpdatedMessage
   | SessionGoalClearedMessage
   | SessionPlanUpdatedMessage
+  | SessionSubagentsUpdatedMessage
   | RunStartedMessage
   | OutputDeltaMessage
   | MessageStartedMessage
@@ -471,6 +493,17 @@ export type WorkspaceRecord = {
   active: boolean;
 };
 
+export type ShellCommandResultMessage = {
+  type: "shell.command.result";
+  sessionId: string;
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  cwd: string;
+};
+
 export type WorkspaceFileRecord = {
   path: string;
   name: string;
@@ -525,6 +558,7 @@ export type AppModelServiceTierRecord = {
 export type AppThreadRecord = {
   threadId: string;
   codexSessionId?: string;
+  parentThreadId?: string;
   title: string;
   preview: string;
   createdAt: string;
@@ -536,10 +570,23 @@ export type AppThreadRecord = {
   modelProvider?: string;
   cliVersion?: string;
   messageCount?: number;
+  agentNickname?: string;
+  agentRole?: string;
 };
 
 export type AppThreadHistoryRecord = AppThreadRecord & {
   messages: StoredChatMessage[];
+};
+
+export type SessionSubagentRecord = {
+  threadId: string;
+  parentThreadId?: string;
+  title: string;
+  preview: string;
+  status?: string;
+  updatedAt: string;
+  agentNickname?: string;
+  agentRole?: string;
 };
 
 export type AppSkillRecord = {
@@ -669,6 +716,38 @@ export type AppRateLimitRecord = {
   remainingPercent: number;
   windowDurationMins?: number;
   resetsAt?: number;
+};
+
+export type HostUpdateStatusMessage = {
+  type: "host.update.status";
+  packageName: string;
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  updateRunning: boolean;
+  error?: string;
+};
+
+export type HostUpdateProgressPhase = "checking" | "installing" | "completed" | "failed";
+
+export type HostUpdateProgressMessage = {
+  type: "host.update.progress";
+  packageName: string;
+  phase: HostUpdateProgressPhase;
+  line: string;
+};
+
+export type HostUpdateResultMessage = {
+  type: "host.update.result";
+  packageName: string;
+  previousVersion: string;
+  latestVersion?: string;
+  updated: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  restartRequired: boolean;
+  message: string;
 };
 
 export type PairingAcceptedMessage = {
@@ -917,6 +996,14 @@ export type SessionPlanUpdatedMessage = {
   runId?: string;
   title: string;
   text: string;
+};
+
+export type SessionSubagentsUpdatedMessage = {
+  type: "session.subagents.updated";
+  sessionId: string;
+  runId?: string;
+  parentThreadId?: string;
+  subagents: SessionSubagentRecord[];
 };
 
 export type RunStartedMessage = {

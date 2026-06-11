@@ -35,9 +35,16 @@ Flutter app -> WebSocket LAN/tunnel -> Host bridge -> Codex app-server
 
 ## Quick Start
 
+Install the host bridge:
+
 ```bash
-pnpm install
-pnpm --filter @codex-lan/host dev -- \
+npm install -g codex-link-host
+```
+
+Start it:
+
+```bash
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode app-server \

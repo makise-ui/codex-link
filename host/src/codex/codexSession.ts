@@ -1,4 +1,4 @@
-import type { AppAccountLoginCompletedMessage, AppAccountUpdatedMessage, AppFsEntryRecord, AppFsFileRecord, AppMcpOauthLoginRecord, AppMcpServerRecord, AppModelRecord, AppPluginDetailRecord, AppPluginInstallResultRecord, AppPluginMarketplaceRecord, AppPluginUninstallResultRecord, AppProviderCapabilitiesRecord, AppRateLimitRecord, AppRemoteControlStatusRecord, AppRemotePairingRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginCancelStatus, CodexAccountLoginFlow, DiffAvailableMessage, MessageCompletedMessage, MessageDeltaMessage, MessageStartedMessage, OutputDeltaMessage, ReasoningEffort, RunCompletedMessage, RunStartedMessage, SessionGoalClearedMessage, SessionGoalRecord, SessionGoalUpdatedMessage, SessionPlanUpdatedMessage, SessionStartedMessage, SessionUpdatedMessage, StatusMessage, WorkspaceFileRecord } from "../protocol/messages.js";
+import type { AppAccountLoginCompletedMessage, AppAccountUpdatedMessage, AppFsEntryRecord, AppFsFileRecord, AppMcpOauthLoginRecord, AppMcpServerRecord, AppModelRecord, AppPluginDetailRecord, AppPluginInstallResultRecord, AppPluginMarketplaceRecord, AppPluginUninstallResultRecord, AppProviderCapabilitiesRecord, AppRateLimitRecord, AppRemoteControlStatusRecord, AppRemotePairingRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginCancelStatus, CodexAccountLoginFlow, DiffAvailableMessage, MessageCompletedMessage, MessageDeltaMessage, MessageStartedMessage, OutputDeltaMessage, ReasoningEffort, RunCompletedMessage, RunStartedMessage, SessionGoalClearedMessage, SessionGoalRecord, SessionGoalUpdatedMessage, SessionPlanUpdatedMessage, SessionStartedMessage, SessionSubagentsUpdatedMessage, SessionUpdatedMessage, StatusMessage, WorkspaceFileRecord } from "../protocol/messages.js";
 
 export type CodexEvent =
   | SessionStartedMessage
@@ -15,6 +15,7 @@ export type CodexEvent =
   | AppAccountUpdatedMessage
   | AppAccountLoginCompletedMessage
   | SessionPlanUpdatedMessage
+  | SessionSubagentsUpdatedMessage
   | StatusMessage
   | RunCompletedMessage;
 

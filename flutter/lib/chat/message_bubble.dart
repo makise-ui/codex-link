@@ -11,17 +11,29 @@ import '../theme/app_theme.dart';
 import 'markdown_code_renderer.dart';
 
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.message, this.animate = true});
+  const MessageBubble({
+    super.key,
+    required this.message,
+    this.animate = true,
+    this.textScale = 1.0,
+    this.onOpenWorkspaceFile,
+  });
 
   final ChatMessage message;
   final bool animate;
+  final double textScale;
+  final ValueChanged<String>? onOpenWorkspaceFile;
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == ChatRole.user;
     final child = isUser
-        ? _UserMessage(message: message)
-        : _AssistantMessage(message: message);
+        ? _UserMessage(message: message, textScale: textScale)
+        : _AssistantMessage(
+            message: message,
+            textScale: textScale,
+            onOpenWorkspaceFile: onOpenWorkspaceFile,
+          );
     if (!animate) return child;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
@@ -44,9 +56,10 @@ class MessageBubble extends StatelessWidget {
 }
 
 class _UserMessage extends StatelessWidget {
-  const _UserMessage({required this.message});
+  const _UserMessage({required this.message, required this.textScale});
 
   final ChatMessage message;
+  final double textScale;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +94,9 @@ class _UserMessage extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: codexTextColor(context),
                   height: 1.34,
+                  fontSize:
+                      (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) *
+                      textScale,
                 ),
               ),
             ),
@@ -152,9 +168,15 @@ class _ResponseReveal extends StatelessWidget {
 }
 
 class _AssistantMessage extends StatelessWidget {
-  const _AssistantMessage({required this.message});
+  const _AssistantMessage({
+    required this.message,
+    required this.textScale,
+    this.onOpenWorkspaceFile,
+  });
 
   final ChatMessage message;
+  final double textScale;
+  final ValueChanged<String>? onOpenWorkspaceFile;
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +203,10 @@ class _AssistantMessage extends StatelessWidget {
       return _ErrorBlock(text: message.text);
     }
     if (message.kind == AgentMessageKind.files) {
-      return _FileChangeCard(message: message);
+      return _FileChangeCard(
+        message: message,
+        onOpenWorkspaceFile: onOpenWorkspaceFile,
+      );
     }
     if (message.kind == AgentMessageKind.system) {
       return _ActivityCard(
@@ -209,8 +234,15 @@ class _AssistantMessage extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: codexTextColor(context),
                     height: 1.5,
+                    fontSize:
+                        (Theme.of(context).textTheme.bodyMedium?.fontSize ??
+                            14) *
+                        textScale,
                   ),
-                  child: MarkdownCodeRenderer(text: message.text),
+                  child: MarkdownCodeRenderer(
+                    text: message.text,
+                    textScale: textScale,
+                  ),
                 ),
               ),
             ),
@@ -221,42 +253,126 @@ class _AssistantMessage extends StatelessWidget {
   }
 }
 
-class _ReasoningSummaryCard extends StatelessWidget {
+class _ReasoningSummaryCard extends StatefulWidget {
   const _ReasoningSummaryCard({required this.message});
 
   final ChatMessage message;
 
   @override
+  State<_ReasoningSummaryCard> createState() => _ReasoningSummaryCardState();
+}
+
+class _ReasoningSummaryCardState extends State<_ReasoningSummaryCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final message = widget.message;
+    final completedAt = message.completedAt;
+    if (message.complete && completedAt != null && !_expanded) {
+      return _ThoughtDurationRow(
+        label: _thoughtDurationLabel(message.createdAt, completedAt),
+        onTap: () => setState(() => _expanded = true),
+      );
+    }
     final accent = Theme.of(context).colorScheme.secondary;
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620),
-        child: Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color: CodexColors.panel.withValues(alpha: 0.42),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(
-              color: accent.withValues(alpha: AppOpacity.border),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (message.complete && completedAt != null) ...[
+              _ThoughtDurationRow(
+                label: _thoughtDurationLabel(message.createdAt, completedAt),
+                expanded: true,
+                onTap: () => setState(() => _expanded = false),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+            ],
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: CodexColors.panel.withValues(alpha: 0.42),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(
+                  color: accent.withValues(alpha: AppOpacity.border),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.psychology_alt_rounded, color: accent, size: 17),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      message.text.trim().isEmpty
+                          ? (message.title ?? 'Thinking summary')
+                          : message.text.trim(),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: CodexColors.muted,
+                        height: 1.38,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThoughtDurationRow extends StatelessWidget {
+  const _ThoughtDurationRow({
+    required this.label,
+    required this.onTap,
+    this.expanded = false,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: InkWell(
+        key: const ValueKey('thought-summary-toggle'),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.xs,
+            vertical: AppSpacing.xs,
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.psychology_alt_rounded, color: accent, size: 17),
+              Icon(
+                Icons.psychology_alt_rounded,
+                color: codexMutedColor(context),
+                size: 16,
+              ),
               const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Text(
-                  message.text.trim().isEmpty
-                      ? (message.title ?? 'Thinking summary')
-                      : message.text.trim(),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: CodexColors.muted,
-                    height: 1.38,
-                  ),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: codexMutedColor(context),
+                  fontWeight: FontWeight.w700,
                 ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Icon(
+                expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+                color: codexMutedColor(context),
+                size: 17,
               ),
             ],
           ),
@@ -264,6 +380,16 @@ class _ReasoningSummaryCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _thoughtDurationLabel(DateTime startedAt, DateTime completedAt) {
+  final duration = completedAt.difference(startedAt);
+  final seconds = duration.inSeconds < 1 ? 1 : duration.inSeconds;
+  if (seconds < 60) return 'Thought for ${seconds}s';
+  final minutes = seconds ~/ 60;
+  final remainingSeconds = seconds % 60;
+  if (remainingSeconds == 0) return 'Thought for ${minutes}m';
+  return 'Thought for ${minutes}m ${remainingSeconds}s';
 }
 
 class _ApprovalCard extends StatelessWidget {
@@ -639,6 +765,8 @@ class _ThinkingLineState extends State<_ThinkingLine>
           key: const ValueKey('thinking-inline-row'),
           mainAxisSize: MainAxisSize.min,
           children: [
+            _ThinkingAppIcon(animation: _controller),
+            const SizedBox(width: AppSpacing.sm),
             _ThinkingWaveText(
               key: const ValueKey('thinking-wave-text'),
               text: 'Thinking',
@@ -650,6 +778,116 @@ class _ThinkingLineState extends State<_ThinkingLine>
         ),
       ),
     );
+  }
+}
+
+class _ThinkingAppIcon extends StatelessWidget {
+  const _ThinkingAppIcon({required this.animation});
+
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.secondary;
+    final disableAnimations =
+        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    return AnimatedBuilder(
+      key: const ValueKey('thinking-app-icon'),
+      animation: animation,
+      builder: (context, _) {
+        final value = disableAnimations ? 0.0 : animation.value;
+        final scale = disableAnimations
+            ? 1.0
+            : 0.96 + 0.04 * math.sin(value * math.pi * 2).abs();
+        return Transform.scale(
+          scale: scale,
+          child: SizedBox.square(
+            dimension: 22,
+            child: CustomPaint(
+              painter: _ThinkingAppIconPainter(
+                progress: value,
+                accent: accent,
+                muted: codexMutedColor(context),
+                disableAnimations: disableAnimations,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ThinkingAppIconPainter extends CustomPainter {
+  const _ThinkingAppIconPainter({
+    required this.progress,
+    required this.accent,
+    required this.muted,
+    required this.disableAnimations,
+  });
+
+  final double progress;
+  final Color accent;
+  final Color muted;
+  final bool disableAnimations;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final breath = disableAnimations
+        ? 0.72
+        : 0.5 + (0.5 * math.sin(progress * math.pi * 2)).abs();
+    final orbitRadius = size.shortestSide * (0.22 + (0.16 * breath));
+    final rotation = disableAnimations ? 0.0 : progress * math.pi * 2;
+    final points = <Offset>[];
+    for (var index = 0; index < 3; index++) {
+      final angle = -math.pi / 2 + rotation + (index * math.pi * 2 / 3);
+      points.add(
+        Offset(
+          center.dx + math.cos(angle) * orbitRadius,
+          center.dy + math.sin(angle) * orbitRadius,
+        ),
+      );
+    }
+
+    final trianglePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = muted.withValues(alpha: disableAnimations ? 0.18 : 0.10);
+    final path = Path()
+      ..moveTo(points[0].dx, points[0].dy)
+      ..lineTo(points[1].dx, points[1].dy)
+      ..lineTo(points[2].dx, points[2].dy)
+      ..close();
+    canvas.drawPath(path, trianglePaint);
+
+    for (var index = 0; index < 3; index++) {
+      final phase = disableAnimations
+          ? 0.65
+          : (progress + (index * 0.18)) % 1.0;
+      final pulse = 0.5 + (0.5 * math.sin(phase * math.pi * 2));
+      final dotRadius = size.shortestSide * (0.105 + (0.045 * pulse));
+      final dotColor = Color.lerp(
+        muted,
+        index == 0 ? accent : CodexColors.text,
+        0.54 + (0.34 * pulse),
+      )!;
+      final glowPaint = Paint()
+        ..color = dotColor.withValues(alpha: disableAnimations ? 0.0 : 0.14)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+      canvas.drawCircle(points[index], dotRadius + 1.6, glowPaint);
+      canvas.drawCircle(points[index], dotRadius, Paint()..color = dotColor);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ThinkingAppIconPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.accent != accent ||
+        oldDelegate.muted != muted ||
+        oldDelegate.disableAnimations != disableAnimations;
   }
 }
 
@@ -980,9 +1218,10 @@ class _WaveDot extends StatelessWidget {
 }
 
 class _FileChangeCard extends StatefulWidget {
-  const _FileChangeCard({required this.message});
+  const _FileChangeCard({required this.message, this.onOpenWorkspaceFile});
 
   final ChatMessage message;
+  final ValueChanged<String>? onOpenWorkspaceFile;
 
   @override
   State<_FileChangeCard> createState() => _FileChangeCardState();
@@ -1083,6 +1322,8 @@ class _FileChangeCardState extends State<_FileChangeCard> {
                                     _FileRow(
                                       file: file,
                                       controller: controller,
+                                      onOpenWorkspaceFile:
+                                          widget.onOpenWorkspaceFile,
                                     ),
                                     if (_imageDownloadFor(controller, file)
                                         case final image?)
@@ -1144,10 +1385,15 @@ class _CompactFileChangeLine extends StatelessWidget {
 }
 
 class _FileRow extends StatelessWidget {
-  const _FileRow({required this.file, required this.controller});
+  const _FileRow({
+    required this.file,
+    required this.controller,
+    this.onOpenWorkspaceFile,
+  });
 
   final _FileChange file;
   final AppController? controller;
+  final ValueChanged<String>? onOpenWorkspaceFile;
 
   @override
   Widget build(BuildContext context) {
@@ -1174,6 +1420,16 @@ class _FileRow extends StatelessWidget {
           onPressed: () => _copyMessage(context, file.path),
           icon: const Icon(Icons.copy_rounded, color: CodexColors.muted),
         ),
+        if (_isWorkspaceOpenableStatus(file.status))
+          IconButton(
+            tooltip: 'Open in workspace',
+            visualDensity: VisualDensity.compact,
+            iconSize: 16,
+            onPressed: onOpenWorkspaceFile == null
+                ? null
+                : () => onOpenWorkspaceFile!(file.path),
+            icon: const Icon(Icons.open_in_new_rounded),
+          ),
         if (file.fileId != null)
           TextButton.icon(
             onPressed: controller == null
@@ -1211,6 +1467,10 @@ bool _isEditStatus(String status) {
       status == 'modified' ||
       status == 'deleted' ||
       status == 'renamed';
+}
+
+bool _isWorkspaceOpenableStatus(String status) {
+  return status == 'added' || status == 'modified' || status == 'renamed';
 }
 
 String _fileChangeVerb(String status) {

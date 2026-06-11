@@ -18,12 +18,18 @@ cd flutter
 flutter pub get
 ```
 
+Install the host bridge package for normal use:
+
+```bash
+npm install -g codex-link-host
+```
+
 ## Start the Host on LAN
 
 Use LAN mode when the phone and computer are on the same trusted network.
 
 ```bash
-pnpm --filter @codex-lan/host dev -- \
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode app-server \
@@ -41,7 +47,7 @@ Use tunnel mode when the phone cannot reach the host over LAN. Tunnel mode requi
 ```bash
 export CODEX_LINK_PASSWORD="choose-a-password"
 
-pnpm --filter @codex-lan/host dev -- \
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode app-server \
@@ -66,7 +72,7 @@ cloudflared tunnel --url http://127.0.0.1:8787
 Then pass the public URL to the host:
 
 ```bash
-pnpm --filter @codex-lan/host dev -- \
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode app-server \
@@ -76,6 +82,20 @@ pnpm --filter @codex-lan/host dev -- \
   --remote-mode tunnel \
   --public-url https://example.trycloudflare.com \
   --tunnel-provider cloudflared
+```
+
+## Update the Host
+
+Update the server package on the machine running the host bridge:
+
+```bash
+npm update -g codex-link-host
+```
+
+If npm does not move to the newest version, install the latest tag explicitly:
+
+```bash
+npm install -g codex-link-host@latest
 ```
 
 ## Run the Flutter App

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
-import type { AppFsEntryRecord, AppFsFileRecord, AppMcpOauthLoginRecord, AppMcpServerRecord, AppModelRecord, AppPluginDetailRecord, AppPluginInstallResultRecord, AppPluginMarketplaceRecord, AppPluginSummaryRecord, AppPluginUninstallResultRecord, AppProviderCapabilitiesRecord, AppRateLimitRecord, AppRemoteControlStatusRecord, AppRemotePairingRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginFlow, CodexAccountType, CodexAuthMode, GoalStatus, MessageKind, ReasoningEffort, SandboxMode, SessionGoalRecord, StoredChatMessage, WorkspaceFileRecord } from "../protocol/messages.js";
+import type { AppFsEntryRecord, AppFsFileRecord, AppMcpOauthLoginRecord, AppMcpServerRecord, AppModelRecord, AppPluginDetailRecord, AppPluginInstallResultRecord, AppPluginMarketplaceRecord, AppPluginSummaryRecord, AppPluginUninstallResultRecord, AppProviderCapabilitiesRecord, AppRateLimitRecord, AppRemoteControlStatusRecord, AppRemotePairingRecord, AppSkillGroupRecord, AppThreadHistoryRecord, AppThreadRecord, ApprovalRequestedMessage, CodexAccountInfo, CodexAccountLoginFlow, CodexAccountType, CodexAuthMode, GoalStatus, MessageKind, ReasoningEffort, SandboxMode, SessionGoalRecord, SessionSubagentRecord, StoredChatMessage, WorkspaceFileRecord } from "../protocol/messages.js";
 import type { AccountLoginCancelResult, AccountLoginStartInput, AppFileSearchInput, AppMcpStatusListInput, AppModelListResult, AppPluginListInput, AppPluginLocatorInput, AppRemotePairingInput, AppReviewStartInput, AppReviewStartResult, AppSkillListInput, AppThreadListInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptOptions, SendPromptResult } from "./codexSession.js";
 import { mimeTypeFor } from "./fileTransferManager.js";
 
@@ -68,6 +68,9 @@ export class AppServerCodexSession implements CodexSession {
   private codexThreadId?: string;
   private threadLoaded = false;
   private activeTurn?: ActiveTurn;
+  private readonly subagents = new Map<string, SessionSubagentRecord>();
+  private readonly subagentThreadIds = new Set<string>();
+  private readonly subagentTurnIds = new Set<string>();
 
   constructor(private readonly options: AppServerCodexSessionOptions) {
     this.sessionId = options.sessionId ?? "default";
@@ -397,6 +400,9 @@ export class AppServerCodexSession implements CodexSession {
     this.initialized = undefined;
     this.threadLoaded = false;
     this.activeTurn = undefined;
+    this.subagents.clear();
+    this.subagentThreadIds.clear();
+    this.subagentTurnIds.clear();
     this.listeners.clear();
   }
 
@@ -582,6 +588,7 @@ export class AppServerCodexSession implements CodexSession {
 
   private handleNotification(message: RpcNotification): void {
     const params = safeRecord(message.params);
+    if (this.isSubagentNotification(message.method, params)) return;
     switch (message.method) {
       case "thread/started":
         void this.handleThreadStarted(params);
@@ -666,9 +673,16 @@ export class AppServerCodexSession implements CodexSession {
 
   private async handleThreadStarted(params: Record<string, unknown>): Promise<void> {
     const thread = safeRecord(params.thread);
-    const threadId = readString(thread, "id");
-    if (!threadId) return;
-    await this.setThreadId(threadId);
+    const normalized = normalizeThread(thread);
+    if (!normalized?.threadId) return;
+    if (this.isSubagentThread(normalized)) {
+      this.updateSubagent({
+        ...normalized,
+        parentThreadId: normalized.parentThreadId ?? this.codexThreadId,
+      });
+      return;
+    }
+    await this.setThreadId(normalized.threadId);
   }
 
   private async setThreadId(threadId: string): Promise<void> {
@@ -685,6 +699,9 @@ export class AppServerCodexSession implements CodexSession {
     const turn = safeRecord(params.turn);
     const turnId = readString(turn, "id");
     if (!turnId) return;
+    this.subagents.clear();
+    this.subagentThreadIds.clear();
+    this.subagentTurnIds.clear();
     this.activeTurn = {
       turnId,
       itemMessageIds: new Map(),
@@ -712,7 +729,82 @@ export class AppServerCodexSession implements CodexSession {
       this.emit({ type: "status", status: "completed", sessionId: this.sessionId, runId: turnId });
       this.emit({ type: "run.completed", sessionId: this.sessionId, runId: turnId, exitCode: 0 });
     }
+    this.clearSubagents(turnId);
     this.activeTurn = undefined;
+  }
+
+  private isSubagentThread(thread: AppThreadRecord): boolean {
+    return Boolean(
+      this.codexThreadId &&
+        ((thread.parentThreadId && thread.parentThreadId === this.codexThreadId) ||
+          (this.activeTurn && thread.threadId !== this.codexThreadId)),
+    );
+  }
+
+  private updateSubagent(thread: AppThreadRecord): void {
+    this.subagentThreadIds.add(thread.threadId);
+    this.subagents.set(thread.threadId, subagentRecordFromThread(thread));
+    this.emitSubagentsUpdated();
+  }
+
+  private clearSubagents(runId?: string): void {
+    if (this.subagents.size === 0) return;
+    this.subagents.clear();
+    this.subagentThreadIds.clear();
+    this.subagentTurnIds.clear();
+    this.emitSubagentsUpdated(runId);
+  }
+
+  private emitSubagentsUpdated(runId = this.activeTurn?.turnId): void {
+    this.emit({
+      type: "session.subagents.updated",
+      sessionId: this.sessionId,
+      runId,
+      parentThreadId: this.codexThreadId,
+      subagents: [...this.subagents.values()],
+    });
+  }
+
+  private isSubagentNotification(method: string, params: Record<string, unknown>): boolean {
+    if (method === "thread/started") return false;
+    const threadId = readString(params, "threadId");
+    const turnId = notificationTurnId(params);
+    const isChildThread =
+      Boolean(threadId && this.codexThreadId && threadId !== this.codexThreadId) ||
+      Boolean(threadId && this.subagentThreadIds.has(threadId));
+    const isChildTurn = Boolean(turnId && this.subagentTurnIds.has(turnId));
+    if (!isChildThread && !isChildTurn) return false;
+    if (threadId) this.subagentThreadIds.add(threadId);
+    if (turnId && method === "turn/started") {
+      this.subagentTurnIds.add(turnId);
+    }
+    if (threadId) {
+      this.ensureSyntheticSubagent(threadId, method === "turn/completed" ? "completed" : "running");
+    }
+    if (turnId && method === "turn/completed") {
+      this.subagentTurnIds.delete(turnId);
+    }
+    return true;
+  }
+
+  private ensureSyntheticSubagent(threadId: string, status: string): void {
+    const existing = this.subagents.get(threadId);
+    if (existing) {
+      if (existing.status !== status) {
+        this.subagents.set(threadId, { ...existing, status, updatedAt: new Date().toISOString() });
+        this.emitSubagentsUpdated();
+      }
+      return;
+    }
+    this.subagents.set(threadId, {
+      threadId,
+      parentThreadId: this.codexThreadId,
+      title: "Subagent",
+      preview: "",
+      status,
+      updatedAt: new Date().toISOString(),
+    });
+    this.emitSubagentsUpdated();
   }
 
   private handleItemStarted(params: Record<string, unknown>): void {
@@ -1475,6 +1567,7 @@ function normalizeThread(value: unknown): AppThreadRecord | undefined {
   return {
     threadId,
     codexSessionId: readString(record, "sessionId"),
+    parentThreadId: readString(record, "parentThreadId") ?? readString(record, "forkedFromId"),
     title: name ?? firstNonEmptyLine(preview) ?? (cwd ? path.basename(cwd) : threadId),
     preview,
     createdAt: timestampToIso(record.createdAt),
@@ -1486,7 +1579,26 @@ function normalizeThread(value: unknown): AppThreadRecord | undefined {
     modelProvider: readString(record, "modelProvider"),
     cliVersion: readString(record, "cliVersion"),
     messageCount: countThreadMessages(turns),
+    agentNickname: readString(record, "agentNickname"),
+    agentRole: readString(record, "agentRole"),
   };
+}
+
+function subagentRecordFromThread(thread: AppThreadRecord): SessionSubagentRecord {
+  return {
+    threadId: thread.threadId,
+    parentThreadId: thread.parentThreadId,
+    title: thread.title,
+    preview: thread.preview,
+    status: thread.status,
+    updatedAt: thread.updatedAt,
+    agentNickname: thread.agentNickname,
+    agentRole: thread.agentRole,
+  };
+}
+
+function notificationTurnId(params: Record<string, unknown>): string | undefined {
+  return readString(params, "turnId") ?? readString(safeRecord(params.turn), "id");
 }
 
 function normalizeThreadHistory(value: unknown): AppThreadHistoryRecord | undefined {

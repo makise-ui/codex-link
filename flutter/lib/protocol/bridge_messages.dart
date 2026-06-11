@@ -490,16 +490,20 @@ class AppThreadInfo {
     required this.updatedAt,
     required this.workdir,
     this.codexSessionId,
+    this.parentThreadId,
     this.path,
     this.source,
     this.status,
     this.modelProvider,
     this.cliVersion,
     this.messageCount,
+    this.agentNickname,
+    this.agentRole,
   });
 
   final String threadId;
   final String? codexSessionId;
+  final String? parentThreadId;
   final String title;
   final String preview;
   final String createdAt;
@@ -511,11 +515,14 @@ class AppThreadInfo {
   final String? modelProvider;
   final String? cliVersion;
   final int? messageCount;
+  final String? agentNickname;
+  final String? agentRole;
 
   factory AppThreadInfo.fromJson(Map<String, dynamic> json) {
     return AppThreadInfo(
       threadId: json['threadId'] as String? ?? '',
       codexSessionId: json['codexSessionId'] as String?,
+      parentThreadId: json['parentThreadId'] as String?,
       title: json['title'] as String? ?? 'Codex session',
       preview: json['preview'] as String? ?? '',
       createdAt: json['createdAt'] as String? ?? '',
@@ -527,6 +534,73 @@ class AppThreadInfo {
       modelProvider: json['modelProvider'] as String?,
       cliVersion: json['cliVersion'] as String?,
       messageCount: json['messageCount'] as int?,
+      agentNickname: json['agentNickname'] as String?,
+      agentRole: json['agentRole'] as String?,
+    );
+  }
+}
+
+class AppSubagentInfo {
+  const AppSubagentInfo({
+    required this.threadId,
+    required this.title,
+    required this.preview,
+    required this.updatedAt,
+    this.parentThreadId,
+    this.status,
+    this.agentNickname,
+    this.agentRole,
+  });
+
+  final String threadId;
+  final String? parentThreadId;
+  final String title;
+  final String preview;
+  final String? status;
+  final String updatedAt;
+  final String? agentNickname;
+  final String? agentRole;
+
+  bool get isRunning {
+    final normalized = status?.toLowerCase().trim();
+    return normalized == null ||
+        normalized == 'running' ||
+        normalized == 'inprogress' ||
+        normalized == 'in_progress';
+  }
+
+  String get displayName {
+    final nickname = agentNickname?.trim();
+    if (nickname != null && nickname.isNotEmpty) return nickname;
+    final name = title.trim();
+    return name.isEmpty ? 'Subagent' : name;
+  }
+
+  AppThreadInfo toThreadInfo({String workdir = ''}) {
+    return AppThreadInfo(
+      threadId: threadId,
+      parentThreadId: parentThreadId,
+      title: title,
+      preview: preview,
+      createdAt: updatedAt,
+      updatedAt: updatedAt,
+      workdir: workdir,
+      status: status,
+      agentNickname: agentNickname,
+      agentRole: agentRole,
+    );
+  }
+
+  factory AppSubagentInfo.fromJson(Map<String, dynamic> json) {
+    return AppSubagentInfo(
+      threadId: json['threadId'] as String? ?? '',
+      parentThreadId: json['parentThreadId'] as String?,
+      title: json['title'] as String? ?? 'Subagent',
+      preview: json['preview'] as String? ?? '',
+      status: json['status'] as String?,
+      updatedAt: json['updatedAt'] as String? ?? '',
+      agentNickname: json['agentNickname'] as String?,
+      agentRole: json['agentRole'] as String?,
     );
   }
 }
@@ -985,6 +1059,93 @@ class AppRemotePairingInfo {
   }
 }
 
+class HostUpdateStatusInfo {
+  const HostUpdateStatusInfo({
+    required this.packageName,
+    required this.currentVersion,
+    required this.updateAvailable,
+    required this.updateRunning,
+    this.latestVersion,
+    this.error,
+  });
+
+  final String packageName;
+  final String currentVersion;
+  final String? latestVersion;
+  final bool updateAvailable;
+  final bool updateRunning;
+  final String? error;
+
+  factory HostUpdateStatusInfo.fromJson(Map<String, dynamic> json) {
+    return HostUpdateStatusInfo(
+      packageName: json['packageName'] as String? ?? 'codex-link-host',
+      currentVersion: json['currentVersion'] as String? ?? '',
+      latestVersion: json['latestVersion'] as String?,
+      updateAvailable: json['updateAvailable'] as bool? ?? false,
+      updateRunning: json['updateRunning'] as bool? ?? false,
+      error: json['error'] as String?,
+    );
+  }
+}
+
+class HostUpdateProgressInfo {
+  const HostUpdateProgressInfo({
+    required this.packageName,
+    required this.phase,
+    required this.line,
+  });
+
+  final String packageName;
+  final String phase;
+  final String line;
+
+  factory HostUpdateProgressInfo.fromJson(Map<String, dynamic> json) {
+    return HostUpdateProgressInfo(
+      packageName: json['packageName'] as String? ?? 'codex-link-host',
+      phase: json['phase'] as String? ?? 'installing',
+      line: json['line'] as String? ?? '',
+    );
+  }
+}
+
+class HostUpdateResultInfo {
+  const HostUpdateResultInfo({
+    required this.packageName,
+    required this.previousVersion,
+    required this.updated,
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+    required this.restartRequired,
+    required this.message,
+    this.latestVersion,
+  });
+
+  final String packageName;
+  final String previousVersion;
+  final String? latestVersion;
+  final bool updated;
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+  final bool restartRequired;
+  final String message;
+
+  factory HostUpdateResultInfo.fromJson(Map<String, dynamic> json) {
+    return HostUpdateResultInfo(
+      packageName: json['packageName'] as String? ?? 'codex-link-host',
+      previousVersion: json['previousVersion'] as String? ?? '',
+      latestVersion: json['latestVersion'] as String?,
+      updated: json['updated'] as bool? ?? false,
+      exitCode: json['exitCode'] as int? ?? 1,
+      stdout: json['stdout'] as String? ?? '',
+      stderr: json['stderr'] as String? ?? '',
+      restartRequired: json['restartRequired'] as bool? ?? false,
+      message: json['message'] as String? ?? '',
+    );
+  }
+}
+
 class AppRateLimitInfo {
   const AppRateLimitInfo({
     required this.limitId,
@@ -1010,6 +1171,38 @@ class AppRateLimitInfo {
       remainingPercent: json['remainingPercent'] as int? ?? 100,
       windowDurationMins: json['windowDurationMins'] as int?,
       resetsAt: json['resetsAt'] as int?,
+    );
+  }
+}
+
+class ShellCommandResultInfo {
+  const ShellCommandResultInfo({
+    required this.sessionId,
+    required this.command,
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+    required this.durationMs,
+    this.cwd,
+  });
+
+  final String sessionId;
+  final String command;
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+  final int durationMs;
+  final String? cwd;
+
+  factory ShellCommandResultInfo.fromJson(Map<String, dynamic> json) {
+    return ShellCommandResultInfo(
+      sessionId: json['sessionId'] as String? ?? '',
+      command: json['command'] as String? ?? '',
+      exitCode: json['exitCode'] as int? ?? 1,
+      stdout: json['stdout'] as String? ?? '',
+      stderr: json['stderr'] as String? ?? '',
+      durationMs: json['durationMs'] as int? ?? 0,
+      cwd: json['cwd'] as String?,
     );
   }
 }
@@ -1201,6 +1394,7 @@ class ChatMessage {
     this.title,
     this.runId,
     this.complete = true,
+    this.completedAt,
   });
 
   final String id;
@@ -1211,8 +1405,14 @@ class ChatMessage {
   final String? title;
   final String? runId;
   final bool complete;
+  final DateTime? completedAt;
 
-  ChatMessage copyWith({String? text, bool? complete, String? title}) {
+  ChatMessage copyWith({
+    String? text,
+    bool? complete,
+    String? title,
+    DateTime? completedAt,
+  }) {
     return ChatMessage(
       id: id,
       role: role,
@@ -1222,6 +1422,7 @@ class ChatMessage {
       title: title ?? this.title,
       runId: runId,
       complete: complete ?? this.complete,
+      completedAt: completedAt ?? this.completedAt,
     );
   }
 
@@ -1242,6 +1443,7 @@ class ChatMessage {
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       complete: json['complete'] as bool? ?? true,
+      completedAt: DateTime.tryParse(json['completedAt'] as String? ?? ''),
     );
   }
 }

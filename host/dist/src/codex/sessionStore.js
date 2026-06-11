@@ -65,7 +65,8 @@ function isSessionRecord(value) {
         (record.mode === "safe" || record.mode === "yolo") &&
         (record.sandbox === "read-only" || record.sandbox === "workspace-write" || record.sandbox === "danger-full-access") &&
         (record.model === undefined || typeof record.model === "string") &&
-        (record.reasoningEffort === undefined || record.reasoningEffort === "low" || record.reasoningEffort === "medium" || record.reasoningEffort === "high" || record.reasoningEffort === "xhigh"));
+        (record.reasoningEffort === undefined || record.reasoningEffort === "low" || record.reasoningEffort === "medium" || record.reasoningEffort === "high" || record.reasoningEffort === "xhigh") &&
+        (record.serviceTier === undefined || typeof record.serviceTier === "string" || record.serviceTier === null));
 }
 function parseMessageMap(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))

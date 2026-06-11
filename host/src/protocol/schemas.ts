@@ -263,6 +263,20 @@ export const appRemotePairingStartSchema = z.object({
   manualPairingCode: z.string().trim().min(1).max(160).optional(),
 });
 
+export const hostUpdateCheckSchema = z.object({
+  type: z.literal("host.update.check"),
+});
+
+export const hostUpdateRunSchema = z.object({
+  type: z.literal("host.update.run"),
+});
+
+export const shellCommandRunSchema = z.object({
+  type: z.literal("shell.command.run"),
+  sessionId: sessionIdSchema,
+  command: z.string().trim().min(1).max(4000),
+});
+
 export const commandListSchema = z.object({
   type: z.literal("command.list"),
 });
@@ -353,6 +367,9 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   appMcpOauthLoginSchema,
   appRemoteStatusReadSchema,
   appRemotePairingStartSchema,
+  hostUpdateCheckSchema,
+  hostUpdateRunSchema,
+  shellCommandRunSchema,
   commandListSchema,
   commandRunSchema,
   promptSendSchema,

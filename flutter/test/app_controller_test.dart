@@ -8,6 +8,7 @@ import 'package:codex_lan_flutter/services/download_saver.dart';
 import 'package:codex_lan_flutter/services/pairing_parser.dart';
 import 'package:codex_lan_flutter/services/secure_credentials_store.dart';
 import 'package:codex_lan_flutter/services/update_service.dart';
+import 'package:codex_lan_flutter/services/voice_transcription_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -137,6 +138,72 @@ void main() {
     expect(controller.activeMessages, hasLength(2));
     expect(controller.activeMessages.last.text, contains('2 tests passed'));
   });
+
+  test(
+    'shell command requests and results are tracked in terminal history',
+    () {
+      final socket = FakeBridgeSocketClient();
+      final controller = AppController(socket: socket)
+        ..phase = ConnectionPhase.connected
+        ..handleBridgeMessageForTest({
+          'type': 'session.list',
+          'activeSessionId': 's1',
+          'sessions': [
+            {
+              'sessionId': 's1',
+              'title': 'Shell',
+              'updatedAt': '2026-06-07T00:00:00.000Z',
+              'workspaceId': 'default',
+              'workdir': '/tmp/repo',
+              'lastStatus': 'idle',
+              'mode': 'safe',
+              'sandbox': 'workspace-write',
+            },
+          ],
+        });
+
+      controller.runShellCommand('pwd');
+      expect(socket.sentMessages.single, {
+        'type': 'shell.command.run',
+        'sessionId': 's1',
+        'command': 'pwd',
+      });
+      expect(controller.shellBusy, isTrue);
+
+      controller.handleBridgeMessageForTest({
+        'type': 'shell.command.result',
+        'sessionId': 's1',
+        'command': 'pwd',
+        'exitCode': 0,
+        'stdout': '/tmp/repo\n',
+        'stderr': '',
+        'durationMs': 9,
+        'cwd': '/tmp/repo',
+      });
+
+      expect(controller.shellBusy, isFalse);
+      expect(controller.shellHistory, hasLength(1));
+      expect(controller.shellHistory.single.stdout, '/tmp/repo\n');
+    },
+  );
+
+  test(
+    'voice transcription result updates busy state and notice text',
+    () async {
+      final controller = AppController(
+        voiceTranscriptionService: FakeVoiceTranscriptionService(
+          const VoiceTranscriptionResult(text: 'write release notes'),
+        ),
+      );
+
+      final result = await controller.transcribeVoiceInput();
+
+      expect(result?.text, 'write release notes');
+      expect(controller.voiceInputBusy, isFalse);
+      expect(controller.voiceInputStatusText, isNull);
+      expect(controller.latestErrorText, isNull);
+    },
+  );
 
   test('filters replayed thinking noise from session history', () {
     final controller = AppController()
@@ -973,6 +1040,9 @@ void main() {
           'createdAt': '2026-06-08T00:00:00.000Z',
           'updatedAt': '2026-06-08T00:00:00.000Z',
           'workdir': '/tmp/repo',
+          'parentThreadId': 'parent-thread',
+          'agentNickname': 'Explorer',
+          'agentRole': 'explorer',
         },
       ],
     });
@@ -1054,6 +1124,9 @@ void main() {
     expect(controller.appModels.single.serviceTiers.single.id, 'priority');
     expect(controller.appCapabilities?.webSearch, isTrue);
     expect(controller.appThreads.single.threadId, 'thread-1');
+    expect(controller.appThreads.single.parentThreadId, 'parent-thread');
+    expect(controller.appThreads.single.agentNickname, 'Explorer');
+    expect(controller.appThreads.single.agentRole, 'explorer');
     expect(
       controller.appSkillGroups.single.skills.single.name,
       'flutter-design-system',
@@ -1071,6 +1144,51 @@ void main() {
       'approvalId': 'approval-1',
       'decision': 'approve',
     });
+  });
+
+  test('stores structured subagent state separately from chat history', () {
+    final controller = AppController()
+      ..phase = ConnectionPhase.connected
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Subagents',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'running',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+            'activeRunId': 'run-1',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'session.subagents.updated',
+      'sessionId': 's1',
+      'runId': 'run-1',
+      'parentThreadId': 'thread-parent',
+      'subagents': [
+        {
+          'threadId': 'thread-child',
+          'parentThreadId': 'thread-parent',
+          'title': 'Protocol explorer',
+          'preview': 'Checking app-server protocol',
+          'status': 'running',
+          'agentNickname': 'Explorer',
+          'agentRole': 'explorer',
+          'updatedAt': '2026-06-08T00:00:01.000Z',
+        },
+      ],
+    });
+
+    expect(controller.activeSubagents.single.threadId, 'thread-child');
+    expect(controller.activeSubagents.single.agentNickname, 'Explorer');
+    expect(controller.activeMessages, isEmpty);
   });
 
   test('Codex account auth actions route through the host bridge', () {
@@ -1177,6 +1295,7 @@ void main() {
     controller.uninstallAppPlugin('github');
     controller.startAppMcpOauthLogin('github');
     controller.startRemotePairing(manualPairingCode: '123456');
+    controller.runHostUpdate();
 
     expect(socket.sentMessages, [
       {'type': 'app.plugin.list', 'sessionId': 's1'},
@@ -1187,6 +1306,7 @@ void main() {
       },
       {'type': 'app.remote.status.read'},
       {'type': 'app.account.rateLimits.read'},
+      {'type': 'host.update.check'},
       {
         'type': 'app.plugin.read',
         'pluginName': 'github',
@@ -1200,6 +1320,7 @@ void main() {
       {'type': 'app.plugin.uninstall', 'pluginName': 'github'},
       {'type': 'app.mcp.oauth.login', 'serverName': 'github'},
       {'type': 'app.remote.pairing.start', 'manualPairingCode': '123456'},
+      {'type': 'host.update.run'},
     ]);
 
     controller.handleBridgeMessageForTest({
@@ -1297,6 +1418,32 @@ void main() {
         },
       ],
     });
+    controller.handleBridgeMessageForTest({
+      'type': 'host.update.status',
+      'packageName': 'codex-link-host',
+      'currentVersion': '0.1.1',
+      'latestVersion': '0.1.2',
+      'updateAvailable': true,
+      'updateRunning': false,
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'host.update.progress',
+      'packageName': 'codex-link-host',
+      'phase': 'installing',
+      'line': 'installing codex-link-host@latest',
+    });
+    controller.handleBridgeMessageForTest({
+      'type': 'host.update.result',
+      'packageName': 'codex-link-host',
+      'previousVersion': '0.1.1',
+      'latestVersion': '0.1.2',
+      'updated': true,
+      'exitCode': 0,
+      'stdout': 'updated',
+      'stderr': '',
+      'restartRequired': true,
+      'message': 'Restart host to use the new version.',
+    });
 
     expect(
       controller.appPluginMarketplaces.single.plugins.single.name,
@@ -1310,6 +1457,11 @@ void main() {
     expect(controller.appRemoteStatus?.connectionStatus, 'connected');
     expect(controller.appRemotePairing?.manualPairingCode, '123456');
     expect(controller.appRateLimits.single.remainingPercent, 95);
+    expect(controller.hostUpdateStatus?.updateAvailable, isTrue);
+    expect(controller.hostUpdateProgress.single.phase, 'installing');
+    expect(controller.hostUpdateResult?.updated, isTrue);
+    expect(controller.hostUpdateBusy, isFalse);
+    expect(controller.latestNotice?.title, 'Host update finished');
   });
 
   test(
@@ -1513,6 +1665,76 @@ void main() {
       expect(notifier.notifications, isEmpty);
     },
   );
+
+  test('notification category toggles suppress matching notices', () {
+    final notifier = FakeAppNotifier();
+    final controller = AppController(notifier: notifier)
+      ..phase = ConnectionPhase.connected
+      ..setNotificationCategoryEnabled(AppNotificationCategory.plan, false)
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Plan notifications',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'running',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+            'activeRunId': 'run-1',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'session.plan.updated',
+      'sessionId': 's1',
+      'runId': 'run-1',
+      'title': 'Plan',
+      'text': 'Refining the UI\n- in_progress: Move command panels',
+    });
+
+    expect(controller.latestNotice, isNull);
+    expect(notifier.notifications, isEmpty);
+  });
+
+  test('task notification toggle suppresses background completion alerts', () {
+    final notifier = FakeAppNotifier();
+    final controller = AppController(notifier: notifier)
+      ..phase = ConnectionPhase.connected
+      ..setAppForeground(false)
+      ..setNotificationCategoryEnabled(AppNotificationCategory.task, false)
+      ..handleBridgeMessageForTest({
+        'type': 'session.list',
+        'activeSessionId': 's1',
+        'sessions': [
+          {
+            'sessionId': 's1',
+            'title': 'Completion',
+            'updatedAt': '2026-06-08T00:00:00.000Z',
+            'workspaceId': 'default',
+            'workdir': '/tmp/repo',
+            'lastStatus': 'running',
+            'mode': 'safe',
+            'sandbox': 'workspace-write',
+            'activeRunId': 'run-1',
+          },
+        ],
+      });
+
+    controller.handleBridgeMessageForTest({
+      'type': 'run.completed',
+      'sessionId': 's1',
+      'runId': 'run-1',
+      'exitCode': 0,
+    });
+
+    expect(controller.latestNotice, isNull);
+    expect(notifier.notifications, isEmpty);
+  });
 
   test(
     'completed runs notify the phone only while the app is backgrounded',
@@ -1796,6 +2018,15 @@ class ThrowingUpdateService implements AppUpdateService {
 
   @override
   Future<bool> openProjectPage() async => true;
+}
+
+class FakeVoiceTranscriptionService implements VoiceTranscriptionService {
+  const FakeVoiceTranscriptionService(this.result);
+
+  final VoiceTranscriptionResult result;
+
+  @override
+  Future<VoiceTranscriptionResult> transcribeOnce() async => result;
 }
 
 class FakeSecureCredentialsStore extends SecureCredentialsStore {

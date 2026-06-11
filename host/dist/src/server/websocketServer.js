@@ -168,6 +168,7 @@ export async function startBridgeServer(options) {
                 await options.sessionManager.setSessionConfig(message.sessionId, {
                     model: message.model,
                     reasoningEffort: message.reasoningEffort,
+                    serviceTier: message.serviceTier,
                 });
                 sendSessionList(ws);
                 return;
@@ -218,6 +219,10 @@ export async function startBridgeServer(options) {
                 send(ws, await options.sessionManager.searchWorkspaceFiles(message.sessionId, message.query, message.limit));
                 return;
             }
+            case "workspace.env.set": {
+                await options.sessionManager.setWorkspaceEnv(message.sessionId, message.content, message.path);
+                return;
+            }
             case "external.session.list": {
                 await sendExternalSessionList(ws);
                 return;
@@ -260,6 +265,14 @@ export async function startBridgeServer(options) {
                 send(ws, await options.sessionManager.readAppFile(message.sessionId, message.path));
                 return;
             }
+            case "app.fs.write": {
+                send(ws, await options.sessionManager.writeAppFile(message.sessionId, message.path, message.dataBase64));
+                return;
+            }
+            case "app.fs.createDirectory": {
+                send(ws, await options.sessionManager.createAppDirectory(message.sessionId, message.path));
+                return;
+            }
             case "app.file.search": {
                 send(ws, await options.sessionManager.searchAppFiles(message.sessionId, message.query, message.limit));
                 return;
@@ -300,6 +313,68 @@ export async function startBridgeServer(options) {
             }
             case "app.account.logout": {
                 send(ws, await options.sessionManager.logoutCodexAccount());
+                return;
+            }
+            case "app.account.rateLimits.read": {
+                send(ws, await options.sessionManager.readAppRateLimits());
+                return;
+            }
+            case "app.plugin.list": {
+                send(ws, await options.sessionManager.listAppPlugins(message.sessionId));
+                return;
+            }
+            case "app.plugin.read": {
+                send(ws, await options.sessionManager.readAppPlugin({
+                    pluginName: message.pluginName,
+                    marketplacePath: message.marketplacePath,
+                    remoteMarketplaceName: message.remoteMarketplaceName,
+                }));
+                return;
+            }
+            case "app.plugin.install": {
+                send(ws, await options.sessionManager.installAppPlugin({
+                    pluginName: message.pluginName,
+                    marketplacePath: message.marketplacePath,
+                    remoteMarketplaceName: message.remoteMarketplaceName,
+                }));
+                return;
+            }
+            case "app.plugin.uninstall": {
+                send(ws, await options.sessionManager.uninstallAppPlugin(message.pluginName));
+                return;
+            }
+            case "app.mcp.status.list": {
+                send(ws, await options.sessionManager.listAppMcpServers(message.sessionId, message.detail));
+                return;
+            }
+            case "app.mcp.oauth.login": {
+                send(ws, await options.sessionManager.startAppMcpOauthLogin(message.serverName));
+                return;
+            }
+            case "app.remote.status.read": {
+                send(ws, await options.sessionManager.readAppRemoteControlStatus());
+                return;
+            }
+            case "app.remote.pairing.start": {
+                send(ws, await options.sessionManager.startAppRemotePairing(message.manualPairingCode));
+                return;
+            }
+            case "host.update.check": {
+                send(ws, await options.sessionManager.checkHostUpdate());
+                return;
+            }
+            case "host.update.run": {
+                send(ws, await options.sessionManager.runHostUpdate((event) => send(ws, event)));
+                return;
+            }
+            case "shell.command.run": {
+                options.auditLog.record({
+                    type: "shell.command.submitted",
+                    deviceId: state.device?.id,
+                    sessionId: message.sessionId,
+                    detail: message.command.slice(0, 240),
+                });
+                send(ws, await options.sessionManager.runShellCommand(message.sessionId, message.command));
                 return;
             }
             case "command.list": {

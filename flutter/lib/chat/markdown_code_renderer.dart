@@ -6,9 +6,14 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import '../theme/app_theme.dart';
 
 class MarkdownCodeRenderer extends StatelessWidget {
-  const MarkdownCodeRenderer({super.key, required this.text});
+  const MarkdownCodeRenderer({
+    super.key,
+    required this.text,
+    this.textScale = 1.0,
+  });
 
   final String text;
+  final double textScale;
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +52,10 @@ class MarkdownCodeRenderer extends StatelessWidget {
                     p: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: CodexColors.text,
                       height: 1.45,
+                      fontSize:
+                          (Theme.of(context).textTheme.bodyMedium?.fontSize ??
+                              14) *
+                          textScale,
                     ),
                     strong: const TextStyle(
                       color: CodexColors.text,

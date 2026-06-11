@@ -47,6 +47,7 @@ dependencies:
   flutter_local_notifications: ^22.0.0
   package_info_plus: ^9.0.1
   url_launcher: ^6.3.2
+  speech_to_text: ^7.4.0
 
 dev_dependencies:
   flutter_test:

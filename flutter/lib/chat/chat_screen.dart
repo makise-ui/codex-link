@@ -66,6 +66,12 @@ class _ChatScreenState extends State<ChatScreen> {
                       right: 0,
                       child: _EdgeFade(top: true),
                     ),
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _UsageLimitLine(controller: controller),
+                    ),
                     const Positioned(
                       left: 0,
                       right: 0,
@@ -78,7 +84,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       right: 0,
                       child: _FloatingTopBar(
                         controller: controller,
-                        showMenu: !wide,
+                        showSidebarButton: !wide,
                       ),
                     ),
                     Positioned(
@@ -112,10 +118,13 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _FloatingTopBar extends StatelessWidget {
-  const _FloatingTopBar({required this.controller, required this.showMenu});
+  const _FloatingTopBar({
+    required this.controller,
+    required this.showSidebarButton,
+  });
 
   final AppController controller;
-  final bool showMenu;
+  final bool showSidebarButton;
 
   @override
   Widget build(BuildContext context) {
@@ -170,7 +179,7 @@ class _FloatingTopBar extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showMenu) ...[
+          if (showSidebarButton) ...[
             Builder(
               builder: (context) => ChatGptCircleButton(
                 icon: Icons.menu_rounded,
@@ -212,47 +221,16 @@ class _FloatingTopBar extends StatelessWidget {
                   size: 20,
                 ),
               ),
-              IconButton(
-                tooltip: 'App server actions',
-                onPressed: () => _showCommands(context),
-                icon: const Icon(Icons.terminal_rounded, size: 21),
-              ),
-              IconButton(
-                tooltip: 'Session controls',
-                onPressed: () => _showSessionControls(context, controller),
-                icon: const Icon(Icons.tune_rounded, size: 21),
+              Builder(
+                builder: (buttonContext) => IconButton(
+                  tooltip: 'Actions',
+                  onPressed: () => _showActionMenu(buttonContext, controller),
+                  icon: const Icon(Icons.apps_rounded, size: 21),
+                ),
               ),
             ],
           ),
         ],
-      ),
-    );
-  }
-
-  void _showCommands(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const AppServerActionsScreen()),
-    );
-  }
-
-  void _showSessionControls(BuildContext context, AppController controller) {
-    controller.refreshAppModels(includeHidden: true);
-    showDialog<void>(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: codexPanelHighColor(context),
-        surfaceTintColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.xl,
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.xl),
-          side: BorderSide(
-            color: codexDimColor(context).withValues(alpha: 0.18),
-          ),
-        ),
-        child: const _SessionControlsSheet(),
       ),
     );
   }
@@ -428,6 +406,1048 @@ class _ActiveGoalChip extends StatelessWidget {
   }
 }
 
+void _showSessionControlsDialog(
+  BuildContext context,
+  AppController controller,
+) {
+  controller.refreshAppModels(includeHidden: true);
+  showDialog<void>(
+    context: context,
+    builder: (context) => Dialog(
+      backgroundColor: codexPanelHighColor(context),
+      surfaceTintColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xl,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        side: BorderSide(color: codexDimColor(context).withValues(alpha: 0.18)),
+      ),
+      child: const _SessionControlsSheet(),
+    ),
+  );
+}
+
+Future<void> _showChatSettingsMenu(
+  BuildContext context,
+  AppController controller,
+) async {
+  controller.refreshAppModels(includeHidden: true);
+  final session = controller.activeSession;
+  final selectedModel = _selectedModel(controller.appModels, session?.model);
+  final effortOptions = _effortOptionsFor(selectedModel, session).take(5);
+  final selectedEffort = session?.reasoningEffort?.trim().isNotEmpty == true
+      ? session!.reasoningEffort!.trim()
+      : selectedModel?.defaultReasoningEffort ?? 'medium';
+  final picked = await _showAnchoredMenu<String>(
+    context: context,
+    minWidth: 360,
+    maxWidth: 430,
+    items: [
+      _menuHeaderItem(
+        context,
+        'Chat settings',
+        _sessionModelLabel(controller, session),
+      ),
+      _chatSettingsGridItem(
+        context: context,
+        leftTitle: 'Permission mode',
+        rightTitle: 'Text size',
+        leftChildren: [
+          _compactSettingButton(
+            context,
+            value: 'mode:safe',
+            label: 'default permissions',
+            key: const ValueKey('chat-mode-safe'),
+            selected: session?.mode != RunMode.yolo,
+          ),
+          _compactSettingButton(
+            context,
+            value: 'mode:yolo',
+            label: 'yolo',
+            key: const ValueKey('chat-mode-yolo'),
+            selected: session?.mode == RunMode.yolo,
+            enabled: controller.hostInfo?.yoloAllowed == true,
+          ),
+        ],
+        rightChildren: [
+          for (final size in const [
+            ('compact', 'Compact'),
+            ('default', 'Default'),
+            ('large', 'Large'),
+            ('xl', 'XL'),
+          ])
+            _compactSettingButton(
+              context,
+              value: 'text:${size.$1}',
+              label: size.$2,
+              key: ValueKey('chat-text-size-${size.$1}'),
+              selected: controller.chatTextSize == size.$1,
+            ),
+        ],
+      ),
+      _chatSettingsGridItem(
+        context: context,
+        leftTitle: 'Models',
+        rightTitle: 'Effort',
+        leftChildren: [
+          _compactSettingButton(
+            context,
+            value: 'model:',
+            label: 'Default model',
+            selected: (session?.model?.trim() ?? '').isEmpty,
+          ),
+          for (final model in controller.appModels.take(4))
+            _compactSettingButton(
+              context,
+              value: 'model:${model.id}',
+              label: model.displayName,
+              key: ValueKey('chat-model-${model.id}'),
+              selected:
+                  session?.model == model.id || session?.model == model.model,
+            ),
+        ],
+        rightChildren: [
+          for (final effort in effortOptions)
+            _compactSettingButton(
+              context,
+              value: 'effort:$effort',
+              label: effort,
+              key: ValueKey('chat-effort-$effort'),
+              selected: selectedEffort == effort,
+            ),
+        ],
+      ),
+      const PopupMenuDivider(height: 8),
+      _chatSettingItem(
+        context,
+        'refresh-models',
+        Icons.refresh_rounded,
+        'Refresh models',
+        'Reload host model options',
+        key: const ValueKey('chat-settings-refresh-models'),
+      ),
+      _chatSettingItem(
+        context,
+        'settings:advanced',
+        Icons.tune_rounded,
+        'Advanced controls',
+        'Open the full chat controls panel',
+      ),
+      _chatSettingItem(
+        context,
+        'settings:full',
+        Icons.settings_rounded,
+        'Full settings',
+        'Open account, notifications, env, and updates',
+      ),
+    ],
+  );
+  if (!context.mounted || picked == null) return;
+  if (picked == 'refresh-models') {
+    controller.refreshAppModels(includeHidden: true);
+    return;
+  }
+  if (picked == 'mode:safe') {
+    controller.setYolo(false);
+    return;
+  }
+  if (picked == 'mode:yolo') {
+    controller.setYolo(true);
+    return;
+  }
+  if (picked.startsWith('model:')) {
+    final modelId = picked.substring('model:'.length);
+    final model = controller.appModels
+        .where((item) => item.id == modelId || item.model == modelId)
+        .firstOrNull;
+    controller.setSessionConfig(
+      model: modelId,
+      reasoningEffort: model == null
+          ? selectedEffort
+          : _nextEffortForModel(model, session?.reasoningEffort),
+      serviceTier: '',
+    );
+    return;
+  }
+  if (picked.startsWith('effort:')) {
+    controller.setSessionConfig(
+      reasoningEffort: picked.substring('effort:'.length),
+    );
+    return;
+  }
+  if (picked.startsWith('text:')) {
+    controller.setChatTextSize(picked.substring('text:'.length));
+    return;
+  }
+  if (picked == 'settings:full') {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+    return;
+  }
+  if (picked == 'settings:advanced') {
+    _showSessionControlsDialog(context, controller);
+  }
+}
+
+enum _TopAction {
+  commandCenter,
+  sessions,
+  shell,
+  workspace,
+  skills,
+  review,
+  hostUpdate,
+  usage,
+}
+
+Future<void> _showActionMenu(
+  BuildContext context,
+  AppController controller,
+) async {
+  final picked = await _showAnchoredMenu<_TopAction>(
+    context: context,
+    minWidth: 278,
+    maxWidth: 340,
+    items: [
+      _topActionMenuItem(
+        context,
+        _TopAction.commandCenter,
+        Icons.terminal_rounded,
+        'Command center',
+        'Plugins, MCP, remote, host tools',
+        key: const ValueKey('action-command-center'),
+      ),
+      _topActionMenuItem(
+        context,
+        _TopAction.sessions,
+        Icons.history_rounded,
+        'Codex sessions',
+        'Import app-server and CLI sessions',
+        key: const ValueKey('action-codex-sessions'),
+      ),
+      _topActionMenuItem(
+        context,
+        _TopAction.shell,
+        Icons.code_rounded,
+        'Workspace shell',
+        controller.activeSession?.workdir ?? 'Active workspace',
+        key: const ValueKey('action-shell'),
+      ),
+      _topActionMenuItem(
+        context,
+        _TopAction.workspace,
+        Icons.folder_open_rounded,
+        'Workspace explorer',
+        'Browse, preview, and edit files',
+        key: const ValueKey('action-workspace'),
+      ),
+      _topActionMenuItem(
+        context,
+        _TopAction.skills,
+        Icons.auto_awesome_rounded,
+        'Skills',
+        'Browse app-server skills',
+        key: const ValueKey('action-skills'),
+      ),
+      _topActionMenuItem(
+        context,
+        _TopAction.review,
+        Icons.fact_check_rounded,
+        'Review changes',
+        'Start an inline code review',
+        key: const ValueKey('action-review'),
+      ),
+      _topActionMenuItem(
+        context,
+        _TopAction.hostUpdate,
+        Icons.system_update_alt_rounded,
+        'Host update',
+        _hostUpdateSubtitle(controller),
+        key: const ValueKey('action-host-update'),
+      ),
+      _topActionMenuItem(
+        context,
+        _TopAction.usage,
+        Icons.query_stats_rounded,
+        'Usage limits',
+        _usageSubtitle(controller.appRateLimits),
+        key: const ValueKey('action-usage'),
+      ),
+    ],
+  );
+  if (!context.mounted || picked == null) return;
+  switch (picked) {
+    case _TopAction.commandCenter:
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const AppServerActionsScreen()),
+      );
+      break;
+    case _TopAction.sessions:
+      _showCodexSessionsSheet(context, controller);
+      break;
+    case _TopAction.shell:
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const WorkspaceShellScreen()),
+      );
+      break;
+    case _TopAction.workspace:
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const FileBrowserScreen()),
+      );
+      break;
+    case _TopAction.skills:
+      _showSkillsSheet(context, controller);
+      break;
+    case _TopAction.review:
+      _showReviewSheet(context, controller);
+      break;
+    case _TopAction.hostUpdate:
+      _showHostUpdateSheet(context, controller);
+      break;
+    case _TopAction.usage:
+      _showUsageLimits(context, controller);
+      break;
+  }
+}
+
+Future<T?> _showAnchoredMenu<T>({
+  required BuildContext context,
+  required List<PopupMenuEntry<T>> items,
+  required double minWidth,
+  required double maxWidth,
+}) {
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+  final box = context.findRenderObject() as RenderBox;
+  final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
+  return showMenu<T>(
+    context: context,
+    color: codexPanelHighColor(context),
+    surfaceTintColor: Colors.transparent,
+    elevation: 10,
+    constraints: BoxConstraints(minWidth: minWidth, maxWidth: maxWidth),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      side: BorderSide(color: codexDimColor(context).withValues(alpha: 0.18)),
+    ),
+    position: RelativeRect.fromRect(
+      Rect.fromLTWH(topLeft.dx, topLeft.dy, box.size.width, box.size.height),
+      Offset.zero & overlay.size,
+    ),
+    items: items,
+  );
+}
+
+class _PopupContentEntry<T> extends PopupMenuEntry<T> {
+  const _PopupContentEntry({required this.entryHeight, required this.child});
+
+  final double entryHeight;
+  final Widget child;
+
+  @override
+  double get height => entryHeight;
+
+  @override
+  bool represents(T? value) => false;
+
+  @override
+  State<_PopupContentEntry<T>> createState() => _PopupContentEntryState<T>();
+}
+
+class _PopupContentEntryState<T> extends State<_PopupContentEntry<T>> {
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+PopupMenuItem<String> _menuHeaderItem(
+  BuildContext context,
+  String title,
+  String subtitle,
+) {
+  return PopupMenuItem<String>(
+    enabled: false,
+    height: 48,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: AppSpacing.xxs),
+        Text(
+          subtitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: codexDimColor(context)),
+        ),
+      ],
+    ),
+  );
+}
+
+PopupMenuEntry<String> _chatSettingsGridItem({
+  required BuildContext context,
+  required String leftTitle,
+  required String rightTitle,
+  required List<Widget> leftChildren,
+  required List<Widget> rightChildren,
+}) {
+  final rowCount = leftChildren.length > rightChildren.length
+      ? leftChildren.length
+      : rightChildren.length;
+  return _PopupContentEntry<String>(
+    entryHeight: 42 + rowCount * 36.0,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.sm,
+        AppSpacing.md,
+        AppSpacing.xs,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: _chatSettingsColumn(context, leftTitle, leftChildren),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: _chatSettingsColumn(context, rightTitle, rightChildren),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _chatSettingsColumn(
+  BuildContext context,
+  String title,
+  List<Widget> children,
+) {
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: codexDimColor(context),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: AppSpacing.xs),
+      ...children,
+    ],
+  );
+}
+
+Widget _compactSettingButton(
+  BuildContext context, {
+  required String value,
+  required String label,
+  bool selected = false,
+  bool enabled = true,
+  Key? key,
+}) {
+  final theme = Theme.of(context);
+  final colorScheme = theme.colorScheme;
+  final background = selected
+      ? colorScheme.secondary.withValues(alpha: 0.16)
+      : codexPanelHighColor(context).withValues(alpha: 0.72);
+  final borderColor = selected
+      ? colorScheme.secondary.withValues(alpha: 0.55)
+      : codexDimColor(context).withValues(alpha: 0.14);
+  final foreground = enabled
+      ? (selected ? colorScheme.secondary : codexTextColor(context))
+      : codexDimColor(context).withValues(alpha: 0.58);
+  return Padding(
+    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+    child: Builder(
+      builder: (menuContext) => Material(
+        key: key,
+        color: background,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: InkWell(
+          onTap: enabled ? () => Navigator.of(menuContext).pop(value) : null,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          child: Container(
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: borderColor),
+            ),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                if (selected) ...[
+                  Icon(Icons.check_rounded, size: 14, color: foreground),
+                  const SizedBox(width: AppSpacing.xs),
+                ],
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: foreground,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+PopupMenuItem<String> _chatSettingItem(
+  BuildContext context,
+  String value,
+  IconData icon,
+  String title,
+  String subtitle, {
+  bool selected = false,
+  Key? key,
+}) {
+  return PopupMenuItem<String>(
+    key: key,
+    value: value,
+    height: 52,
+    child: Row(
+      children: [
+        Icon(
+          selected ? Icons.check_circle_rounded : icon,
+          size: 18,
+          color: selected
+              ? Theme.of(context).colorScheme.secondary
+              : codexMutedColor(context),
+        ),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: AppSpacing.xxs),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: codexDimColor(context)),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+PopupMenuItem<_TopAction> _topActionMenuItem(
+  BuildContext context,
+  _TopAction value,
+  IconData icon,
+  String title,
+  String subtitle, {
+  Key? key,
+}) {
+  return PopupMenuItem<_TopAction>(
+    key: key,
+    value: value,
+    height: 54,
+    child: Row(
+      children: [
+        Icon(icon, size: 18, color: codexMutedColor(context)),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: AppSpacing.xxs),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: codexDimColor(context)),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+String _hostUpdateSubtitle(AppController controller) {
+  final status = controller.hostUpdateStatus;
+  final result = controller.hostUpdateResult;
+  final current = status?.currentVersion ?? result?.previousVersion;
+  final latest = status?.latestVersion ?? result?.latestVersion;
+  if (controller.hostUpdateBusy) return 'checking or updating';
+  if (status?.updateAvailable == true && latest != null) {
+    return 'latest $latest available';
+  }
+  if (current != null && current.isNotEmpty) return 'current $current';
+  return 'check npm package updates';
+}
+
+String _pathTail(String path) {
+  final trimmed = path.trim();
+  if (trimmed.isEmpty) return '';
+  final normalized = trimmed.replaceAll('\\', '/');
+  final parts = normalized.split('/').where((part) => part.isNotEmpty).toList();
+  return parts.isEmpty ? normalized : parts.last;
+}
+
+void _showCodexSessionsSheet(BuildContext context, AppController controller) {
+  controller.refreshAppThreads(limit: 40);
+  controller.refreshExternalSessions();
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: codexPanelHighColor(context),
+    showDragHandle: true,
+    builder: (_) => const _CodexSessionsQuickSheet(),
+  );
+}
+
+class _CodexSessionsQuickSheet extends StatelessWidget {
+  const _CodexSessionsQuickSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final appThreads = controller.appThreads;
+    final externalSessions = controller.externalSessions;
+    final empty = appThreads.isEmpty && externalSessions.isEmpty;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 560),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.xs,
+            AppSpacing.lg,
+            AppSpacing.xl,
+          ),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Codex sessions',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh sessions',
+                  onPressed: () {
+                    controller.refreshAppThreads(limit: 40);
+                    controller.refreshExternalSessions();
+                  },
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            if (empty)
+              Text(
+                'No importable Codex sessions found yet.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: codexMutedColor(context),
+                ),
+              ),
+            for (final thread in appThreads.take(8))
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.forum_rounded),
+                title: Text(thread.title, maxLines: 1),
+                subtitle: Text(
+                  [
+                    if (thread.preview.trim().isNotEmpty) thread.preview,
+                    if (thread.workdir.trim().isNotEmpty)
+                      _pathTail(thread.workdir),
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () {
+                  controller.importAppThread(thread);
+                  Navigator.of(context).pop();
+                },
+              ),
+            for (final session in externalSessions.take(8))
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.history_edu_rounded),
+                title: Text(session.title, maxLines: 1),
+                subtitle: Text(
+                  [
+                    if (session.codexThreadId.trim().isNotEmpty)
+                      session.codexThreadId,
+                    if (session.workdir.trim().isNotEmpty)
+                      _pathTail(session.workdir),
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () {
+                  controller.importExternalSession(session);
+                  Navigator.of(context).pop();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void _showSkillsSheet(BuildContext context, AppController controller) {
+  controller.refreshAppSkills(forceReload: true);
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: codexPanelHighColor(context),
+    showDragHandle: true,
+    builder: (_) => const _SkillsQuickSheet(),
+  );
+}
+
+class _SkillsQuickSheet extends StatelessWidget {
+  const _SkillsQuickSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final groups = controller.appSkillGroups;
+    final skills = [
+      for (final group in groups)
+        for (final skill in group.skills) (group: group, skill: skill),
+    ];
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 560),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.xs,
+            AppSpacing.lg,
+            AppSpacing.xl,
+          ),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Skills',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh skills',
+                  onPressed: () =>
+                      controller.refreshAppSkills(forceReload: true),
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            if (skills.isEmpty)
+              Text(
+                'No app-server skills reported for this workspace.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: codexMutedColor(context),
+                ),
+              ),
+            for (final item in skills.take(18))
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  item.skill.enabled
+                      ? Icons.auto_awesome_rounded
+                      : Icons.block_rounded,
+                ),
+                title: Text(item.skill.name, maxLines: 1),
+                subtitle: Text(
+                  [
+                    if (item.skill.description.trim().isNotEmpty)
+                      item.skill.description,
+                    if (item.skill.path.trim().isNotEmpty) item.skill.path,
+                  ].join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            for (final group in groups)
+              for (final error in group.errors)
+                Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
+                  child: Text(
+                    error,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void _showReviewSheet(BuildContext context, AppController controller) {
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: codexPanelHighColor(context),
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (_) => const _ReviewQuickSheet(),
+  );
+}
+
+class _ReviewQuickSheet extends StatefulWidget {
+  const _ReviewQuickSheet();
+
+  @override
+  State<_ReviewQuickSheet> createState() => _ReviewQuickSheetState();
+}
+
+class _ReviewQuickSheetState extends State<_ReviewQuickSheet> {
+  final _instructionsController = TextEditingController();
+
+  @override
+  void dispose() {
+    _instructionsController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.xs,
+          AppSpacing.lg,
+          AppSpacing.xl + inset,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Review changes',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: _instructionsController,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Optional focus',
+                hintText: 'Security, tests, UI regressions...',
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            FilledButton.icon(
+              onPressed: controller.isConnected
+                  ? () {
+                      controller.startReview(
+                        instructions: _instructionsController.text,
+                      );
+                      Navigator.of(context).pop();
+                    }
+                  : null,
+              icon: const Icon(Icons.fact_check_rounded),
+              label: const Text('Start review'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void _showHostUpdateSheet(BuildContext context, AppController controller) {
+  controller.refreshHostUpdateStatus();
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: codexPanelHighColor(context),
+    showDragHandle: true,
+    builder: (_) => const _HostUpdateQuickSheet(),
+  );
+}
+
+class _HostUpdateQuickSheet extends StatelessWidget {
+  const _HostUpdateQuickSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final status = controller.hostUpdateStatus;
+    final result = controller.hostUpdateResult;
+    final latest = status?.latestVersion ?? result?.latestVersion;
+    final current = status?.currentVersion ?? result?.previousVersion;
+    final updateAvailable = status?.updateAvailable == true;
+    final progress = controller.hostUpdateProgress.reversed.take(4).toList();
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.xs,
+          AppSpacing.lg,
+          AppSpacing.xl,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Host update',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Check host update',
+                  onPressed: controller.hostUpdateBusy
+                      ? null
+                      : controller.refreshHostUpdateStatus,
+                  icon: const Icon(Icons.sync_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            _HostUpdateLine(
+              icon: updateAvailable
+                  ? Icons.new_releases_rounded
+                  : Icons.check_circle_rounded,
+              title: updateAvailable ? 'Update available' : 'Package status',
+              subtitle: [
+                status?.packageName ?? result?.packageName ?? 'codex-link-host',
+                if (current != null && current.isNotEmpty) 'current $current',
+                if (latest != null && latest.isNotEmpty) 'latest $latest',
+                if (controller.hostUpdateBusy) 'running',
+              ].join(' · '),
+            ),
+            if (controller.hostUpdateErrorText case final error?) ...[
+              const SizedBox(height: AppSpacing.xs),
+              _HostUpdateLine(
+                icon: Icons.error_outline_rounded,
+                title: 'Update error',
+                subtitle: error,
+              ),
+            ],
+            if (result != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              _HostUpdateLine(
+                icon: result.updated
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.info_outline_rounded,
+                title: result.updated ? 'Update installed' : 'No update needed',
+                subtitle: result.restartRequired
+                    ? '${result.message} Restart the host bridge.'
+                    : result.message,
+              ),
+            ],
+            for (final item in progress) ...[
+              const SizedBox(height: AppSpacing.xs),
+              _HostUpdateLine(
+                icon: Icons.chevron_right_rounded,
+                title: item.phase,
+                subtitle: item.line,
+              ),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            FilledButton.icon(
+              key: const ValueKey('host-update-run-quick'),
+              onPressed: controller.hostUpdateBusy
+                  ? null
+                  : controller.runHostUpdate,
+              icon: const Icon(Icons.download_rounded),
+              label: Text(
+                controller.hostUpdateBusy ? 'Updating' : 'Update host',
+              ),
+            ),
+            if (result?.restartRequired == true) ...[
+              const SizedBox(height: AppSpacing.sm),
+              OutlinedButton.icon(
+                onPressed: controller.reconnect,
+                icon: const Icon(Icons.cable_rounded),
+                label: const Text('Reconnect after restart'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HostUpdateLine extends StatelessWidget {
+  const _HostUpdateLine({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: codexMutedColor(context)),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.labelLarge),
+              if (subtitle.trim().isNotEmpty)
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: codexMutedColor(context),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SessionControlsSheet extends StatelessWidget {
   const _SessionControlsSheet();
 
@@ -448,7 +1468,7 @@ class _SessionControlsSheet extends StatelessWidget {
     return SafeArea(
       top: false,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 540, maxHeight: 660),
+        constraints: const BoxConstraints(maxWidth: 540, maxHeight: 760),
         child: ListView(
           shrinkWrap: true,
           padding: const EdgeInsets.fromLTRB(
@@ -488,6 +1508,36 @@ class _SessionControlsSheet extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
+            _ControlSection(
+              title: 'Text size',
+              child: Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                children: const [
+                  _ChatTextSizeChip(
+                    key: ValueKey('chat-text-size-compact'),
+                    value: 'compact',
+                    label: 'Compact',
+                  ),
+                  _ChatTextSizeChip(
+                    key: ValueKey('chat-text-size-default'),
+                    value: 'default',
+                    label: 'Default',
+                  ),
+                  _ChatTextSizeChip(
+                    key: ValueKey('chat-text-size-large'),
+                    value: 'large',
+                    label: 'Large',
+                  ),
+                  _ChatTextSizeChip(
+                    key: ValueKey('chat-text-size-xl'),
+                    value: 'xl',
+                    label: 'XL',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
             _ControlSection(
               title: 'Codex permission mode',
               child: Column(
@@ -642,6 +1692,475 @@ class _SessionControlsSheet extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _UsageLimitLine extends StatelessWidget {
+  const _UsageLimitLine({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final limit = _primaryRateLimit(controller.appRateLimits);
+    if (limit == null) return const SizedBox.shrink();
+    final used = limit.usedPercent.clamp(0, 100);
+    final accent = _usageColor(context, used);
+    return Semantics(
+      label: 'Usage limits',
+      button: true,
+      child: Tooltip(
+        message: 'Usage limits',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: const ValueKey('usage-limit-line'),
+            onTap: () => _showUsageLimits(context, controller),
+            child: SizedBox(
+              height: 8,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: FractionallySizedBox(
+                  widthFactor: used / 100,
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: accent,
+                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _usageSubtitle(List<AppRateLimitInfo> limits) {
+  final limit = _primaryRateLimit(limits);
+  if (limit == null) return 'limits unavailable';
+  return '${limit.usedPercent.clamp(0, 100)}% used';
+}
+
+void _showUsageLimits(BuildContext context, AppController controller) {
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: codexPanelHighColor(context),
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.sm,
+          AppSpacing.lg,
+          AppSpacing.xl,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Usage limits',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh usage',
+                  onPressed: controller.isConnected
+                      ? controller.refreshAppRateLimits
+                      : null,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (controller.appRateLimits.isEmpty)
+              Text(
+                'limits unavailable',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: codexMutedColor(context),
+                ),
+              )
+            else
+              for (final limit in controller.appRateLimits)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: _UsageLimitRow(limit: limit),
+                ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _UsageLimitRow extends StatelessWidget {
+  const _UsageLimitRow({required this.limit});
+
+  final AppRateLimitInfo limit;
+
+  @override
+  Widget build(BuildContext context) {
+    final used = limit.usedPercent.clamp(0, 100);
+    final remaining = limit.remainingPercent.clamp(0, 100);
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: codexPanelHighColor(context).withValues(alpha: 0.74),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: CodexColors.borderSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  limit.limitId,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              Text(
+                '$used% used',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: _usageColor(context, used),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          LinearProgressIndicator(
+            value: used / 100,
+            minHeight: 6,
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+            backgroundColor: codexDimColor(context).withValues(alpha: 0.16),
+            valueColor: AlwaysStoppedAnimation<Color>(
+              _usageColor(context, used),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            [
+              '$remaining% remaining',
+              if (limit.planType?.trim().isNotEmpty == true) limit.planType!,
+              if (limit.windowDurationMins != null)
+                '${limit.windowDurationMins} min window',
+              if (limit.resetsAt != null)
+                'resets ${_formatEpoch(limit.resetsAt!)}',
+            ].join(' · '),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: codexMutedColor(context)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+AppRateLimitInfo? _primaryRateLimit(List<AppRateLimitInfo> limits) {
+  if (limits.isEmpty) return null;
+  return limits.reduce(
+    (left, right) => left.usedPercent >= right.usedPercent ? left : right,
+  );
+}
+
+Color _usageColor(BuildContext context, int usedPercent) {
+  if (usedPercent >= 90) return Theme.of(context).colorScheme.error;
+  if (usedPercent >= 70) return CodexColors.amber;
+  return Theme.of(context).colorScheme.secondary;
+}
+
+String _formatEpoch(int seconds) {
+  final date = DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toLocal();
+  final hour = date.hour.toString().padLeft(2, '0');
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
+class _ChatTextSizeChip extends StatelessWidget {
+  const _ChatTextSizeChip({
+    super.key,
+    required this.value,
+    required this.label,
+  });
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    return ChoiceChip(
+      label: Text(label),
+      selected: controller.chatTextSize == value,
+      onSelected: (_) => controller.setChatTextSize(value),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class WorkspaceShellScreen extends StatefulWidget {
+  const WorkspaceShellScreen({super.key});
+
+  @override
+  State<WorkspaceShellScreen> createState() => _WorkspaceShellScreenState();
+}
+
+class _WorkspaceShellScreenState extends State<WorkspaceShellScreen> {
+  final _commandController = TextEditingController();
+
+  @override
+  void dispose() {
+    _commandController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final session = controller.activeSession;
+    return AnimatedChatGptBackdrop(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: const Text('Workspace shell'),
+          actions: [
+            if (controller.shellBusy)
+              const Padding(
+                padding: EdgeInsets.only(right: AppSpacing.md),
+                child: Center(
+                  child: SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.sm,
+              AppSpacing.md,
+              AppSpacing.lg,
+            ),
+            child: Column(
+              children: [
+                _ShellCwdBar(path: session?.workdir ?? 'No workspace'),
+                const SizedBox(height: AppSpacing.sm),
+                Expanded(
+                  child: _ShellOutputList(results: controller.shellHistory),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                _ShellCommandInput(
+                  controller: _commandController,
+                  enabled: controller.isConnected && !controller.shellBusy,
+                  onRun: () => _run(controller),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _run(AppController controller) {
+    final command = _commandController.text.trim();
+    if (command.isEmpty) return;
+    controller.runShellCommand(command);
+    _commandController.clear();
+  }
+}
+
+class _ShellCwdBar extends StatelessWidget {
+  const _ShellCwdBar({required this.path});
+
+  final String path;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      radius: AppRadius.lg,
+      color: codexPanelHighColor(context).withValues(alpha: 0.74),
+      child: Row(
+        children: [
+          const Icon(Icons.folder_open_rounded, size: 18),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              path,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: codexMutedColor(context),
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShellOutputList extends StatelessWidget {
+  const _ShellOutputList({required this.results});
+
+  final List<ShellCommandResultInfo> results;
+
+  @override
+  Widget build(BuildContext context) {
+    if (results.isEmpty) {
+      return Center(
+        child: Text(
+          'No commands run yet',
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: codexMutedColor(context)),
+        ),
+      );
+    }
+    return ListView.separated(
+      reverse: true,
+      itemBuilder: (context, index) {
+        final result = results[results.length - index - 1];
+        return _ShellResultBlock(result: result);
+      },
+      separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
+      itemCount: results.length,
+    );
+  }
+}
+
+class _ShellResultBlock extends StatelessWidget {
+  const _ShellResultBlock({required this.result});
+
+  final ShellCommandResultInfo result;
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = result.exitCode == 0;
+    final output = [
+      if (result.stdout.trim().isNotEmpty) result.stdout.trimRight(),
+      if (result.stderr.trim().isNotEmpty) result.stderr.trimRight(),
+    ].join('\n');
+    return GlassCard(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      radius: AppRadius.lg,
+      color: codexPanelHighColor(context).withValues(alpha: 0.74),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                ok ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                color: ok
+                    ? CodexColors.greenSoft
+                    : Theme.of(context).colorScheme.error,
+                size: 17,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  r'$ ' + result.command,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelLarge?.copyWith(fontFamily: 'monospace'),
+                ),
+              ),
+              Text(
+                '${result.durationMs} ms',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: codexMutedColor(context),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            output.isEmpty ? '(no output)' : output,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: codexTextColor(context),
+              fontFamily: 'monospace',
+              height: 1.32,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShellCommandInput extends StatelessWidget {
+  const _ShellCommandInput({
+    required this.controller,
+    required this.enabled,
+    required this.onRun,
+  });
+
+  final TextEditingController controller;
+  final bool enabled;
+  final VoidCallback onRun;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      radius: AppRadius.xl,
+      color: codexPanelHighColor(context).withValues(alpha: 0.82),
+      child: Row(
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: AppSpacing.sm),
+            child: Icon(Icons.terminal_rounded, size: 18),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: TextField(
+              key: const ValueKey('shell-command-input'),
+              controller: controller,
+              enabled: enabled,
+              minLines: 1,
+              maxLines: 3,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                hintText: 'Run command in workspace',
+              ),
+              onSubmitted: (_) => onRun(),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Run command',
+            onPressed: enabled ? onRun : null,
+            icon: const Icon(Icons.play_arrow_rounded),
+          ),
+        ],
       ),
     );
   }
@@ -924,13 +2443,67 @@ class _BottomConnectionChip extends StatelessWidget {
   }
 }
 
-class _NoticeBanner extends StatelessWidget {
+class _NoticeBanner extends StatefulWidget {
   const _NoticeBanner({required this.controller});
 
   final AppController controller;
 
   @override
+  State<_NoticeBanner> createState() => _NoticeBannerState();
+}
+
+class _NoticeBannerState extends State<_NoticeBanner> {
+  Timer? _timer;
+  String? _noticeId;
+  int _remainingSeconds = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _NoticeBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTimer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _syncTimer() {
+    final notice = widget.controller.latestNotice;
+    final duration = widget.controller.inAppNoticeDurationSeconds;
+    if (notice == null) {
+      _timer?.cancel();
+      _timer = null;
+      _noticeId = null;
+      _remainingSeconds = 0;
+      return;
+    }
+    if (_noticeId == notice.id && _remainingSeconds > 0) return;
+    _timer?.cancel();
+    _noticeId = notice.id;
+    _remainingSeconds = duration;
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_remainingSeconds <= 1) {
+        _timer?.cancel();
+        _timer = null;
+        widget.controller.clearLatestNotice();
+        return;
+      }
+      setState(() => _remainingSeconds -= 1);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
     final notice = controller.latestNotice;
     if (notice == null) return const SizedBox.shrink();
     final accent = Theme.of(context).colorScheme.secondary;
@@ -980,6 +2553,17 @@ class _NoticeBanner extends StatelessWidget {
                         ),
                       ),
                     ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(
+                    left: AppSpacing.sm,
+                    right: AppSpacing.xs,
+                    top: 2,
+                  ),
+                  child: SoftPill(
+                    label: '${_remainingSeconds}s',
+                    color: accent,
                   ),
                 ),
                 IconButton(
@@ -1484,6 +3068,7 @@ class _MessageListState extends State<_MessageList> {
       isRunning: controller.isRunning,
       runId: controller.activeRunId,
     );
+    final subagents = controller.activeSubagents;
     final timelineSignature = _timelineSignature(items);
     final timelineChanged = timelineSignature != _lastTimelineSignature;
     final itemCountChanged = items.length != _lastItemCount;
@@ -1517,6 +3102,9 @@ class _MessageListState extends State<_MessageList> {
                       ),
                       message: message,
                       animate: shouldAnimateItem,
+                      textScale: controller.chatTextScale,
+                      onOpenWorkspaceFile: (path) =>
+                          _openWorkspaceFile(context, path),
                     ),
                   ),
                   _ActivityTimelineItem(:final messages) => ActivityStackBubble(
@@ -1529,6 +3117,11 @@ class _MessageListState extends State<_MessageList> {
               },
             ),
           ),
+        ),
+        Positioned(
+          right: AppSpacing.lg,
+          bottom: 252,
+          child: _SubagentActivityChip(subagents: subagents),
         ),
         Positioned(
           right: AppSpacing.lg,
@@ -1577,6 +3170,300 @@ class _MessageListState extends State<_MessageList> {
       ],
     );
   }
+
+  void _openWorkspaceFile(BuildContext context, String path) {
+    final normalized = _workspaceOpenPath(path);
+    if (normalized.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FileBrowserScreen(initialPath: normalized),
+      ),
+    );
+  }
+}
+
+class _SubagentActivityChip extends StatelessWidget {
+  const _SubagentActivityChip({required this.subagents});
+
+  final List<AppSubagentInfo> subagents;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = subagents.isNotEmpty;
+    if (!visible) return const SizedBox.shrink();
+    final running = subagents.where((item) => item.isRunning).length;
+    final active = running > 0;
+    final count = active ? running : subagents.length;
+    final label = count == 1 ? 'subagent' : 'subagents';
+    final summary = active ? '$count $label running' : '$count $label';
+    return AnimatedScale(
+      scale: visible ? 1 : 0.84,
+      duration: AppMotion.quick,
+      curve: Curves.easeOutCubic,
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: AppMotion.quick,
+        child: IgnorePointer(
+          ignoring: !visible,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: const ValueKey('agent-activity-chip'),
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+              onTap: () => _showSubagentActivitySheet(context, subagents),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 280),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm,
+                ),
+                decoration: BoxDecoration(
+                  color: codexPanelHighColor(context).withValues(alpha: 0.94),
+                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                  border: Border.all(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.secondary.withValues(alpha: 0.24),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.24),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      active
+                          ? Icons.account_tree_rounded
+                          : Icons.check_circle_rounded,
+                      color: active
+                          ? Theme.of(context).colorScheme.secondary
+                          : CodexColors.greenSoft,
+                      size: 17,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Flexible(
+                      child: Text(
+                        summary,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Icon(
+                      Icons.expand_less_rounded,
+                      color: codexMutedColor(context),
+                      size: 18,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void _showSubagentActivitySheet(
+  BuildContext context,
+  List<AppSubagentInfo> subagents,
+) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    backgroundColor: codexPanelHighColor(context),
+    barrierColor: Colors.black.withValues(alpha: 0.38),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+    ),
+    builder: (context) => _SubagentActivitySheet(subagents: subagents),
+  );
+}
+
+class _SubagentActivitySheet extends StatelessWidget {
+  const _SubagentActivitySheet({required this.subagents});
+
+  final List<AppSubagentInfo> subagents;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 520),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            0,
+            AppSpacing.lg,
+            AppSpacing.lg,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.account_tree_rounded,
+                    color: Theme.of(context).colorScheme.secondary,
+                    size: 19,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      'Subagents',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  Text(
+                    '${subagents.length} ${subagents.length == 1 ? 'item' : 'items'}',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: codexDimColor(context),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: subagents.length,
+                  separatorBuilder: (_, _) =>
+                      const SizedBox(height: AppSpacing.sm),
+                  itemBuilder: (context, index) {
+                    return _SubagentActivityTile(subagent: subagents[index]);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SubagentActivityTile extends StatelessWidget {
+  const _SubagentActivityTile({required this.subagent});
+
+  final AppSubagentInfo subagent;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = subagent.isRunning;
+    final preview = subagent.preview.trim();
+    final role = subagent.agentRole?.trim();
+    return Material(
+      color: codexComposerColor(context).withValues(alpha: 0.44),
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              active ? Icons.sync_rounded : Icons.check_circle_rounded,
+              color: active
+                  ? Theme.of(context).colorScheme.secondary
+                  : CodexColors.greenSoft,
+              size: 18,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          subagent.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      if (active) ...[
+                        const SizedBox(width: AppSpacing.sm),
+                        Text(
+                          'running',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.secondary,
+                              ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (role != null && role.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      role,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: codexMutedColor(context),
+                      ),
+                    ),
+                  ],
+                  if (preview.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      preview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: codexDimColor(context),
+                        height: 1.34,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            TextButton.icon(
+              onPressed: () {
+                final controller = context.read<AppController>();
+                final workdir = controller.activeSession?.workdir ?? '';
+                controller.importAppThread(
+                  subagent.toThreadInfo(workdir: workdir),
+                );
+                Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.open_in_new_rounded, size: 16),
+              label: const Text('Open'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                foregroundColor: Theme.of(context).colorScheme.secondary,
+                textStyle: Theme.of(
+                  context,
+                ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _workspaceOpenPath(String path) {
+  var normalized = path.trim().replaceAll('\\', '/');
+  while (normalized.startsWith('./')) {
+    normalized = normalized.substring(2);
+  }
+  if (normalized.startsWith('a/') || normalized.startsWith('b/')) {
+    normalized = normalized.substring(2);
+  }
+  return normalized;
 }
 
 sealed class _TimelineItem {}
@@ -1727,6 +3614,9 @@ class _PromptComposerState extends State<_PromptComposer> {
     final textController = widget.textController;
     final canEditPrompt = controller.canShowChat;
     final canSendPrompt = controller.isConnected;
+    final hasPromptText = textController.text.trim().isNotEmpty;
+    final hasAttachments = _attachments.isNotEmpty;
+    final canSubmitPrompt = hasPromptText || hasAttachments;
     final light = isCodexLight(context);
     final activeMention = _activeFileMention(textController.value);
     final fileSuggestions =
@@ -1774,14 +3664,28 @@ class _PromptComposerState extends State<_PromptComposer> {
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
+              Builder(
+                builder: (buttonContext) => ChatGptCircleButton(
+                  key: const ValueKey('composer-settings-button'),
+                  icon: Icons.tune_rounded,
+                  size: 44,
+                  background: codexComposerColor(
+                    context,
+                  ).withValues(alpha: 0.82),
+                  onPressed: controller.isConnected
+                      ? () => _showChatSettingsMenu(buttonContext, controller)
+                      : null,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: GlassCard(
                   key: const ValueKey('composer-input-shell'),
                   padding: const EdgeInsets.fromLTRB(
                     AppSpacing.md,
-                    AppSpacing.xxs,
+                    AppSpacing.xxs / 2,
                     AppSpacing.xs,
-                    AppSpacing.xxs,
+                    AppSpacing.xxs / 2,
                   ),
                   radius: AppRadius.xl,
                   color: codexComposerColor(
@@ -1886,12 +3790,29 @@ class _PromptComposerState extends State<_PromptComposer> {
                               shape: const CircleBorder(),
                               clipBehavior: Clip.antiAlias,
                               child: IconButton(
-                                tooltip: 'Send',
+                                tooltip: canSubmitPrompt
+                                    ? 'Send'
+                                    : controller.voiceInputBusy
+                                    ? 'Listening'
+                                    : 'Voice input',
                                 color: Theme.of(context).colorScheme.surface,
                                 iconSize: 18,
-                                icon: const Icon(Icons.arrow_upward_rounded),
+                                icon: controller.voiceInputBusy
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(
+                                        canSubmitPrompt
+                                            ? Icons.arrow_upward_rounded
+                                            : Icons.mic_rounded,
+                                      ),
                                 onPressed: canSendPrompt
-                                    ? () => _submitPrompt(controller)
+                                    ? () => canSubmitPrompt
+                                          ? _submitPrompt(controller)
+                                          : _startVoiceInput(controller)
                                     : null,
                               ),
                             ),
@@ -1992,6 +3913,18 @@ class _PromptComposerState extends State<_PromptComposer> {
           : text,
       attachments: attachments,
     );
+  }
+
+  Future<void> _startVoiceInput(AppController controller) async {
+    final result = await controller.transcribeVoiceInput();
+    if (!mounted || result == null) return;
+    final text = result.text.trim();
+    if (text.isEmpty) return;
+    widget.textController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _handleTextChanged(text);
   }
 
   void _insertFileMention(WorkspaceFileInfo file) {

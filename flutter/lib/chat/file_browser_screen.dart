@@ -11,7 +11,9 @@ import '../protocol/bridge_messages.dart';
 import '../theme/app_theme.dart';
 
 class FileBrowserScreen extends StatefulWidget {
-  const FileBrowserScreen({super.key});
+  const FileBrowserScreen({super.key, this.initialPath});
+
+  final String? initialPath;
 
   @override
   State<FileBrowserScreen> createState() => _FileBrowserScreenState();
@@ -29,7 +31,15 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.read<AppController>().listAppDirectory();
+      final controller = context.read<AppController>();
+      final initialPath = widget.initialPath?.trim();
+      if (initialPath != null && initialPath.isNotEmpty) {
+        controller.readAppFile(initialPath);
+        controller.listAppDirectory(_parentPath(initialPath));
+        setState(() => _mobileEditorVisible = true);
+      } else {
+        controller.listAppDirectory();
+      }
     });
   }
 

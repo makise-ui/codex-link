@@ -79,6 +79,8 @@ class _AppServerActionsScreenState extends State<AppServerActionsScreen> {
               const SizedBox(height: AppSpacing.md),
               _RemoteSection(controller: controller),
               const SizedBox(height: AppSpacing.md),
+              _HostUpdateSection(controller: controller),
+              const SizedBox(height: AppSpacing.md),
               _UsageSection(controller: controller),
               const SizedBox(height: AppSpacing.md),
               _RequestsSection(controller: controller),
@@ -447,6 +449,87 @@ class _UsageSection extends StatelessWidget {
   }
 }
 
+class _HostUpdateSection extends StatelessWidget {
+  const _HostUpdateSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = controller.hostUpdateStatus;
+    final result = controller.hostUpdateResult;
+    final progress = controller.hostUpdateProgress.reversed.take(3).toList();
+    final latest = status?.latestVersion ?? result?.latestVersion;
+    final current = status?.currentVersion ?? result?.previousVersion;
+    final updateAvailable = status?.updateAvailable == true;
+    return _ActionSection(
+      title: 'Host Update',
+      icon: Icons.system_update_alt_rounded,
+      trailing: _TinyButton(
+        label: 'Check',
+        icon: Icons.sync_rounded,
+        onPressed: controller.hostUpdateBusy
+            ? null
+            : controller.refreshHostUpdateStatus,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _CompactLine(
+            icon: updateAvailable
+                ? Icons.new_releases_rounded
+                : Icons.check_circle_rounded,
+            title: status == null
+                ? 'Host package status'
+                : updateAvailable
+                ? 'Update available'
+                : 'Host package current',
+            subtitle: [
+              status?.packageName ?? result?.packageName ?? 'codex-link-host',
+              if (current != null && current.isNotEmpty) 'current $current',
+              if (latest != null && latest.isNotEmpty) 'latest $latest',
+              if (controller.hostUpdateBusy) 'running',
+            ].join(' · '),
+          ),
+          if (controller.hostUpdateErrorText case final error?) ...[
+            const SizedBox(height: AppSpacing.xs),
+            _InlineNotice(text: error, icon: Icons.error_outline_rounded),
+          ],
+          if (result != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            _InlineNotice(
+              text: result.restartRequired
+                  ? '${result.message} Restart the host bridge after this finishes.'
+                  : result.message,
+              icon: result.updated
+                  ? Icons.check_circle_outline_rounded
+                  : Icons.info_outline_rounded,
+            ),
+          ],
+          if (progress.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xs),
+            for (final item in progress)
+              _CompactLine(
+                icon: _hostUpdatePhaseIcon(item.phase),
+                title: item.phase,
+                subtitle: item.line,
+              ),
+          ],
+          const SizedBox(height: AppSpacing.sm),
+          _TinyButton(
+            key: const ValueKey('host-update-run'),
+            label: controller.hostUpdateBusy ? 'Updating' : 'Update host',
+            icon: Icons.download_rounded,
+            onPressed: controller.hostUpdateBusy
+                ? null
+                : controller.runHostUpdate,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _RequestsSection extends StatelessWidget {
   const _RequestsSection({required this.controller});
 
@@ -698,6 +781,7 @@ class _InlineNotice extends StatelessWidget {
 
 class _TinyButton extends StatelessWidget {
   const _TinyButton({
+    super.key,
     required this.label,
     required this.icon,
     required this.onPressed,
@@ -760,4 +844,14 @@ Future<void> _openUrl(String? rawUrl) async {
   final uri = rawUrl == null ? null : Uri.tryParse(rawUrl);
   if (uri == null) return;
   await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+IconData _hostUpdatePhaseIcon(String phase) {
+  return switch (phase) {
+    'checking' => Icons.manage_search_rounded,
+    'installing' => Icons.downloading_rounded,
+    'completed' => Icons.check_circle_outline_rounded,
+    'failed' => Icons.error_outline_rounded,
+    _ => Icons.info_outline_rounded,
+  };
 }

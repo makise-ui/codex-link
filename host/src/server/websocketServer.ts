@@ -404,6 +404,24 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
         send(ws, await options.sessionManager.startAppRemotePairing(message.manualPairingCode));
         return;
       }
+      case "host.update.check": {
+        send(ws, await options.sessionManager.checkHostUpdate());
+        return;
+      }
+      case "host.update.run": {
+        send(ws, await options.sessionManager.runHostUpdate((event) => send(ws, event)));
+        return;
+      }
+      case "shell.command.run": {
+        options.auditLog.record({
+          type: "shell.command.submitted",
+          deviceId: state.device?.id,
+          sessionId: message.sessionId,
+          detail: message.command.slice(0, 240),
+        });
+        send(ws, await options.sessionManager.runShellCommand(message.sessionId, message.command));
+        return;
+      }
       case "command.list": {
         sendCommandList(ws);
         return;

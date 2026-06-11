@@ -1,20 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { exec, execFile } from "node:child_process";
+import { chmod, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { AppServerCodexSession } from "./appServerCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
 import { FileTransferManager, mimeTypeFor } from "./fileTransferManager.js";
+import { HostPackageUpdater } from "./hostUpdater.js";
 import { MockCodexSession } from "./mockCodexSession.js";
 import { SessionStore } from "./sessionStore.js";
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 export class CodexSessionManager {
     options;
     store;
     listeners = new Set();
     adapters = new Map();
     fileTransfers;
+    hostUpdater;
     sessions = new Map();
     messageHistory = new Map();
     workspaces = [];
@@ -27,6 +31,7 @@ export class CodexSessionManager {
             workspaces: options.workspaces,
             maxBytes: 10 * 1024 * 1024,
         });
+        this.hostUpdater = options.hostUpdater ?? new HostPackageUpdater();
     }
     static async create(options) {
         const manager = new CodexSessionManager(options);
@@ -203,6 +208,46 @@ export class CodexSessionManager {
             : await this.readFileFallback(record, absolutePath);
         return { type: "app.fs.file", sessionId: record.sessionId, file };
     }
+    async writeAppFile(sessionId, requestedPath, dataBase64) {
+        const record = this.requireSession(sessionId);
+        this.activeSessionId = sessionId;
+        const absolutePath = this.resolveWorkspacePath(record, requestedPath);
+        const parentPath = path.dirname(absolutePath);
+        const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+        if (adapter.createDirectory) {
+            await adapter.createDirectory(parentPath);
+        }
+        else {
+            await mkdir(parentPath, { recursive: true });
+        }
+        const file = adapter.writeFile
+            ? await adapter.writeFile(absolutePath, dataBase64)
+            : await this.writeFileFallback(record, absolutePath, dataBase64);
+        const result = {
+            type: "app.fs.write.result",
+            sessionId: record.sessionId,
+            file,
+        };
+        return result;
+    }
+    async createAppDirectory(sessionId, requestedPath) {
+        const record = this.requireSession(sessionId);
+        this.activeSessionId = sessionId;
+        const absolutePath = this.resolveWorkspacePath(record, requestedPath);
+        const adapter = this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+        if (adapter.createDirectory) {
+            await adapter.createDirectory(absolutePath);
+        }
+        else {
+            await mkdir(absolutePath, { recursive: true });
+        }
+        const result = {
+            type: "app.fs.directory.created",
+            sessionId: record.sessionId,
+            path: toPosixPath(path.relative(record.workdir, absolutePath)),
+        };
+        return result;
+    }
     async searchAppFiles(sessionId, query, limit = 40) {
         const record = this.requireSession(sessionId);
         this.activeSessionId = sessionId;
@@ -282,6 +327,140 @@ export class CodexSessionManager {
             account: await this.getCodexAccount(false),
         };
     }
+    async readAppRateLimits() {
+        const adapter = this.optionalAdapter();
+        return {
+            type: "app.account.rateLimits",
+            limits: adapter?.readRateLimits ? await adapter.readRateLimits() : [],
+        };
+    }
+    async checkHostUpdate() {
+        return this.hostUpdater.check();
+    }
+    async runHostUpdate(onProgress) {
+        return this.hostUpdater.run(onProgress);
+    }
+    async runShellCommand(sessionId, command) {
+        const record = this.requireSession(sessionId);
+        const trimmed = command.trim();
+        if (!trimmed) {
+            throw new Error("Shell command is required.");
+        }
+        if (!this.options.allowYolo || record.sandbox !== "danger-full-access") {
+            throw new Error("Workspace shell requires yolo mode. Restart the host with --allow-yolo and switch this session to yolo before running shell commands.");
+        }
+        const started = Date.now();
+        try {
+            const result = await execAsync(trimmed, {
+                cwd: record.workdir,
+                timeout: 60_000,
+                maxBuffer: 1024 * 1024,
+                shell: process.env.SHELL || "/bin/sh",
+            });
+            return {
+                type: "shell.command.result",
+                sessionId,
+                command: trimmed,
+                exitCode: 0,
+                stdout: truncateShellOutput(result.stdout),
+                stderr: truncateShellOutput(result.stderr),
+                durationMs: Date.now() - started,
+                cwd: record.workdir,
+            };
+        }
+        catch (error) {
+            const shellError = error;
+            const exitCode = typeof shellError.code === "number" ? shellError.code : 1;
+            const stderr = typeof shellError.stderr === "string" && shellError.stderr.length > 0
+                ? shellError.stderr
+                : typeof shellError.message === "string"
+                    ? shellError.message
+                    : String(error);
+            return {
+                type: "shell.command.result",
+                sessionId,
+                command: trimmed,
+                exitCode,
+                stdout: truncateShellOutput(typeof shellError.stdout === "string" ? shellError.stdout : ""),
+                stderr: truncateShellOutput(stderr),
+                durationMs: Date.now() - started,
+                cwd: record.workdir,
+            };
+        }
+    }
+    async listAppPlugins(sessionId) {
+        const record = this.optionalRecord(sessionId);
+        const adapter = record ? this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record) : undefined;
+        return {
+            type: "app.plugin.list",
+            marketplaces: adapter?.listPlugins ? (await adapter.listPlugins({ cwd: record?.workdir })).marketplaces : [],
+        };
+    }
+    async readAppPlugin(input) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.readPlugin) {
+            throw new Error("The active Codex adapter does not support plugin details.");
+        }
+        return {
+            type: "app.plugin.detail",
+            plugin: await adapter.readPlugin(input),
+        };
+    }
+    async installAppPlugin(input) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.installPlugin) {
+            throw new Error("The active Codex adapter does not support plugin install.");
+        }
+        return {
+            type: "app.plugin.install.result",
+            ...(await adapter.installPlugin(input)),
+        };
+    }
+    async uninstallAppPlugin(pluginName) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.uninstallPlugin) {
+            throw new Error("The active Codex adapter does not support plugin uninstall.");
+        }
+        return {
+            type: "app.plugin.uninstall.result",
+            ...(await adapter.uninstallPlugin(pluginName)),
+        };
+    }
+    async listAppMcpServers(sessionId, detail = "toolsAndAuthOnly") {
+        const record = this.optionalRecord(sessionId);
+        const adapter = record ? this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record) : undefined;
+        return {
+            type: "app.mcp.status.list",
+            servers: adapter?.listMcpServers ? await adapter.listMcpServers({ detail }) : [],
+        };
+    }
+    async startAppMcpOauthLogin(serverName) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.startMcpOauthLogin) {
+            throw new Error("The active Codex adapter does not support MCP OAuth login.");
+        }
+        return {
+            type: "app.mcp.oauth.login.started",
+            ...(await adapter.startMcpOauthLogin(serverName)),
+        };
+    }
+    async readAppRemoteControlStatus() {
+        const adapter = this.optionalAdapter();
+        return {
+            type: "app.remote.status",
+            status: adapter?.readRemoteControlStatus ? await adapter.readRemoteControlStatus() : { enabled: false },
+        };
+    }
+    async startAppRemotePairing(manualPairingCode) {
+        const adapter = this.optionalAdapter();
+        if (!adapter?.startRemoteControlPairing) {
+            throw new Error("The active Codex adapter does not support remote pairing.");
+        }
+        return {
+            type: "app.remote.pairing.started",
+            pairing: await adapter.startRemoteControlPairing({ manualPairingCode }),
+        };
+    }
     getWorkspaces(activeSessionId = this.activeSessionId) {
         const activeWorkspaceId = activeSessionId ? this.sessions.get(activeSessionId)?.workspaceId : undefined;
         return this.workspaces.map((workspace) => ({
@@ -292,8 +471,11 @@ export class CodexSessionManager {
         }));
     }
     async addWorkspace(workspacePath, sessionId, options = {}) {
-        const resolvedPath = path.resolve(workspacePath);
-        if (options.create) {
+        const input = workspacePath.trim();
+        const resolvedPath = isGitWorkspaceReference(input)
+            ? await this.cloneGitWorkspace(input)
+            : path.resolve(input);
+        if (options.create && !isGitWorkspaceReference(input)) {
             await mkdir(resolvedPath, { recursive: true });
         }
         const stats = await stat(resolvedPath);
@@ -458,6 +640,10 @@ export class CodexSessionManager {
         if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort")) {
             record.reasoningEffort = config.reasoningEffort;
         }
+        if (Object.prototype.hasOwnProperty.call(config, "serviceTier")) {
+            const serviceTier = config.serviceTier?.trim();
+            record.serviceTier = serviceTier || undefined;
+        }
         record.updatedAt = new Date().toISOString();
         this.activeSessionId = sessionId;
         await this.saveAndEmit(record);
@@ -564,10 +750,11 @@ export class CodexSessionManager {
     async offerRequestedFile(sessionId, filePath) {
         const record = this.requireSession(sessionId);
         this.activeSessionId = sessionId;
+        const relativePath = await this.resolveRequestedFilePath(record, filePath.trim());
         const offer = await this.fileTransfers.offerWorkspaceFile({
             sessionId: record.sessionId,
             workspaceRoot: record.workdir,
-            relativePath: filePath.trim(),
+            relativePath,
             reason: "requested",
         });
         this.appendHistory(record.sessionId, {
@@ -594,6 +781,33 @@ export class CodexSessionManager {
             query: normalizedQuery,
             files: await scanWorkspaceFiles(record.workdir, normalizedQuery, effectiveLimit),
         };
+    }
+    async setWorkspaceEnv(sessionId, content, targetPath = ".env.local") {
+        const record = this.requireSession(sessionId);
+        this.activeSessionId = sessionId;
+        const envPath = targetPath === ".env" ? ".env" : ".env.local";
+        const parsed = parseEnvAssignments(content);
+        if (parsed.assignments.length === 0) {
+            throw new Error("No valid env assignments were found. Use NAME=value lines.");
+        }
+        const absolutePath = this.resolveWorkspacePath(record, envPath);
+        await this.assertFallbackWritePath(record, absolutePath);
+        const existing = await readFile(absolutePath, "utf8").catch((error) => {
+            if (error.code === "ENOENT")
+                return "";
+            throw error;
+        });
+        await writeFile(absolutePath, mergeEnvFile(existing, parsed.assignments), { mode: 0o600 });
+        await chmod(absolutePath, 0o600);
+        const result = {
+            type: "workspace.env.updated",
+            sessionId: record.sessionId,
+            path: envPath,
+            variableNames: parsed.assignments.map((assignment) => assignment.name),
+            skippedLineCount: parsed.skippedLineCount,
+        };
+        this.emit(result);
+        return result;
     }
     onEvent(listener) {
         this.listeners.add(listener);
@@ -647,6 +861,7 @@ export class CodexSessionManager {
                 sandbox: record.sandbox,
                 model: record.model,
                 reasoningEffort: record.reasoningEffort,
+                serviceTier: record.serviceTier,
                 codexThreadId: record.codexThreadId,
                 onThreadStarted: (threadId) => {
                     void this.updateThreadId(record.sessionId, threadId).catch((error) => {
@@ -839,15 +1054,21 @@ export class CodexSessionManager {
         return prepared;
     }
     optionalAdapter(sessionId) {
+        const record = this.optionalRecord(sessionId);
+        if (!record)
+            return undefined;
+        this.activeSessionId = record.sessionId;
+        return this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+    }
+    optionalRecord(sessionId) {
         const record = sessionId
             ? this.requireSession(sessionId)
             : this.activeSessionId
                 ? this.sessions.get(this.activeSessionId)
                 : this.listSessions()[0];
-        if (!record)
-            return undefined;
-        this.activeSessionId = record.sessionId;
-        return this.adapters.get(record.sessionId)?.session ?? this.adapterFor(record);
+        if (record)
+            this.activeSessionId = record.sessionId;
+        return record;
     }
     resolveWorkspacePath(record, requestedPath) {
         const root = path.resolve(record.workdir);
@@ -856,6 +1077,45 @@ export class CodexSessionManager {
             throw new Error(`Path is outside the active workspace: ${requestedPath}`);
         }
         return target;
+    }
+    async cloneGitWorkspace(gitUrl) {
+        const parent = path.resolve(os.homedir(), ".codex-link", "workspaces");
+        await mkdir(parent, { recursive: true });
+        const baseName = safeGitWorkspaceName(gitUrl);
+        let target = path.join(parent, baseName);
+        let suffix = 2;
+        while (await pathExists(target)) {
+            if (await isGitCheckout(target) && await gitRemoteMatches(target, gitUrl))
+                return target;
+            target = path.join(parent, `${baseName}-${suffix++}`);
+        }
+        await execFileAsync("git", ["clone", "--depth", "1", gitUrl, target], {
+            timeout: 180_000,
+            maxBuffer: 1024 * 1024,
+        });
+        return target;
+    }
+    async resolveRequestedFilePath(record, requestedPath) {
+        const normalized = normalizeFileQuery(requestedPath);
+        if (!normalized)
+            return requestedPath;
+        const exactPath = this.resolveWorkspacePath(record, normalized);
+        const exactStats = await stat(exactPath).catch(() => undefined);
+        if (exactStats?.isFile()) {
+            return toPosixPath(path.relative(record.workdir, exactPath));
+        }
+        if (normalized.includes("/"))
+            return normalized;
+        const matches = await scanWorkspaceFiles(record.workdir, normalized, 20);
+        const lower = normalized.toLowerCase();
+        const exactMatches = matches.filter((file) => file.name.toLowerCase() === lower || file.path.toLowerCase() === lower);
+        const candidates = exactMatches.length > 0 ? exactMatches : matches;
+        if (candidates.length === 1)
+            return candidates[0].path;
+        if (candidates.length > 1) {
+            throw new Error(`Multiple files match ${requestedPath}: ${candidates.slice(0, 5).map((file) => file.path).join(", ")}`);
+        }
+        return normalized;
     }
     async listDirectoryFallback(record, absolutePath) {
         const entries = await readdir(absolutePath, { withFileTypes: true });
@@ -888,6 +1148,27 @@ export class CodexSessionManager {
             text: isLikelyTextFile(bytes, relativePath) ? bytes.toString("utf8") : undefined,
             dataBase64: isLikelyTextFile(bytes, relativePath) ? undefined : bytes.toString("base64"),
         };
+    }
+    async writeFileFallback(record, absolutePath, dataBase64) {
+        const bytes = Buffer.from(dataBase64, "base64");
+        await this.assertFallbackWritePath(record, absolutePath);
+        await writeFile(absolutePath, bytes);
+        return this.readFileFallback(record, absolutePath);
+    }
+    async assertFallbackWritePath(record, absolutePath) {
+        const root = await realpath(record.workdir);
+        const parent = await realpath(path.dirname(absolutePath));
+        if (parent !== root && !parent.startsWith(`${root}${path.sep}`)) {
+            throw new Error(`Path is outside the active workspace: ${path.relative(record.workdir, absolutePath)}`);
+        }
+        const targetStats = await lstat(absolutePath).catch((error) => {
+            if (error.code === "ENOENT")
+                return undefined;
+            throw error;
+        });
+        if (targetStats?.isSymbolicLink()) {
+            throw new Error(`Refusing to write through a symlink: ${path.relative(record.workdir, absolutePath)}`);
+        }
     }
     async closeAdapter(sessionId) {
         const adapter = this.adapters.get(sessionId);
@@ -1006,6 +1287,72 @@ function isImageAttachment(attachment) {
     if (mimeType.startsWith("image/"))
         return true;
     return /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(attachment.name);
+}
+function parseEnvAssignments(content) {
+    const assignments = [];
+    let skippedLineCount = 0;
+    for (const line of content.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) {
+            if (trimmed.startsWith("#"))
+                skippedLineCount += 1;
+            continue;
+        }
+        const body = trimmed.startsWith("export ") ? trimmed.slice("export ".length).trim() : trimmed;
+        const separator = body.indexOf("=");
+        if (separator <= 0) {
+            skippedLineCount += 1;
+            continue;
+        }
+        const name = body.slice(0, separator).trim();
+        const value = body.slice(separator + 1).trim();
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+            skippedLineCount += 1;
+            continue;
+        }
+        assignments.push({ name, value });
+    }
+    return { assignments: uniqueEnvAssignments(assignments), skippedLineCount };
+}
+function uniqueEnvAssignments(assignments) {
+    const byName = new Map();
+    for (const assignment of assignments) {
+        byName.set(assignment.name, assignment);
+    }
+    return [...byName.values()];
+}
+function mergeEnvFile(existing, assignments) {
+    const pending = new Map(assignments.map((assignment) => [assignment.name, assignment]));
+    const seen = new Set();
+    const lines = existing.split(/\r?\n/);
+    if (lines.at(-1) === "")
+        lines.pop();
+    const output = lines.map((line) => {
+        const name = envLineName(line);
+        if (!name || !pending.has(name))
+            return line;
+        const assignment = pending.get(name);
+        seen.add(name);
+        return `${assignment.name}=${assignment.value}`;
+    });
+    for (const assignment of assignments) {
+        if (seen.has(assignment.name))
+            continue;
+        output.push(`${assignment.name}=${assignment.value}`);
+        seen.add(assignment.name);
+    }
+    return `${output.join("\n")}\n`;
+}
+function envLineName(line) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#"))
+        return undefined;
+    const body = trimmed.startsWith("export ") ? trimmed.slice("export ".length).trim() : trimmed;
+    const separator = body.indexOf("=");
+    if (separator <= 0)
+        return undefined;
+    const name = body.slice(0, separator).trim();
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : undefined;
 }
 function isThinkingNoise(text) {
     return text.trim().replace(/\.+$/, "").replace(/…$/, "").toLowerCase() === "thinking";
@@ -1164,6 +1511,8 @@ const DEFAULT_APP_MODELS = [
         defaultReasoningEffort: "medium",
         inputModalities: ["text", "image"],
         supportsPersonality: true,
+        serviceTiers: [],
+        defaultServiceTier: null,
         isDefault: true,
     },
     {
@@ -1176,6 +1525,8 @@ const DEFAULT_APP_MODELS = [
         defaultReasoningEffort: "medium",
         inputModalities: ["text", "image"],
         supportsPersonality: true,
+        serviceTiers: [],
+        defaultServiceTier: null,
         isDefault: false,
     },
 ];
@@ -1264,6 +1615,61 @@ async function scanWorkspaceFiles(workdir, query, limit) {
 }
 function normalizeFileQuery(query) {
     return query.trim().replace(/^@+/, "").replace(/\\/g, "/");
+}
+function isGitWorkspaceReference(value) {
+    const trimmed = value.trim();
+    if (!trimmed)
+        return false;
+    if (/^git@[^:]+:.+\.git$/i.test(trimmed))
+        return true;
+    if (/^ssh:\/\/.+/i.test(trimmed))
+        return true;
+    if (/^file:\/\/.+/i.test(trimmed))
+        return true;
+    if (/^https?:\/\/.+/i.test(trimmed)) {
+        return /\.git(?:[#?].*)?$/i.test(trimmed) || /github\.com|gitlab\.com|bitbucket\.org/i.test(trimmed);
+    }
+    return false;
+}
+function safeGitWorkspaceName(gitUrl) {
+    let candidate = gitUrl.trim();
+    try {
+        const parsed = new URL(candidate);
+        candidate = parsed.pathname.split("/").filter(Boolean).pop() ?? candidate;
+    }
+    catch {
+        candidate = candidate.split(/[/:]/).filter(Boolean).pop() ?? candidate;
+    }
+    candidate = candidate.replace(/\.git$/i, "").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+|-+$/g, "");
+    return candidate || "git-workspace";
+}
+async function pathExists(candidate) {
+    return stat(candidate).then(() => true, () => false);
+}
+async function isGitCheckout(candidate) {
+    const dotGit = path.join(candidate, ".git");
+    return stat(dotGit).then((stats) => stats.isDirectory() || stats.isFile(), () => false);
+}
+async function gitRemoteMatches(candidate, gitUrl) {
+    const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], {
+        cwd: candidate,
+        timeout: 10_000,
+        maxBuffer: 128 * 1024,
+    }).catch(() => ({ stdout: "" }));
+    return normalizeGitRemote(stdout) === normalizeGitRemote(gitUrl);
+}
+function normalizeGitRemote(value) {
+    let remote = value.trim().replace(/\/+$/g, "");
+    if (remote.toLowerCase().endsWith(".git")) {
+        remote = remote.slice(0, -4);
+    }
+    return remote;
+}
+function truncateShellOutput(value) {
+    const max = 256 * 1024;
+    if (value.length <= max)
+        return value;
+    return `${value.slice(0, max)}\n[output truncated]\n`;
 }
 function shouldSkipWorkspaceDirectory(name) {
     return SKIPPED_WORKSPACE_DIRS.has(name);

@@ -14,20 +14,26 @@ export class FileTransferManager {
     }
     async offerWorkspaceFile(input) {
         const workspaceRoot = await this.resolveWorkspaceRoot(input.workspaceRoot);
-        const absolutePath = path.resolve(workspaceRoot, input.relativePath);
+        const relativePath = normalizeWorkspaceRelativePath(input.relativePath);
+        const absolutePath = path.resolve(workspaceRoot, relativePath);
         if (!isInsideDirectory(absolutePath, workspaceRoot)) {
-            throw new Error(`File is outside workspace: ${input.relativePath}`);
+            throw new Error(`File is outside workspace: ${relativePath}`);
         }
-        const resolvedFile = await realpath(absolutePath);
+        const resolvedFile = await realpath(absolutePath).catch((error) => {
+            if (error.code === "ENOENT") {
+                throw new Error(`File was not found in workspace: ${relativePath}`);
+            }
+            throw error;
+        });
         if (!isInsideDirectory(resolvedFile, workspaceRoot)) {
-            throw new Error(`File is outside workspace: ${input.relativePath}`);
+            throw new Error(`File is outside workspace: ${relativePath}`);
         }
         const stats = await stat(resolvedFile);
         if (!stats.isFile()) {
-            throw new Error(`File is not downloadable: ${input.relativePath}`);
+            throw new Error(`File is not downloadable: ${relativePath}`);
         }
         if (stats.size > this.maxBytes) {
-            throw new Error(`File is too large to download: ${input.relativePath}`);
+            throw new Error(`File is too large to download: ${relativePath}`);
         }
         const fileId = randomUUID();
         const offer = {
@@ -74,6 +80,22 @@ export class FileTransferManager {
         }
         return resolved;
     }
+}
+function normalizeWorkspaceRelativePath(value) {
+    const normalized = value.trim().replace(/\\/g, "/").replace(/^@+/, "").trim();
+    if (!normalized) {
+        throw new Error("File must be a workspace-relative path.");
+    }
+    if (normalized === "~" || normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+        throw new Error(`File must be a workspace-relative path, not a home directory path: ${normalized}`);
+    }
+    if (path.isAbsolute(normalized) || /^[A-Za-z]:[\\/]/.test(normalized)) {
+        throw new Error(`File must be a workspace-relative path, not an absolute path: ${normalized}`);
+    }
+    if (normalized.includes("\0")) {
+        throw new Error("File path contains an invalid null byte.");
+    }
+    return normalized;
 }
 function publicOffer(offer) {
     return {

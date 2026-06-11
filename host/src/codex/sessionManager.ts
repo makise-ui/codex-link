@@ -1,19 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { chmod, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { SessionMode, WorkspaceConfig } from "../config.js";
-import type { AppAccountLoginCancelledMessage, AppAccountLoginStartedMessage, AppAccountRateLimitsMessage, AppAccountStatusMessage, AppFileSearchResultsMessage, AppFsDirectoryCreatedMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppFsWriteResultMessage, AppMcpOauthLoginStartedMessage, AppMcpStatusListMessage, AppModelListMessage, AppModelRecord, AppPluginDetailMessage, AppPluginInstallResultMessage, AppPluginListMessage, AppPluginUninstallResultMessage, AppProviderCapabilitiesRecord, AppRemotePairingStartedMessage, AppRemoteStatusMessage, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, CodexAccountInfo, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, StoredChatMessage, WorkspaceEnvUpdatedMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
+import type { AppAccountLoginCancelledMessage, AppAccountLoginStartedMessage, AppAccountRateLimitsMessage, AppAccountStatusMessage, AppFileSearchResultsMessage, AppFsDirectoryCreatedMessage, AppFsEntryRecord, AppFsFileMessage, AppFsListMessage, AppFsWriteResultMessage, AppMcpOauthLoginStartedMessage, AppMcpStatusListMessage, AppModelListMessage, AppModelRecord, AppPluginDetailMessage, AppPluginInstallResultMessage, AppPluginListMessage, AppPluginUninstallResultMessage, AppProviderCapabilitiesRecord, AppRemotePairingStartedMessage, AppRemoteStatusMessage, AppReviewStartedMessage, AppSkillListMessage, AppThreadListMessage, AppThreadRecord, CodexAccountInfo, DiffAvailableMessage, ExternalSessionRecord, FileDownloadMessage, FileOfferMessage, PromptAttachment, ReasoningEffort, RunMode, SandboxMode, ServerMessage, SessionGoalRecord, SessionRecord, ShellCommandResultMessage, StoredChatMessage, WorkspaceEnvUpdatedMessage, WorkspaceFileRecord, WorkspaceFileSearchResultsMessage, WorkspaceRecord } from "../protocol/messages.js";
 import type { AccountLoginStartInput, AppPluginLocatorInput, CodexEvent, CodexSession, GoalSetInput, PreparedAttachment, SendPromptResult } from "./codexSession.js";
 import { AppServerCodexSession } from "./appServerCodexSession.js";
 import { findExternalSession, listExternalSessions, readExternalSessionHistory } from "./externalSessions.js";
 import { FileTransferManager, mimeTypeFor } from "./fileTransferManager.js";
+import { HostPackageUpdater, type HostUpdateProgressCallback } from "./hostUpdater.js";
 import { MockCodexSession } from "./mockCodexSession.js";
 import { SessionStore } from "./sessionStore.js";
 
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 type Listener = (event: ServerMessage) => void;
 
@@ -29,6 +31,7 @@ export type CodexSessionManagerOptions = {
   stateDir: string;
   defaultSandbox: SandboxMode;
   allowYolo: boolean;
+  hostUpdater?: HostPackageUpdater;
 };
 
 export class CodexSessionManager {
@@ -36,6 +39,7 @@ export class CodexSessionManager {
   private readonly listeners = new Set<Listener>();
   private readonly adapters = new Map<string, ManagedAdapter>();
   private readonly fileTransfers: FileTransferManager;
+  private readonly hostUpdater: HostPackageUpdater;
   private sessions = new Map<string, SessionRecord>();
   private messageHistory = new Map<string, StoredChatMessage[]>();
   private workspaces: WorkspaceConfig[] = [];
@@ -48,6 +52,7 @@ export class CodexSessionManager {
       workspaces: options.workspaces,
       maxBytes: 10 * 1024 * 1024,
     });
+    this.hostUpdater = options.hostUpdater ?? new HostPackageUpdater();
   }
 
   static async create(options: CodexSessionManagerOptions): Promise<CodexSessionManager> {
@@ -370,6 +375,62 @@ export class CodexSessionManager {
       type: "app.account.rateLimits",
       limits: adapter?.readRateLimits ? await adapter.readRateLimits() : [],
     };
+  }
+
+  async checkHostUpdate() {
+    return this.hostUpdater.check();
+  }
+
+  async runHostUpdate(onProgress: HostUpdateProgressCallback) {
+    return this.hostUpdater.run(onProgress);
+  }
+
+  async runShellCommand(sessionId: string, command: string): Promise<ShellCommandResultMessage> {
+    const record = this.requireSession(sessionId);
+    const trimmed = command.trim();
+    if (!trimmed) {
+      throw new Error("Shell command is required.");
+    }
+    if (!this.options.allowYolo || record.sandbox !== "danger-full-access") {
+      throw new Error("Workspace shell requires yolo mode. Restart the host with --allow-yolo and switch this session to yolo before running shell commands.");
+    }
+    const started = Date.now();
+    try {
+      const result = await execAsync(trimmed, {
+        cwd: record.workdir,
+        timeout: 60_000,
+        maxBuffer: 1024 * 1024,
+        shell: process.env.SHELL || "/bin/sh",
+      });
+      return {
+        type: "shell.command.result",
+        sessionId,
+        command: trimmed,
+        exitCode: 0,
+        stdout: truncateShellOutput(result.stdout),
+        stderr: truncateShellOutput(result.stderr),
+        durationMs: Date.now() - started,
+        cwd: record.workdir,
+      };
+    } catch (error) {
+      const shellError = error as { code?: unknown; signal?: unknown; stdout?: unknown; stderr?: unknown; message?: unknown };
+      const exitCode = typeof shellError.code === "number" ? shellError.code : 1;
+      const stderr = typeof shellError.stderr === "string" && shellError.stderr.length > 0
+        ? shellError.stderr
+        : typeof shellError.message === "string"
+          ? shellError.message
+          : String(error);
+      return {
+        type: "shell.command.result",
+        sessionId,
+        command: trimmed,
+        exitCode,
+        stdout: truncateShellOutput(typeof shellError.stdout === "string" ? shellError.stdout : ""),
+        stderr: truncateShellOutput(stderr),
+        durationMs: Date.now() - started,
+        cwd: record.workdir,
+      };
+    }
   }
 
   async listAppPlugins(sessionId?: string): Promise<AppPluginListMessage> {
@@ -1730,6 +1791,12 @@ function normalizeGitRemote(value: string): string {
     remote = remote.slice(0, -4);
   }
   return remote;
+}
+
+function truncateShellOutput(value: string): string {
+  const max = 256 * 1024;
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}\n[output truncated]\n`;
 }
 
 function shouldSkipWorkspaceDirectory(name: string): boolean {

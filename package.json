@@ -4,9 +4,14 @@
   "private": true,
   "description": "Mobile Codex controller with a Flutter app and secure host bridge.",
   "scripts": {
-    "dev:host": "pnpm --filter @codex-lan/host dev",
-    "test:host": "pnpm --filter @codex-lan/host test",
-    "typecheck:host": "pnpm --filter @codex-lan/host typecheck"
+    "dev:host": "pnpm --dir host dev",
+    "test:host": "pnpm --dir host test",
+    "typecheck:host": "pnpm --dir host typecheck",
+    "pack:host": "sh -c 'cd host && npm pack'",
+    "publish:host": "sh -c 'cd host && npm publish --access public'",
+    "publish:host:dry-run": "sh -c 'cd host && npm publish --access public --dry-run'",
+    "update:host": "scripts/update-host.sh",
+    "update:host:dry-run": "scripts/update-host.sh --dry-run"
   },
   "packageManager": "pnpm@9.15.0"
 }

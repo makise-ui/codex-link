@@ -18,21 +18,9 @@ export const COMMAND_CATALOG = [
         category: "session",
     },
     {
-        commandId: "codex.sessions",
-        title: "sessions",
-        description: "Open session history and imported Codex sessions.",
-        category: "session",
-    },
-    {
         commandId: "codex.new",
         title: "new",
         description: "Create a new session in the active workspace.",
-        category: "session",
-    },
-    {
-        commandId: "codex.workspace",
-        title: "workspace",
-        description: "Open workspace selection, add folders, and create workspaces.",
         category: "session",
     },
     {
@@ -42,34 +30,10 @@ export const COMMAND_CATALOG = [
         category: "agent",
     },
     {
-        commandId: "codex.skills",
-        title: "skills",
-        description: "Open enabled Codex skills for the active workspace.",
-        category: "session",
-    },
-    {
-        commandId: "codex.files",
-        title: "files",
-        description: "Browse and preview files from the active workspace.",
-        category: "session",
-    },
-    {
-        commandId: "codex.history",
-        title: "history",
-        description: "Open app-server and external Codex session history.",
-        category: "session",
-    },
-    {
-        commandId: "codex.approvals",
-        title: "approvals",
-        description: "Jump to pending command approvals for the current run.",
-        category: "session",
-    },
-    {
-        commandId: "codex.tunnel",
-        title: "tunnel",
-        description: "Open tunnel, local URL, and host connection details.",
-        category: "session",
+        commandId: "codex.init",
+        title: "init",
+        description: "Initialize Codex context for this workspace.",
+        category: "agent",
     },
     {
         commandId: "codex.doctor",
@@ -138,6 +102,8 @@ export function promptForCommand(commandId) {
             return "Summarize the current Codex session status: active goal, latest progress, running or pending work, blockers, changed files, verification status, and the next best action.";
         case "codex.diff":
             return "Inspect the current workspace diff and summarize what changed, grouped by feature or bug fix. Mention risky files and tests that should be run.";
+        case "codex.init":
+            return "Initialize this workspace for Codex: inspect the project structure, identify setup, build, and test commands, summarize project conventions, and propose AGENTS.md content if it would help. Do not create or modify AGENTS.md unless I approve.";
         case "codex.compact":
             return "Compact this session into a concise handoff summary with: current goal, decisions made, changed files, commands run, remaining risks, and exact next steps.";
         case "codex.model":

@@ -10,6 +10,7 @@ import 'services/download_saver.dart';
 import 'services/pairing_parser.dart';
 import 'services/secure_credentials_store.dart';
 import 'services/update_service.dart';
+import 'services/voice_transcription_service.dart';
 
 class AppNotice {
   const AppNotice({
@@ -27,6 +28,8 @@ class AppNotice {
   final DateTime createdAt;
 }
 
+enum AppNotificationCategory { plan, task, goal, update, remote, error, other }
+
 class AppController extends ChangeNotifier {
   AppController({
     BridgeSocketClient? socket,
@@ -34,12 +37,15 @@ class AppController extends ChangeNotifier {
     FileDownloadSaver? downloadSaver,
     AppNotifier? notifier,
     AppUpdateService? updateService,
+    VoiceTranscriptionService? voiceTranscriptionService,
     Duration autoReconnectDelay = const Duration(seconds: 3),
   }) : _socket = socket ?? BridgeSocketClient(),
        _store = store ?? SecureCredentialsStore(),
        _downloadSaver = downloadSaver ?? const PickerFileDownloadSaver(),
        _notifier = notifier ?? LocalAppNotifier(),
        _updateService = updateService ?? GitHubAppUpdateService(),
+       _voiceTranscriptionService =
+           voiceTranscriptionService ?? SpeechToTextVoiceTranscriptionService(),
        _autoReconnectDelay = autoReconnectDelay;
 
   final BridgeSocketClient _socket;
@@ -47,6 +53,7 @@ class AppController extends ChangeNotifier {
   final FileDownloadSaver _downloadSaver;
   final AppNotifier _notifier;
   final AppUpdateService _updateService;
+  final VoiceTranscriptionService _voiceTranscriptionService;
   final Duration _autoReconnectDelay;
   final _uuid = const Uuid();
 
@@ -63,10 +70,21 @@ class AppController extends ChangeNotifier {
   final Set<String> _downloadsRequestedForSave = {};
   final Map<String, String> _lastGoalEventBySession = {};
   final Map<String, CodexPlanInfo> _plansBySession = {};
+  final Map<String, List<AppSubagentInfo>> _subagentsBySession = {};
   final Set<String> _runNoticeSignatures = {};
   bool _isAppForeground = true;
   String? latestErrorText;
   AppNotice? latestNotice;
+  int inAppNoticeDurationSeconds = 6;
+  final Set<AppNotificationCategory> _enabledNotificationCategories = {
+    AppNotificationCategory.plan,
+    AppNotificationCategory.task,
+    AppNotificationCategory.goal,
+    AppNotificationCategory.update,
+    AppNotificationCategory.remote,
+    AppNotificationCategory.error,
+    AppNotificationCategory.other,
+  };
   UpdateCheckStatus updateStatus = UpdateCheckStatus.idle;
   AppUpdateInfo? availableUpdate;
   String? updateErrorText;
@@ -96,9 +114,19 @@ class AppController extends ChangeNotifier {
   AppMcpOauthLoginInfo? appMcpOauthLogin;
   AppRemoteStatusInfo? appRemoteStatus;
   AppRemotePairingInfo? appRemotePairing;
+  HostUpdateStatusInfo? hostUpdateStatus;
+  HostUpdateResultInfo? hostUpdateResult;
+  final List<HostUpdateProgressInfo> hostUpdateProgress = [];
+  bool hostUpdateBusy = false;
+  String? hostUpdateErrorText;
   final List<AppRateLimitInfo> appRateLimits = [];
+  final List<ShellCommandResultInfo> shellHistory = [];
   bool appFsBusy = false;
   String? appFsStatusText;
+  bool shellBusy = false;
+  String? shellStatusText;
+  bool voiceInputBusy = false;
+  String? voiceInputStatusText;
   final List<FileOfferInfo> fileOffers = [];
   final List<DownloadedFileInfo> downloadedFiles = [];
   final Map<String, String> savedFilePaths = {};
@@ -109,6 +137,7 @@ class AppController extends ChangeNotifier {
   AppFsFileInfo? appPreviewFile;
   String accentName = 'neutral';
   String themeName = 'dark';
+  String chatTextSize = 'large';
 
   CodexSessionInfo? get activeSession {
     final id = activeSessionId;
@@ -128,6 +157,12 @@ class AppController extends ChangeNotifier {
     final plan = _plansBySession[id];
     if (plan == null || plan.text.trim().isEmpty) return null;
     return plan;
+  }
+
+  List<AppSubagentInfo> get activeSubagents {
+    final id = activeSession?.sessionId;
+    if (id == null) return const [];
+    return _subagentsBySession[id] ?? const [];
   }
 
   List<ChatMessage> get pendingApprovals => activeMessages
@@ -150,6 +185,15 @@ class AppController extends ChangeNotifier {
     if (!isConnected || session == null) return false;
     return session.isRunning ||
         _activeRunIdForSession(session.sessionId) != null;
+  }
+
+  double get chatTextScale {
+    return switch (chatTextSize) {
+      'compact' => 1.0,
+      'xl' => 1.22,
+      'large' => 1.12,
+      _ => 1.08,
+    };
   }
 
   String latestAssistantPreview({int maxLines = 3, int maxChars = 220}) {
@@ -181,12 +225,14 @@ class AppController extends ChangeNotifier {
           'Update available',
           '${update.title} is ready to download.',
           payload: 'update:${update.latestVersion}',
+          category: AppNotificationCategory.update,
         );
       } else if (!silent) {
         _showNotice(
           'App is current',
           'Codex Link ${update.currentVersion} is up to date.',
           payload: 'update:current',
+          category: AppNotificationCategory.update,
         );
       }
     } catch (error) {
@@ -197,6 +243,7 @@ class AppController extends ChangeNotifier {
           'Update check failed',
           _compactPreview(error.toString(), maxLines: 2, maxChars: 160),
           payload: 'update:error',
+          category: AppNotificationCategory.error,
         );
       }
     }
@@ -213,6 +260,7 @@ class AppController extends ChangeNotifier {
           'Could not open update',
           'Open the GitHub release from Settings.',
           payload: 'update:open-failed',
+          category: AppNotificationCategory.error,
         );
       }
     } catch (error) {
@@ -221,6 +269,7 @@ class AppController extends ChangeNotifier {
         'Could not open update',
         _compactPreview(error.toString(), maxLines: 2, maxChars: 160),
         payload: 'update:open-error',
+        category: AppNotificationCategory.error,
       );
     }
     notifyListeners();
@@ -234,6 +283,7 @@ class AppController extends ChangeNotifier {
           'Could not open GitHub',
           'Open github.com/makise-ui/codex-link in your browser.',
           payload: 'github:open-failed',
+          category: AppNotificationCategory.error,
         );
       }
     } catch (error) {
@@ -241,6 +291,7 @@ class AppController extends ChangeNotifier {
         'Could not open GitHub',
         _compactPreview(error.toString(), maxLines: 2, maxChars: 160),
         payload: 'github:open-error',
+        category: AppNotificationCategory.error,
       );
     }
     notifyListeners();
@@ -253,6 +304,29 @@ class AppController extends ChangeNotifier {
   void clearLatestNotice() {
     if (latestNotice == null) return;
     latestNotice = null;
+    notifyListeners();
+  }
+
+  bool notificationCategoryEnabled(AppNotificationCategory category) {
+    return _enabledNotificationCategories.contains(category);
+  }
+
+  void setNotificationCategoryEnabled(
+    AppNotificationCategory category,
+    bool enabled,
+  ) {
+    final changed = enabled
+        ? _enabledNotificationCategories.add(category)
+        : _enabledNotificationCategories.remove(category);
+    if (!changed) return;
+    notifyListeners();
+  }
+
+  void setInAppNoticeDurationSeconds(int seconds) {
+    const allowed = {2, 3, 5, 6, 8, 12};
+    final normalized = allowed.contains(seconds) ? seconds : 6;
+    if (inAppNoticeDurationSeconds == normalized) return;
+    inAppNoticeDurationSeconds = normalized;
     notifyListeners();
   }
 
@@ -435,6 +509,7 @@ class AppController extends ChangeNotifier {
     refreshAppMcpServers();
     refreshRemoteControlStatus();
     refreshAppRateLimits();
+    refreshHostUpdateStatus();
   }
 
   void refreshAppPlugins() {
@@ -541,6 +616,22 @@ class AppController extends ChangeNotifier {
     appServerActionsErrorText = null;
     notifyListeners();
     _send({'type': 'app.account.rateLimits.read'});
+  }
+
+  void refreshHostUpdateStatus() {
+    hostUpdateBusy = true;
+    hostUpdateErrorText = null;
+    notifyListeners();
+    _send({'type': 'host.update.check'});
+  }
+
+  void runHostUpdate() {
+    hostUpdateBusy = true;
+    hostUpdateErrorText = null;
+    hostUpdateResult = null;
+    hostUpdateProgress.clear();
+    notifyListeners();
+    _send({'type': 'host.update.run'});
   }
 
   void refreshCodexAccount({bool refreshToken = false}) {
@@ -829,6 +920,55 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setChatTextSize(String size) {
+    const allowed = {'compact', 'default', 'large', 'xl'};
+    final normalized = allowed.contains(size) ? size : 'large';
+    if (chatTextSize == normalized) return;
+    chatTextSize = normalized;
+    notifyListeners();
+  }
+
+  void runShellCommand(String command) {
+    final sessionId = activeSession?.sessionId;
+    final trimmed = command.trim();
+    if (!isConnected || sessionId == null || trimmed.isEmpty || shellBusy) {
+      return;
+    }
+    shellBusy = true;
+    shellStatusText = 'Running $trimmed...';
+    notifyListeners();
+    _send({
+      'type': 'shell.command.run',
+      'sessionId': sessionId,
+      'command': trimmed,
+    });
+  }
+
+  Future<VoiceTranscriptionResult?> transcribeVoiceInput() async {
+    if (voiceInputBusy) return null;
+    voiceInputBusy = true;
+    voiceInputStatusText = 'Listening...';
+    latestErrorText = null;
+    notifyListeners();
+    try {
+      final result = await _voiceTranscriptionService.transcribeOnce();
+      voiceInputBusy = false;
+      voiceInputStatusText = null;
+      notifyListeners();
+      return result.text.trim().isEmpty ? null : result;
+    } catch (error) {
+      voiceInputBusy = false;
+      voiceInputStatusText = null;
+      latestErrorText = _compactPreview(
+        error.toString(),
+        maxLines: 2,
+        maxChars: 160,
+      );
+      notifyListeners();
+      return null;
+    }
+  }
+
   void runCommand(CodexCommandInfo command) {
     switch (command.commandId) {
       case 'codex.stop':
@@ -1076,6 +1216,9 @@ class AppController extends ChangeNotifier {
       case 'session.plan.updated':
         _applyPlanUpdated(message);
         break;
+      case 'session.subagents.updated':
+        _applySubagentsUpdated(message);
+        break;
       case 'session.deleted':
         _deleteLocalSession(message['sessionId'] as String? ?? '');
         break;
@@ -1162,6 +1305,37 @@ class AppController extends ChangeNotifier {
         appServerActionsBusy = false;
         appServerActionsErrorText = null;
         break;
+      case 'host.update.status':
+        hostUpdateStatus = HostUpdateStatusInfo.fromJson(message);
+        hostUpdateBusy = hostUpdateStatus?.updateRunning ?? false;
+        hostUpdateErrorText = hostUpdateStatus?.error;
+        break;
+      case 'host.update.progress':
+        final progress = HostUpdateProgressInfo.fromJson(message);
+        hostUpdateProgress.add(progress);
+        hostUpdateBusy =
+            progress.phase != 'completed' && progress.phase != 'failed';
+        break;
+      case 'host.update.result':
+        hostUpdateResult = HostUpdateResultInfo.fromJson(message);
+        hostUpdateBusy = false;
+        hostUpdateErrorText = hostUpdateResult?.updated == true
+            ? null
+            : hostUpdateResult?.message;
+        _showNotice(
+          hostUpdateResult?.updated == true
+              ? 'Host update finished'
+              : 'Host update skipped',
+          hostUpdateResult?.message ?? 'Host update finished.',
+          payload: 'host:update',
+          category: AppNotificationCategory.update,
+        );
+        break;
+      case 'shell.command.result':
+        shellHistory.add(ShellCommandResultInfo.fromJson(message));
+        shellBusy = false;
+        shellStatusText = null;
+        break;
       case 'app.plugin.list':
         appPluginMarketplaces
           ..clear()
@@ -1194,6 +1368,7 @@ class AppController extends ChangeNotifier {
               : 'Plugin install updated',
           appPluginInstallResult?.pluginName ?? 'Plugin action finished.',
           payload: 'plugin:install',
+          category: AppNotificationCategory.other,
         );
         break;
       case 'app.plugin.uninstall.result':
@@ -1203,6 +1378,7 @@ class AppController extends ChangeNotifier {
           'Plugin removed',
           message['pluginName'] as String? ?? 'Plugin removed.',
           payload: 'plugin:uninstall',
+          category: AppNotificationCategory.other,
         );
         break;
       case 'app.mcp.status.list':
@@ -1226,6 +1402,7 @@ class AppController extends ChangeNotifier {
           'MCP login ready',
           appMcpOauthLogin?.loginUrl ?? appMcpOauthLogin?.serverName ?? '',
           payload: 'mcp:oauth',
+          category: AppNotificationCategory.other,
         );
         break;
       case 'app.remote.status':
@@ -1251,6 +1428,7 @@ class AppController extends ChangeNotifier {
               appRemotePairing?.pairingCode ??
               '',
           payload: 'remote:pairing',
+          category: AppNotificationCategory.remote,
         );
         break;
       case 'app.thread.list':
@@ -1444,6 +1622,10 @@ class AppController extends ChangeNotifier {
       (sessionId, _) =>
           !sessions.any((session) => session.sessionId == sessionId),
     );
+    _subagentsBySession.removeWhere(
+      (sessionId, _) =>
+          !sessions.any((session) => session.sessionId == sessionId),
+    );
     _syncActiveRunId();
   }
 
@@ -1494,6 +1676,7 @@ class AppController extends ChangeNotifier {
       'Env secrets saved',
       envSecretsStatusText!,
       payload: 'workspace-env:saved',
+      category: AppNotificationCategory.other,
     );
   }
 
@@ -1542,12 +1725,14 @@ class AppController extends ChangeNotifier {
         'Codex API key saved',
         'The host Codex account is configured.',
         payload: 'codex-account:api-key',
+        category: AppNotificationCategory.other,
       );
     } else if (flow?.isDeviceCode == true && flow?.userCode != null) {
       _showNotice(
         'Codex device code ready',
         flow!.userCode!,
         payload: 'codex-account:device-code',
+        category: AppNotificationCategory.other,
       );
     }
   }
@@ -1568,6 +1753,7 @@ class AppController extends ChangeNotifier {
           ? 'The login request was no longer active.'
           : 'The login request was cancelled.',
       payload: 'codex-account:cancelled',
+      category: AppNotificationCategory.other,
     );
   }
 
@@ -1586,6 +1772,9 @@ class AppController extends ChangeNotifier {
           ? 'The host Codex account is ready.'
           : _compactPreview(codexAccountErrorText ?? 'Codex login failed.'),
       payload: 'codex-account:completed',
+      category: success
+          ? AppNotificationCategory.other
+          : AppNotificationCategory.error,
     );
     if (success) {
       refreshCodexAccount(refreshToken: true);
@@ -1648,7 +1837,12 @@ class AppController extends ChangeNotifier {
             createdAt: DateTime.now(),
           ),
         );
-    _showNotice(title, _compactPreview(details), payload: 'goal:$sessionId');
+    _showNotice(
+      title,
+      _compactPreview(details),
+      payload: 'goal:$sessionId',
+      category: AppNotificationCategory.goal,
+    );
   }
 
   void _applyGoalCleared(Map<String, dynamic> message) {
@@ -1688,7 +1882,25 @@ class AppController extends ChangeNotifier {
       'Plan updated',
       _compactPreview(plan.text, maxLines: 1),
       payload: 'plan:$sessionId',
+      category: AppNotificationCategory.plan,
     );
+  }
+
+  void _applySubagentsUpdated(Map<String, dynamic> message) {
+    final sessionId = _sessionIdForMessage(message);
+    if (sessionId == null) return;
+    final subagents = (message['subagents'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => AppSubagentInfo.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .where((item) => item.threadId.trim().isNotEmpty)
+        .toList(growable: false);
+    if (subagents.isEmpty) {
+      _subagentsBySession.remove(sessionId);
+      return;
+    }
+    _subagentsBySession[sessionId] = subagents;
   }
 
   void _deleteLocalSession(String sessionId) {
@@ -1697,6 +1909,7 @@ class AppController extends ChangeNotifier {
     _activeRunIdsBySession.remove(sessionId);
     _lastGoalEventBySession.remove(sessionId);
     _plansBySession.remove(sessionId);
+    _subagentsBySession.remove(sessionId);
     if (activeSessionId == sessionId) {
       activeSessionId = sessions.isEmpty ? null : sessions.first.sessionId;
     }
@@ -1764,7 +1977,10 @@ class AppController extends ChangeNotifier {
     if (list == null) return;
     final index = list.indexWhere((item) => item.id == messageId);
     if (index >= 0) {
-      list[index] = list[index].copyWith(complete: true);
+      list[index] = list[index].copyWith(
+        complete: true,
+        completedAt: DateTime.now(),
+      );
     }
   }
 
@@ -1996,7 +2212,13 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _showNotice(String title, String body, {String? payload}) {
+  void _showNotice(
+    String title,
+    String body, {
+    String? payload,
+    AppNotificationCategory category = AppNotificationCategory.other,
+  }) {
+    if (!notificationCategoryEnabled(category)) return;
     final normalizedTitle = title.trim();
     final normalizedBody = body.trim();
     if (normalizedTitle.isEmpty || normalizedBody.isEmpty) return;
@@ -2055,6 +2277,7 @@ class AppController extends ChangeNotifier {
     final sessionId = _sessionIdForMessage(message);
     final runId = message['runId'] as String?;
     if (sessionId == null || runId == null || runId.isEmpty) return;
+    _subagentsBySession.remove(sessionId);
     _activeRunIdsBySession[sessionId] = runId;
     _updateSessionRunState(
       sessionId,
@@ -2103,6 +2326,7 @@ class AppController extends ChangeNotifier {
         runId.isEmpty ||
         currentRunId == null ||
         currentRunId == runId) {
+      _subagentsBySession.remove(sessionId);
       _activeRunIdsBySession.remove(sessionId);
       _updateSessionRunState(
         sessionId,
@@ -2130,7 +2354,12 @@ class AppController extends ChangeNotifier {
             _ => 'The run completed.',
           }
         : preview;
-    _showNotice(title, body, payload: 'run:$sessionId:${runId ?? ''}');
+    _showNotice(
+      title,
+      body,
+      payload: 'run:$sessionId:${runId ?? ''}',
+      category: AppNotificationCategory.task,
+    );
   }
 
   void _updateSessionRunState(

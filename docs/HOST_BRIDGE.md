@@ -13,10 +13,16 @@ The host bridge is the policy and transport layer between the Flutter app and Co
 
 ## Common Commands
 
+Install the published host package:
+
+```bash
+npm install -g codex-link-host
+```
+
 Start a real Codex app-server session:
 
 ```bash
-pnpm --filter @codex-lan/host dev -- \
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode app-server \
@@ -28,7 +34,7 @@ pnpm --filter @codex-lan/host dev -- \
 Start with mock sessions for UI testing:
 
 ```bash
-pnpm --filter @codex-lan/host dev -- \
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode mock
@@ -37,7 +43,7 @@ pnpm --filter @codex-lan/host dev -- \
 Start with extra workspaces:
 
 ```bash
-pnpm --filter @codex-lan/host dev -- \
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode app-server \
@@ -106,7 +112,7 @@ Default sessions use the configured sandbox, usually `workspace-write`.
 To expose the app's yolo toggle:
 
 ```bash
-pnpm --filter @codex-lan/host dev -- \
+codex-link-host \
   --pair \
   --insecure-ws-dev \
   --session-mode app-server \
@@ -123,4 +129,48 @@ Yolo maps that session to Codex `danger-full-access` with approvals disabled. Us
 pnpm --dir host test
 pnpm --dir host typecheck
 pnpm --dir host build
+pnpm pack:host
+pnpm publish:host:dry-run
+```
+
+## Updating the Host
+
+For npm-installed hosts, update the global package:
+
+```bash
+npm update -g codex-link-host
+```
+
+If npm does not move to the newest version, install the latest published tag
+explicitly:
+
+```bash
+npm install -g codex-link-host@latest
+```
+
+If the host runs under a service manager, restart that service after updating:
+
+```bash
+systemctl --user restart codex-link
+```
+
+For source checkouts, the repo-local updater is still available:
+
+```bash
+scripts/update-host.sh --skip-pull
+```
+
+## Publishing the Host Package
+
+Check the package contents without publishing:
+
+```bash
+pnpm publish:host:dry-run
+```
+
+Publish the public npm package after logging into npm:
+
+```bash
+npm login
+pnpm publish:host
 ```

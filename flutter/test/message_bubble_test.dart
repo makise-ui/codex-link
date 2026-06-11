@@ -3,6 +3,7 @@ import 'package:codex_lan_flutter/chat/message_bubble.dart';
 import 'package:codex_lan_flutter/protocol/bridge_messages.dart';
 import 'package:codex_lan_flutter/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -60,6 +61,61 @@ void main() {
 
     expect(find.text('Checked repository shape.'), findsOneWidget);
     expect(find.byIcon(Icons.psychology_alt_rounded), findsOneWidget);
+  });
+
+  testWidgets('streams active reasoning summary text in chat', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'reasoning-active',
+              role: ChatRole.system,
+              kind: AgentMessageKind.reasoning,
+              text: 'Reading the app-server event stream.',
+              createdAt: DateTime(2026),
+              title: 'Thinking summary',
+              complete: false,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Reading the app-server event stream.'), findsOneWidget);
+    expect(find.textContaining('Thought for'), findsNothing);
+  });
+
+  testWidgets('collapses completed reasoning summary to thought duration', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'reasoning-complete',
+              role: ChatRole.system,
+              kind: AgentMessageKind.reasoning,
+              text: 'Checked repository shape.',
+              createdAt: DateTime(2026),
+              completedAt: DateTime(2026).add(const Duration(seconds: 5)),
+              title: 'Thinking summary',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Thought for 5s'), findsOneWidget);
+    expect(find.text('Checked repository shape.'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('thought-summary-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Checked repository shape.'), findsOneWidget);
   });
 
   testWidgets('approval cards expose approve and reject actions', (
@@ -386,6 +442,141 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Download'), findsOneWidget);
     expect(find.byTooltip('Copy file path'), findsOneWidget);
+  });
+
+  testWidgets('edited file rows expose open in workspace action', (
+    tester,
+  ) async {
+    String? openedPath;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'edited-file',
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              text: 'modified lib/chat.dart\n-old\n+new',
+              createdAt: DateTime(2026),
+              title: 'Files changed',
+            ),
+            onOpenWorkspaceFile: (path) => openedPath = path,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open in workspace'));
+
+    expect(openedPath, 'lib/chat.dart');
+  });
+
+  testWidgets('generated file rows do not expose workspace open action', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'generated-file',
+              role: ChatRole.system,
+              kind: AgentMessageKind.files,
+              text: 'generated build/app-release.apk\nsize 12\nfileId file-1',
+              createdAt: DateTime(2026),
+              title: 'Files changed',
+            ),
+            onOpenWorkspaceFile: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('file-activity-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Open in workspace'), findsNothing);
+    expect(find.text('Download'), findsOneWidget);
+  });
+
+  testWidgets('message text scale increases user and assistant body text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: Column(
+            children: [
+              MessageBubble(
+                message: ChatMessage(
+                  id: 'user-large',
+                  role: ChatRole.user,
+                  kind: AgentMessageKind.response,
+                  text: 'larger user text',
+                  createdAt: DateTime(2026),
+                ),
+                textScale: 1.18,
+              ),
+              MessageBubble(
+                message: ChatMessage(
+                  id: 'assistant-large',
+                  role: ChatRole.assistant,
+                  kind: AgentMessageKind.response,
+                  text: 'larger assistant text',
+                  createdAt: DateTime(2026),
+                ),
+                textScale: 1.18,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final userText = tester.widget<Text>(find.text('larger user text'));
+    final assistantStyle = tester
+        .widget<DefaultTextStyle>(
+          find
+              .ancestor(
+                of: find.text('larger assistant text'),
+                matching: find.byType(DefaultTextStyle),
+              )
+              .first,
+        )
+        .style;
+
+    expect(userText.style?.fontSize, greaterThan(14));
+    expect(assistantStyle.fontSize, greaterThan(14));
+  });
+
+  testWidgets('message text scale increases markdown paragraph text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildCodexTheme(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: ChatMessage(
+              id: 'assistant-markdown-large',
+              role: ChatRole.assistant,
+              kind: AgentMessageKind.response,
+              text: 'A markdown paragraph with **bold** text.',
+              createdAt: DateTime(2026),
+            ),
+            textScale: 1.22,
+          ),
+        ),
+      ),
+    );
+
+    final markdown = tester.widget<MarkdownBody>(find.byType(MarkdownBody));
+    expect(markdown.styleSheet?.p?.fontSize, greaterThan(15));
   });
 
   testWidgets('requested file offers render as downloadable cards', (

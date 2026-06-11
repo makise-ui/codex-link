@@ -45,6 +45,44 @@ The host package version is defined in `host/package.json`.
 
 The app update checker expects a GitHub Release with a newer semantic version tag and an `.apk` asset.
 
+## NPM Host Release Flow
+
+The host bridge is published as `codex-link-host` and exposes the
+`codex-link-host` binary.
+
+1. Update `host/package.json` version.
+2. Run host verification:
+
+   ```bash
+   pnpm --dir host typecheck
+   pnpm --dir host test
+   ```
+
+3. Preview the npm package:
+
+   ```bash
+   pnpm publish:host:dry-run
+   ```
+
+4. Log into npm and publish:
+
+   ```bash
+   npm login
+   pnpm publish:host
+   ```
+
+Users update the server with:
+
+```bash
+npm update -g codex-link-host
+```
+
+or:
+
+```bash
+npm install -g codex-link-host@latest
+```
+
 ## Commit Scope
 
 Prefer small commits by area:
